@@ -1,6 +1,7 @@
 """AstrBot Conversation Agent integration."""
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
@@ -12,6 +13,8 @@ from .const import (
     SESSION_STORE_VERSION,
 )
 from .session import AstrBotSessionManager
+
+PLATFORMS = [Platform.CONVERSATION]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -27,11 +30,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "session_manager": session_manager
     }
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload the session manager without deleting its persisted session."""
+    """Unload the Conversation platform without deleting its persisted session."""
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
+
     domain_data = hass.data.get(DOMAIN)
     if domain_data is not None:
         domain_data.pop(entry.entry_id, None)

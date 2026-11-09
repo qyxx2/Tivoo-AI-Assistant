@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent Implementation Plan
 
-> 状态：P3b0–P3b3 已完成（HA 集成基线、Config Flow、单用户 Session Store、AstrBot HTTP OpenAPI Client 与增量 SSE Parser）；P3b4–P3b6 尚未开始。
+> 状态：P3b0–P3b4 已完成（HA 集成基线、Config Flow、单用户 Session Store、AstrBot HTTP OpenAPI Client、增量 SSE Parser、ConversationEntity/ChatLog）；P3b5–P3b6 尚未开始。
 > 工作分支：feature/p3-astrbot-conversation-agent
 > 基线：main / c754f5a22727fa0ded6a2fd0c309c967b162097d
 > 日期：2026-11-09
@@ -9,7 +9,7 @@
 
 在 Home Assistant Core 2026.11.0 中提供独立的 AstrBot Conversation Agent。HA Assist Pipeline 将最终 STT 文本交给 AstrBot 4.29.4 的 HTTP OpenAPI；集成将 AstrBot SSE 中的可见文本增量按顺序写入 HA ChatLog，最终通过 HA 原生 ConversationResult 返回。单一 HA 用户在 HA 重启、HA conversation_id 更新以及 AstrBot 上下文压缩后继续使用同一个活动 AstrBot 会话；最近一次被 AstrBot 接受的请求超过 24 小时未活动后才轮换 session_id。
 
-本计划定义 P3 的完整实现批次；当前已完成 P3b0–P3b3。后续批次仍按分批执行计划逐批实现，不提前创建 Conversation 代码，也不扩大到 P4/P5/P6。
+本计划定义 P3 的完整实现批次；当前已完成 P3b0–P3b4。后续批次仍按分批执行计划逐批实现，不提前实现取消/并发收口，也不扩大到 P4/P5/P6。
 
 ## Architecture
 

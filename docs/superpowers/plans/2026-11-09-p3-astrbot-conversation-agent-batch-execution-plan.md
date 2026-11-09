@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0、P3b1、P3b2、P3b3 已完成；P3b4–P3b6 尚未开始。
+> 状态：P3b0、P3b1、P3b2、P3b3、P3b4 已完成；P3b5–P3b6 尚未开始。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -174,27 +174,30 @@
 **Purpose:** 将已经独立测试的 Session/API/SSE 组件接到 HA 原生 ConversationEntity，交付 P3 的主要用户可见能力。
 
 **Files:**
-- Create: homeassistant/custom_components/astrbot/conversation.py
-- Modify: __init__.py to register the conversation platform.
-- Tests: ConversationEntity、ChatLog delta、ConversationResult 和 Assist pipeline integration tests.
+- [x] Create: homeassistant/custom_components/astrbot/conversation.py
+- [x] Modify: __init__.py to register the conversation platform.
+- [x] Modify: manifest.json to declare the Conversation dependency.
+- [x] Tests: ConversationEntity、ChatLog delta、ConversationResult 和 Assist conversation handoff.
 
 **Tasks:**
-- [ ] 先写 HA 侧加载测试：创建 conversation.astrbot，确认实体由 Config Entry 注册。
-- [ ] 先写 supports_streaming=true 和 MATCH_ALL language contract 测试。
-- [ ] 先写 ChatLog 流式断言：首个 chunk 为 assistant role，后续普通文本增量按到达顺序写入。
-- [ ] 先写输入边界测试：只发送 ConversationInput.text；context.user_id、conversation_id、device_id、satellite_id、language、agent_id、extra_system_prompt 不转发。
-- [ ] 在实体中实现 _async_handle_message(user_input, chat_log)，通过 Session Manager 取活动 session，调用 API Client，并消费 SSE Parser。
-- [ ] 从可见文本开始逐段提交 ChatLog delta；不得等完整 SSE 结束后一次性添加全文。
-- [ ] HA 已经写入用户消息；不重复写用户正文，也不把 AstrBot user_message_saved 再写回 HA。
-- [ ] SSE 正常 end 后通过 HA async_get_result_from_chat_log() 返回标准 ConversationResult。
-- [ ] 用真实 HA ConversationEntity/ChatLog 测试覆盖一轮和多轮，确认 pipeline 能消费增量。
-- [ ] 运行 Conversation 聚焦测试及 B0–B3 回归。
+- [x] 先写 HA 侧加载测试：创建 conversation.astrbot，确认实体由 Config Entry 注册。
+- [x] 先写 supports_streaming=true 和 MATCH_ALL language contract 测试。
+- [x] 先写 ChatLog 流式断言：首个 chunk 为 assistant role，后续普通文本增量按到达顺序写入。
+- [x] 先写输入边界测试：只发送 ConversationInput.text；context.user_id、conversation_id、device_id、satellite_id、language、agent_id、extra_system_prompt 不转发。
+- [x] 在实体中实现 _async_handle_message(user_input, chat_log)，通过 Session Manager 取活动 session，调用 API Client，并消费 SSE Parser。
+- [x] 从可见文本开始逐段提交 ChatLog delta；不得等完整 SSE 结束后一次性添加全文。
+- [x] HA 已经写入用户消息；不重复写用户正文，也不把 AstrBot user_message_saved 再写回 HA。
+- [x] SSE 正常 end 后通过 HA async_get_result_from_chat_log() 返回标准 ConversationResult。
+- [x] 用真实 HA ConversationEntity/ChatLog 测试覆盖一轮和多轮；通过 Assist 使用的 ChatSession、ChatLog delta listener 与 conversation.async_converse 路径验证增量交付。
+- [x] 运行 Conversation 聚焦测试及 B0–B3 回归。
 
 **Exit gate:**
-- P3-T01、T02、T08、T11 的实体与 ChatLog 合同覆盖。
-- 可选择 conversation.astrbot；HA 对话输出使用标准 ConversationResult。
-- supports_streaming 是真实逐段输出，不是仅声明属性。
-- 不声称 TTS 已经流式播放。
+- [x] P3-T01、T02、T08、T11 的实体与 ChatLog 合同覆盖。
+- [x] 可选择 conversation.astrbot；HA 对话输出使用标准 ConversationResult。
+- [x] supports_streaming 是真实逐段输出，不是仅声明属性。
+- [x] 不声称 TTS 已经流式播放。
+
+**B4 verification (2026-11-09):** Ubuntu 本地 Conversation/Assist 聚焦测试 ./scripts/test-ha.sh -q tests/homeassistant/custom_components/astrbot/test_conversation.py → 2 passed；完整 HA 测试 ./scripts/test-ha.sh -q → 78 passed，52 个 HA/aiohttp/backoff 依赖 warning。Ruff check、Ruff format check 和 git diff --check 均通过。测试确认增量在上游 SSE end 前进入 HA ChatLog、用户消息不重复、请求体仅包含合同字段、session_id 经 AstrBot 确认后写入 HA Store，且不同 HA conversation_id 复用同一 AstrBot session。未配置真实 API Key、未发起在线 AstrBot 请求、未部署 NAS；不包含 STT/TTS 实播、取消或 session 锁。
 
 **Commit:** feat(p3): stream AstrBot replies through HA ChatLog
 
