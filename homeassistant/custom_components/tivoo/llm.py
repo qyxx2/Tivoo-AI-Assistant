@@ -17,16 +17,20 @@ from .const import (
     ATTR_BACKGROUND,
     ATTR_COLOR,
     ATTR_COUNTDOWN,
+    ATTR_FILE,
     ATTR_FONT,
     ATTR_FONT_SIZE,
     ATTR_NAME,
     ATTR_SPEED,
     ATTR_STEP,
+    ATTR_TIME,
     ATTR_VALUE,
     ATTR_VOLUME,
     DOMAIN,
+    SERVICE_PLAY_ANIMATION,
     SERVICE_SET_EXPRESSION,
     SERVICE_SET_VOLUME,
+    SERVICE_SHOW_IMAGE,
     SERVICE_SHOW_TEXT,
     SERVICE_START_COUNTDOWN,
     SERVICE_STOP_COUNTDOWN,
@@ -42,6 +46,12 @@ def _annotations(*, idempotent: bool) -> ToolAnnotations:
         idempotent=idempotent,
         open_world=False,
     )
+
+
+def _strict_integer(value: object) -> int:
+    if type(value) is not int:
+        raise probatio.Invalid("time must be an integer")
+    return value
 
 
 class _ServiceTool(Tool):
@@ -163,6 +173,44 @@ class SetVolumeTool(_ServiceTool):
     )
 
 
+class ShowImageTool(_ServiceTool):
+    name = "tivoo__ShowImage"
+    title = "Show an image on Tivoo"
+    description = (
+        "Display a PNG, JPEG or GIF file from the configured Tivoo media directory."
+    )
+    service = SERVICE_SHOW_IMAGE
+    annotations = _annotations(idempotent=False)
+    integration = DOMAIN
+    parameters = probatio.Schema(
+        {
+            probatio.Required(ATTR_FILE): probatio.All(str, probatio.NonEmpty()),
+            probatio.Optional(ATTR_TIME): probatio.All(
+                int, _strict_integer, probatio.Range(min=0, max=65535)
+            ),
+        },
+        extra=probatio.PREVENT_EXTRA,
+    )
+
+
+class PlayAnimationTool(_ServiceTool):
+    name = "tivoo__PlayAnimation"
+    title = "Play an animation on Tivoo"
+    description = "Play a GIF file from the configured Tivoo media directory."
+    service = SERVICE_PLAY_ANIMATION
+    annotations = _annotations(idempotent=False)
+    integration = DOMAIN
+    parameters = probatio.Schema(
+        {
+            probatio.Required(ATTR_FILE): probatio.All(str, probatio.NonEmpty()),
+            probatio.Optional(ATTR_TIME): probatio.All(
+                int, _strict_integer, probatio.Range(min=0, max=65535)
+            ),
+        },
+        extra=probatio.PREVENT_EXTRA,
+    )
+
+
 @callback
 def async_get_tools(
     hass: HomeAssistant, llm_context: LLMContext, api_id: str
@@ -179,5 +227,7 @@ def async_get_tools(
             StartCountdownTool(),
             StopCountdownTool(),
             SetVolumeTool(),
+            ShowImageTool(),
+            PlayAnimationTool(),
         ]
     )

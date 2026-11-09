@@ -86,6 +86,8 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
     assert entry.state is ConfigEntryState.LOADED
     assert hass.services.has_service(DOMAIN, "stop_countdown")
     assert hass.services.has_service(DOMAIN, "set_volume")
+    assert hass.services.has_service(DOMAIN, "show_image")
+    assert hass.services.has_service(DOMAIN, "play_animation")
     assert set(hass.services.async_services()[DOMAIN]) == {
         "stop_countdown",
         "set_volume",
@@ -93,6 +95,8 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
         "show_text",
         "start_countdown",
         "set_brightness",
+        "show_image",
+        "play_animation",
     }
     assert hass.data[DOMAIN][entry.entry_id]["media_directory"] == hass.config.path(
         DEFAULT_MEDIA_DIRECTORY
@@ -102,6 +106,8 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
     assert entry.state is ConfigEntryState.NOT_LOADED
     assert not hass.services.has_service(DOMAIN, "stop_countdown")
     assert not hass.services.has_service(DOMAIN, "set_volume")
+    assert not hass.services.has_service(DOMAIN, "show_image")
+    assert not hass.services.has_service(DOMAIN, "play_animation")
     assert DOMAIN not in hass.data
 
 
@@ -154,7 +160,16 @@ async def test_config_and_service_descriptions_are_available(
         "show_text",
         "start_countdown",
         "set_brightness",
+        "show_image",
+        "play_animation",
     }
+    for service in ("show_image", "play_animation"):
+        fields = services[DOMAIN][service]["fields"]
+        assert set(fields) == {"file", "time"}
+        assert fields["file"]["required"] is True
+        assert fields["time"]["required"] is False
+        assert fields["time"]["selector"]["number"]["min"] == 0
+        assert fields["time"]["selector"]["number"]["max"] == 65535
     assert services[DOMAIN]["set_expression"]["fields"]["name"]["required"] is True
     assert set(services[DOMAIN]["show_text"]["fields"]) == {
         "value",

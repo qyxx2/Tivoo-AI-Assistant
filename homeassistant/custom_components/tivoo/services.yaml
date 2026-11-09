@@ -111,3 +111,47 @@ set_brightness:
           step: 1
           mode: slider
           unit_of_measurement: "%"
+
+show_image:
+  name: Show image
+  description: Display a PNG, JPEG or GIF from the configured Tivoo media directory.
+  fields:
+    file:
+      name: File
+      description: Relative file path inside the Tivoo media directory.
+      required: true
+      selector:
+        text:
+    time:
+      name: Frame time
+      description: Optional override for every GIF frame duration, in milliseconds.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 65535
+          step: 1
+          mode: box
+          unit_of_measurement: ms
+
+play_animation:
+  name: Play animation
+  description: Play a GIF from the configured Tivoo media directory.
+  fields:
+    file:
+      name: File
+      description: Relative GIF file path inside the Tivoo media directory.
+      required: true
+      selector:
+        text:
+    time:
+      name: Frame time
+      description: Optional override for every GIF frame duration, in milliseconds.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 65535
+          step: 1
+          mode: box
+          unit_of_measurement: ms

@@ -103,7 +103,7 @@ async def test_p4b3_tool_calls_its_service_and_preserves_input(
         assert command.data[key] == value
 
 
-async def test_p4b3_tools_are_available_with_stop_countdown_only_on_assist(
+async def test_tivoo_assist_api_registers_all_current_tools(
     hass, enable_custom_integrations
 ):
     await _loaded_entry(hass)
@@ -115,6 +115,8 @@ async def test_p4b3_tools_are_available_with_stop_countdown_only_on_assist(
         "tivoo__StartCountdown",
         "tivoo__StopCountdown",
         "tivoo__SetVolume",
+        "tivoo__ShowImage",
+        "tivoo__PlayAnimation",
     }
 
 

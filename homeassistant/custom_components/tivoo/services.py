@@ -1,6 +1,7 @@
 """HA services exposed by the Tivoo integration."""
 
 import re
+from functools import partial
 
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -10,21 +11,26 @@ from .const import (
     ATTR_BACKGROUND,
     ATTR_COLOR,
     ATTR_COUNTDOWN,
+    ATTR_FILE,
     ATTR_FONT,
     ATTR_FONT_SIZE,
     ATTR_NAME,
     ATTR_SPEED,
     ATTR_STEP,
+    ATTR_TIME,
     ATTR_VALUE,
     ATTR_VOLUME,
     DOMAIN,
+    SERVICE_PLAY_ANIMATION,
     SERVICE_SET_BRIGHTNESS,
     SERVICE_SET_EXPRESSION,
     SERVICE_SET_VOLUME,
+    SERVICE_SHOW_IMAGE,
     SERVICE_SHOW_TEXT,
     SERVICE_START_COUNTDOWN,
     SERVICE_STOP_COUNTDOWN,
 )
+from .media import load_media_frames
 from .presets.emotion_presets import EMOTION_PRESETS
 from .presets.presets import PRESETS
 from .rendering import FONT_NAMES, gen_text_frames, parse_color
@@ -71,6 +77,12 @@ def _validate_countdown(value: object) -> str:
 def _validate_expression(value: object) -> str:
     if not isinstance(value, str) or value not in VISIBLE_PRESETS:
         raise vol.Invalid("name must be a visible built-in Tivoo preset")
+    return value
+
+
+def _validate_file(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise vol.Invalid("file must be a non-empty relative path")
     return value
 
 
@@ -153,6 +165,38 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
             )
         )
 
+    async def async_show_image(call: ServiceCall) -> None:
+        file = call.data[ATTR_FILE]
+        time = call.data.get(ATTR_TIME)
+        frames, delays = await hass.async_add_executor_job(
+            partial(load_media_frames, runtime["media_directory"], file, time=time)
+        )
+        data = {ATTR_FILE: file, "frames": frames, "delays": delays}
+        if time is not None:
+            data[ATTR_TIME] = time
+        await runtime["command_adapter"].async_execute(
+            TivooCommand(name=SERVICE_SHOW_IMAGE, data=data)
+        )
+
+    async def async_play_animation(call: ServiceCall) -> None:
+        file = call.data[ATTR_FILE]
+        time = call.data.get(ATTR_TIME)
+        frames, delays = await hass.async_add_executor_job(
+            partial(
+                load_media_frames,
+                runtime["media_directory"],
+                file,
+                time=time,
+                gif_only=True,
+            )
+        )
+        data = {ATTR_FILE: file, "frames": frames, "delays": delays}
+        if time is not None:
+            data[ATTR_TIME] = time
+        await runtime["command_adapter"].async_execute(
+            TivooCommand(name=SERVICE_PLAY_ANIMATION, data=data)
+        )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_STOP_COUNTDOWN,
@@ -224,6 +268,24 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
             extra=vol.PREVENT_EXTRA,
         ),
     )
+    for service, handler in (
+        (SERVICE_SHOW_IMAGE, async_show_image),
+        (SERVICE_PLAY_ANIMATION, async_play_animation),
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            service,
+            handler,
+            schema=vol.Schema(
+                {
+                    vol.Required(ATTR_FILE): _validate_file,
+                    vol.Optional(ATTR_TIME): lambda value: _integer_between(
+                        value, ATTR_TIME, 0, 65535
+                    ),
+                },
+                extra=vol.PREVENT_EXTRA,
+            ),
+        )
 
 
 def unregister_services(hass: HomeAssistant) -> None:
@@ -235,5 +297,7 @@ def unregister_services(hass: HomeAssistant) -> None:
         SERVICE_SHOW_TEXT,
         SERVICE_START_COUNTDOWN,
         SERVICE_SET_BRIGHTNESS,
+        SERVICE_SHOW_IMAGE,
+        SERVICE_PLAY_ANIMATION,
     ):
         hass.services.async_remove(DOMAIN, service)

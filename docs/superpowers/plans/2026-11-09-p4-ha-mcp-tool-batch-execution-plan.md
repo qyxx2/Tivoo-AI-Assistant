@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
-> 状态：P4b0–P4b3 已完成；P4b4–P4b6 待执行。
+> 状态：P4b0–P4b4 已完成；P4b5–P4b6 待执行。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)
 > 合同权威来源：[P4 Tool Contract Matrix](../specs/2026-11-09-p4-ha-mcp-tool-contract-matrix.md)
@@ -195,25 +195,25 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 使用 P4b1 创建的 `media_directory` 配置；默认 `pixelart`，根目录通过 `hass.config.path()` 解析。
-- [ ] 为 `tivoo.show_image` 增加必需 `file: string` 和可选 `time: integer`；支持静态 PNG/JPG 和 GIF。
-- [ ] 为 `tivoo.play_animation` 增加必需 GIF `file: string` 和可选 `time: integer`；帧目录与 JSON stage 文件不在支持范围。
-- [ ] 未提供 `time` 时保留 GIF 内嵌 frame duration；提供时校验 0–65535 毫秒并覆盖帧间隔。
-- [ ] 使用 `realpath()` 与 `commonpath()` 验证解析后的文件仍处于 `media_directory` 内；拒绝绝对路径、路径穿越、逃逸 symlink 和目录。
-- [ ] 拒绝不存在/不可读文件、非支持格式和无效 timing；错误在 HA Service 层明确出现并作为 MCP Tool error 传播。
-- [ ] `ShowImage` 与 `PlayAnimation` 共用媒体路径解析和图像/GIF 读取实现，不实现两套文件协议。
-- [ ] 注册 `tivoo__ShowImage`、`tivoo__PlayAnimation`；两者只调用对应 HA Service；ToolAnnotations 均为写操作且 `idempotent=False`。
-- [ ] MCP 参数不接受 URL、asset ID、NAS 任意绝对路径、原始图片字节、palette、frame arrays 或 HTTP 资源地址。
-- [ ] 测试使用 HA media directory 下的 PNG/JPG/GIF 测试夹具；至少验证一张静态图和一份多帧 GIF 被正确解析/转发，及文件不存在/路径逃逸的错误传播。
-- [ ] 不实现 AstrBot 生成文件跨容器复制/上传协议。运行时使用者需将待显示文件放入 HA `media_directory`；P4 不发明 URL/asset ID。
+- [x] 使用 P4b1 创建的 `media_directory` 配置；默认 `pixelart`，根目录通过 `hass.config.path()` 解析。
+- [x] 为 `tivoo.show_image` 增加必需 `file: string` 和可选 `time: integer`；支持静态 PNG/JPG 和 GIF。
+- [x] 为 `tivoo.play_animation` 增加必需 GIF `file: string` 和可选 `time: integer`；帧目录与 JSON stage 文件不在支持范围。
+- [x] 未提供 `time` 时保留 GIF 内嵌 frame duration；提供时校验 0–65535 毫秒并覆盖帧间隔。
+- [x] 使用 `realpath()` 与 `commonpath()` 验证解析后的文件仍处于 `media_directory` 内；拒绝绝对路径、路径穿越、逃逸 symlink 和目录。
+- [x] 拒绝不存在/不可读文件、非支持格式和无效 timing；错误在 HA Service 层明确出现并作为 MCP Tool error 传播。
+- [x] `ShowImage` 与 `PlayAnimation` 共用媒体路径解析和图像/GIF 读取实现，不实现两套文件协议。
+- [x] 注册 `tivoo__ShowImage`、`tivoo__PlayAnimation`；两者只调用对应 HA Service；ToolAnnotations 均为写操作且 `idempotent=False`。
+- [x] MCP 参数不接受 URL、asset ID、NAS 任意绝对路径、原始图片字节、palette、frame arrays 或 HTTP 资源地址。
+- [x] 测试使用 HA media directory 下的 PNG/JPG/GIF 测试夹具；至少验证一张静态图和一份多帧 GIF 被正确解析/转发，及文件不存在/路径逃逸的错误传播。
+- [x] 不实现 AstrBot 生成文件跨容器复制/上传协议。运行时使用者需将待显示文件放入 HA `media_directory`；P4 不发明 URL/asset ID。
 
 **Exit gate:**
 
-- [ ] `ShowImage` 支持静态 PNG/JPG/GIF，`PlayAnimation` 仅支持 GIF；参数符合合同矩阵。
-- [ ] 有效相对路径通过；越界、symlink 逃逸、目录、URL、绝对路径、无效格式、缺失文件均明确拒绝。
-- [ ] GIF 原始时长和显式 `time` 覆盖由测试证明。
-- [ ] 两个 Tool 调用对应 HA Service，共用文件路径与帧处理逻辑，没有 MCP 二进制载荷。
-- [ ] 聚焦测试、P4b2/P4b3 回归、P3 全套测试、Ruff 与 `git diff --check` 通过。
+- [x] `ShowImage` 支持静态 PNG/JPG/GIF，`PlayAnimation` 仅支持 GIF；参数符合合同矩阵。
+- [x] 有效相对路径通过；越界、symlink 逃逸、目录、URL、绝对路径、无效格式、缺失文件均明确拒绝。
+- [x] GIF 原始时长和显式 `time` 覆盖由测试证明。
+- [x] 两个 Tool 调用对应 HA Service，共用文件路径与帧处理逻辑，没有 MCP 二进制载荷。
+- [x] 聚焦测试、P4b2/P4b3 回归、P3 全套测试、Ruff 与 `git diff --check` 通过。
 
 **Commit:** `feat(p4): implement Tivoo image and GIF MVP tools`
 
