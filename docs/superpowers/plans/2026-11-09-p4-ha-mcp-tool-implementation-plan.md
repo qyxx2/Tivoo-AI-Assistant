@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools 实施计划
 
-> 状态：P4b0–P4b5 的本地实现与自动化验证已执行；P4b5 的 AstrBot WebUI/Persona/实际重连验证因目标运行时不可用而 BLOCKED；P4b6 待执行。批次细节以 P4 Batch Execution Plan 和实施报告为准。
+> 状态：P4b0–P4b6 的本地实现、自动化验证和合同追踪已执行；P4b5/P4b6 的 AstrBot WebUI、目标 Persona 授权/调用及实际重连故障注入仍因目标运行时不可用而 BLOCKED。P4 整体保持 PARTIAL，详见 P4b5/P4b6 验收报告。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 代码基线：`main` / `c40c40046b257a37c632a9738bf04ec2abc0ef76`
 > 计划基线：P4 合同矩阵提交 `982966a`

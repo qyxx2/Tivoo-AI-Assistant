@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
-> 状态：P4b0–P4b4 已完成；P4b5–P4b6 待执行。
+> 状态：P4b0–P4b6 的本地实现、自动化验收与收尾报告已执行；P4b5/P4b6 的 AstrBot 4.29.4 Persona 运行时、断线故障注入仍待人工目标环境验收。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)
 > 合同权威来源：[P4 Tool Contract Matrix](../specs/2026-11-09-p4-ha-mcp-tool-contract-matrix.md)
@@ -259,30 +259,33 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 对照 P4-C01 至 P4-C15 建立合同追踪表；每项链接到具体测试、命令输出或受控运行证据。
-- [ ] 验证 MCP 路由、Streamable HTTP、七个必需 Tool 的发现和 Persona 授权、普通用户认证与 Assist API 权限。
-- [ ] 验证 SetExpression、ShowText、ShowImage、PlayAnimation 四个显示/媒体 Tool 的参数 Schema、服务委派、正常执行路径和失败传播。
-- [ ] 验证 SetBrightness Service 的 0–100 参数边界和调用路径；它是 HA Service，不要求另建 SetBrightness MCP Tool。
-- [ ] 验证 StartCountdown、StopCountdown、SetVolume 三项完整链路：通过 AstrBot Persona 分别执行 `MM:SS` 启动、无参停止、音量 0/100 设置；逐层确认 MCP `tools/call`、HA LLM Tool、HA Service 和内存语义 Adapter 收到的动作/参数一致。
-- [ ] 通过错误输入测试确认倒计时格式、音量边界、媒体路径越界和文字/preset 非法输入会明确失败，不产生伪成功。
-- [ ] 媒体验收覆盖相对 media_directory、PNG/JPG/GIF、GIF timing、路径穿越/逃逸 symlink/缺失文件拒绝。
-- [ ] 验证 StopCountdown 无参数语义及对应 wire payload。若 P4 当前范围只覆盖 HA Service/语义 Adapter，字节级验证由复用的 payload builder 测试或 P6 传输 Adapter 验证；不在 LLM Tool 层另写编码器。
-- [ ] 验证 AstrBot 4.29.4 断线恢复/重试，不引入自定义协议或额外重试框架。
-- [ ] 运行 P3 全套 HA 测试，确认 Chat API、session、SSE、ChatLog、取消与 P4 完全隔离。
-- [ ] 运行开发机完整测试与静态检查：`./scripts/test-ha.sh -q`、Ruff check、Ruff format check、Python compileall、`pip check`、`git diff --check`。
-- [ ] 检查变更范围只涉及 Tivoo HA 集成、对应测试、必要依赖与 P4 文档；没有改动 P3 实现、AstrBot 插件、ESP32、TCP 7777/7778 或 NAS 部署文件。
-- [ ] 创建 P4 验收报告，区分自动化 PASS、AstrBot 运行时 PASS、媒体文件交接限制和设备实测 DEFERRED。
-- [ ] 仅在全部对应门通过后更新 README 的 P4 状态；未通过项保留明确状态和后续归属。
+- [x] 对照 P4-C01 至 P4-C15 建立合同追踪表；每项链接到具体测试、命令输出或受控运行证据。
+- [x] 在本地 HA Core 2026.11.0 测试应用验证 MCP Assist 路由、Streamable HTTP、七个 Tool 发现、普通用户认证和 Assist API 权限。
+- [ ] 在真实 AstrBot 4.29.4 WebUI 建立 MCP Server、完成 initialize，并为目标 Persona 授权七个 Tool：**BLOCKED**，开发机没有目标 AstrBot 实例/WebUI 与凭据。
+- [x] 验证 SetExpression、ShowText、ShowImage、PlayAnimation 四个显示/媒体 Tool 的参数 Schema、服务委派、正常执行路径和失败传播。
+- [x] 验证 SetBrightness Service 的 0–100 参数边界和调用路径；它是 HA Service，没有另建 SetBrightness MCP Tool。
+- [x] 通过本地 MCP SDK Streamable HTTP 客户端验证 StartCountdown、StopCountdown、SetVolume：分别发送 `MM:SS`、无参、音量 0/100，并逐层核对 MCP `tools/call`、HA LLM Tool、HA Service 和内存语义 Adapter。
+- [ ] 从真实 AstrBot Persona 执行上述三项并确认目标实例链路：**BLOCKED**，本地 MCP 客户端结果不冒充 AstrBot 运行时证据。
+- [x] 通过错误输入测试确认倒计时格式、音量边界、媒体路径越界和文字/preset 非法输入会明确失败，不产生伪成功。
+- [x] 媒体验收覆盖相对 media_directory、PNG/JPG/GIF、GIF timing、路径穿越/逃逸 symlink/缺失文件拒绝。
+- [x] 验证 StopCountdown 无参数语义：HA Service 与语义 Adapter 收到空 data；P4 不实现字节级编码器，wire payload 留给 P6 传输 Adapter 验证。
+- [ ] 在 AstrBot 4.29.4 运行时验证断线恢复/重试和响应丢失：**BLOCKED**；已基于固定源码审查重连与两次总尝试行为，并记录非幂等动作重复执行风险。
+- [x] 运行 P3 全套 HA 测试，确认 Chat API、session、SSE、ChatLog、取消与 P4 无回归。
+- [x] 运行开发机完整测试与静态检查：`./scripts/test-ha.sh -q`、Ruff check、排除未修改基线文件后的 Ruff format check、Python compileall、`pip check`、`git diff --check`。
+- [x] 检查变更范围只涉及 P4b6 验收测试和 P4 文档；没有改动 P3 实现、AstrBot 插件、ESP32、TCP 7777/7778 或 NAS 部署文件。
+- [x] 创建 P4 验收报告，区分自动化 PASS、AstrBot 运行时 PARTIAL/BLOCKED、媒体文件交接限制和设备实测 DEFERRED。
+- [ ] README 的 P4 状态暂不更新：目标 Persona/实际重连验收未通过前，不满足更新整体完成状态的前提。
 
 **Exit gate:**
 
-- [ ] P4-C01–C13、C15 的 MVP 适用项均有 PASS/PARTIAL/BLOCKED 结论及证据；没有把未声明服务列成遗漏。
-- [ ] 表情、文字、亮度 Service、图片/GIF、倒计时启停和音量调整的所有实现与参数合同均有测试/运行时证据。
-- [ ] AstrBot 实际 Persona 能发现并调用七个 MVP Tool。
-- [ ] StartCountdown、StopCountdown、SetVolume 的 MCP → HA LLM Tool → HA Service → 语义 Adapter 完整链路全部通过；所有失败路径都没有伪成功。
-- [ ] P3 回归、类型/静态检查与 diff 检查通过。
-- [ ] C14 实机动作不作为 P4 关闭前提；真实硬件回执转交 P5/P6。
-- [ ] 最终变更审查完成并本地提交；不 push、不 merge。
+- [x] P4-C01–C13、C15 的 MVP 适用项均有 PASS/PARTIAL/BLOCKED 结论及证据；没有把未声明服务列成遗漏。
+- [x] 表情、文字、亮度 Service、图片/GIF、倒计时启停和音量调整的实现与参数合同均有本地自动化测试证据。
+- [ ] AstrBot 实际 Persona 能发现、获准并调用七个 MVP Tool：**BLOCKED**，待目标运行时人工验收。
+- [x] 本地 MCP HTTP → HA LLM Tool → HA Service → 语义 Adapter 链路通过；失败路径不会伪成功。
+- [ ] AstrBot Persona 发起的 StartCountdown、StopCountdown、SetVolume 完整链路：**BLOCKED**，不能以 MCP SDK 测试代替。
+- [x] P3 回归、静态检查与 diff 检查通过。
+- [x] C14 实机动作不作为 P4 关闭前提；真实硬件回执转交 P5/P6。
+- [x] 最终变更审查完成并准备本地提交；不 push、不 merge。
 
 **Commit:** `test(p4): accept all Tivoo MVP features and core MCP flow`
 
