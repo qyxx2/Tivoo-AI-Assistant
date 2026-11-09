@@ -89,6 +89,10 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
     assert set(hass.services.async_services()[DOMAIN]) == {
         "stop_countdown",
         "set_volume",
+        "set_expression",
+        "show_text",
+        "start_countdown",
+        "set_brightness",
     }
     assert hass.data[DOMAIN][entry.entry_id]["media_directory"] == hass.config.path(
         DEFAULT_MEDIA_DIRECTORY
@@ -101,7 +105,9 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
     assert DOMAIN not in hass.data
 
 
-@pytest.mark.parametrize("media_directory", ["", "/tmp/tivoo", "../outside", "media/../outside"])
+@pytest.mark.parametrize(
+    "media_directory", ["", "/tmp/tivoo", "../outside", "media/../outside"]
+)
 async def test_config_flow_rejects_media_directory_outside_config_root(
     hass, media_directory
 ):
@@ -140,3 +146,27 @@ async def test_config_and_service_descriptions_are_available(
     assert volume["selector"]["number"]["min"] == 0
     assert volume["selector"]["number"]["max"] == 100
     assert volume["selector"]["number"]["step"] == 1
+
+    assert set(services[DOMAIN]) == {
+        "stop_countdown",
+        "set_volume",
+        "set_expression",
+        "show_text",
+        "start_countdown",
+        "set_brightness",
+    }
+    assert services[DOMAIN]["set_expression"]["fields"]["name"]["required"] is True
+    assert set(services[DOMAIN]["show_text"]["fields"]) == {
+        "value",
+        "color",
+        "background",
+        "speed",
+        "step",
+        "font_size",
+        "font",
+    }
+    assert services[DOMAIN]["show_text"]["fields"]["value"]["required"] is True
+    assert (
+        services[DOMAIN]["start_countdown"]["fields"]["countdown"]["required"] is True
+    )
+    assert services[DOMAIN]["set_brightness"]["fields"]["value"]["required"] is True

@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools 实施计划
 
-> 状态：仅计划，尚未实现。
+> 状态：P4b0–P4b3 已按批次执行；剩余批次待实现。批次状态以 P4 Batch Execution Plan 和实施报告为准。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 代码基线：`main` / `c40c40046b257a37c632a9738bf04ec2abc0ef76`
 > 计划基线：P4 合同矩阵提交 `982966a`

@@ -17,3 +17,97 @@ set_volume:
           step: 1
           mode: slider
           unit_of_measurement: "%"
+
+set_expression:
+  name: Set expression
+  description: Display a built-in Tivoo expression preset.
+  fields:
+    name:
+      name: Preset
+      description: Name of a visible built-in Tivoo preset.
+      required: true
+      selector:
+        text:
+
+show_text:
+  name: Show text
+  description: Display scrolling text on the Tivoo screen.
+  fields:
+    value:
+      name: Text
+      description: Text to display.
+      required: true
+      selector:
+        text:
+    color:
+      name: Text color
+      required: false
+      selector:
+        text:
+    background:
+      name: Background color
+      required: false
+      selector:
+        text:
+    speed:
+      name: Scroll speed
+      description: Frame delay in milliseconds.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 65535
+          step: 1
+          mode: box
+          unit_of_measurement: ms
+    step:
+      name: Scroll step
+      description: Number of pixels moved per frame.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 8
+          step: 1
+          mode: slider
+    font_size:
+      name: Font size
+      required: false
+      selector:
+        number:
+          min: 8
+          max: 16
+          step: 1
+          mode: slider
+    font:
+      name: Font
+      description: Installed font name.
+      required: false
+      selector:
+        text:
+
+start_countdown:
+  name: Start countdown
+  description: Start the Tivoo countdown using MM:SS format.
+  fields:
+    countdown:
+      name: Countdown
+      description: Minutes and seconds, from 00:00 to 99:59.
+      required: true
+      selector:
+        text:
+
+set_brightness:
+  name: Set brightness
+  description: Set the Tivoo screen brightness from 0 to 100.
+  fields:
+    value:
+      name: Brightness
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+          unit_of_measurement: "%"

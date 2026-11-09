@@ -140,6 +140,7 @@ async def test_stop_countdown_tool_calls_the_existing_service_with_empty_data_an
     result = await api.async_call_tool(
         llm_helpers.ToolInput(tool_name=TOOL_NAME, tool_args={})
     )
+    await hass.async_block_till_done()
 
     assert result.data == {"status": "service_completed"}
     assert result.error is False

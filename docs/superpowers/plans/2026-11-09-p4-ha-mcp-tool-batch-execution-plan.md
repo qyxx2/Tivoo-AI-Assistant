@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
-> 状态：P4b0–P4b2 已完成；P4b3–P4b6 待执行。
+> 状态：P4b0–P4b3 已完成；P4b4–P4b6 待执行。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)
 > 合同权威来源：[P4 Tool Contract Matrix](../specs/2026-11-09-p4-ha-mcp-tool-contract-matrix.md)
@@ -160,27 +160,27 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 为 `tivoo.set_expression` 实现必需 `name`；只接受运行时 preset registry 中真实存在且非隐藏的预设名称，未知项拒绝。
-- [ ] 注册 `tivoo__SetExpression`，参数只包含 `name`；Tool 只调用 `tivoo.set_expression` HA Service。
-- [ ] 为 `tivoo.show_text` 实现必需 `value` 与可选 `color`、`background`、`speed`、`step`、`font_size`、`font`；`step=1–8`、`font_size=8–16`，`font` 必须来自有效字体列表。
-- [ ] 不在 Service 或 Tool schema 暴露 `font_file`；字体文件路径属于服务端资源，拒绝用户/LLM 传入本机路径。
-- [ ] 注册 `tivoo__ShowText`，参数与 HA Service 完全一致；Tool 只调用 `tivoo.show_text`。
-- [ ] 为 `tivoo.start_countdown` 增加必需 `countdown: string`；严格 `MM:SS`，分钟 00–99、秒 00–59；拒绝宽松格式、小时和静默截断。
-- [ ] `tivoo.start_countdown` 复用语义命令接缝，映射上游 `show_countdown(value=True, countdown=...)`；注册 `tivoo__StartCountdown`，Tool 只调用对应 Service。
-- [ ] 为 `tivoo.set_brightness` 注册 HA Service，`value: integer 0–100`；这是 MVP 必需服务，按原计划不注册重复 `SetBrightness` MCP Tool。
-- [ ] 在 `llm.py` 注册 `tivoo__SetVolume`，必需整数 `volume` 0–100；只调用 P4b1 已实现的 `tivoo.set_volume`，不复制音量映射/payload 逻辑。
-- [ ] ToolAnnotations：SetExpression、ShowText、StartCountdown 为 `idempotent=False`；SetVolume 为 `idempotent=True`；写操作统一 `read_only=False`、`destructive=False`、`open_world=False`、`integration="tivoo"`。
-- [ ] 所有 Tool 都使用 `hass.services.async_call(..., blocking=True, context=llm_context.context)` 调用服务，不得直达命令适配器。
-- [ ] 测试覆盖有效/无效 preset、文字样式上下界、禁止 `font_file`、倒计时格式边界、亮度 0/100 与越界、音量 0/100 与越界；音量 0 必须无损到达 b1 服务/适配器。
-- [ ] 优先复用与当前功能合同匹配的纯 payload/render builder，并添加或沿用 golden tests；先核对本机副本与固定上游 commit 的差异、保留来源声明。若某个具体模块确实不适合当前运行环境或边界，再仅为该模块做最小适配；不得因单独 LICENSE 文件缺失而重写整套 wire encoder。
+- [x] 为 `tivoo.set_expression` 实现必需 `name`；只接受运行时 preset registry 中真实存在且非隐藏的预设名称，未知项拒绝。
+- [x] 注册 `tivoo__SetExpression`，参数只包含 `name`；Tool 只调用 `tivoo.set_expression` HA Service。
+- [x] 为 `tivoo.show_text` 实现必需 `value` 与可选 `color`、`background`、`speed`、`step`、`font_size`、`font`；`step=1–8`、`font_size=8–16`，`font` 必须来自有效字体列表。
+- [x] 不在 Service 或 Tool schema 暴露 `font_file`；字体文件路径属于服务端资源，拒绝用户/LLM 传入本机路径。
+- [x] 注册 `tivoo__ShowText`，参数与 HA Service 完全一致；Tool 只调用 `tivoo.show_text`。
+- [x] 为 `tivoo.start_countdown` 增加必需 `countdown: string`；严格 `MM:SS`，分钟 00–99、秒 00–59；拒绝宽松格式、小时和静默截断。
+- [x] `tivoo.start_countdown` 复用语义命令接缝，映射上游 `show_countdown(value=True, countdown=...)`；注册 `tivoo__StartCountdown`，Tool 只调用对应 Service。
+- [x] 为 `tivoo.set_brightness` 注册 HA Service，`value: integer 0–100`；这是 MVP 必需服务，按原计划不注册重复 `SetBrightness` MCP Tool。
+- [x] 在 `llm.py` 注册 `tivoo__SetVolume`，必需整数 `volume` 0–100；只调用 P4b1 已实现的 `tivoo.set_volume`，不复制音量映射/payload 逻辑。
+- [x] ToolAnnotations：SetExpression、ShowText、StartCountdown 为 `idempotent=False`；SetVolume 为 `idempotent=True`；写操作统一 `read_only=False`、`destructive=False`、`open_world=False`、`integration="tivoo"`。
+- [x] 所有 Tool 都使用 `hass.services.async_call(..., blocking=True, context=llm_context.context)` 调用服务，不得直达命令适配器。
+- [x] 测试覆盖有效/无效 preset、文字样式上下界、禁止 `font_file`、倒计时格式边界、亮度 0/100 与越界、音量 0/100 与越界；音量 0 必须无损到达 b1 服务/适配器。
+- [x] 优先复用与当前功能合同匹配的纯 payload/render builder，并添加或沿用 golden tests；先核对本机副本与固定上游 commit 的差异、保留来源声明。若某个具体模块确实不适合当前运行环境或边界，再仅为该模块做最小适配；不得因单独 LICENSE 文件缺失而重写整套 wire encoder。
 
 **Exit gate:**
 
-- [ ] `SetExpression`、`ShowText`、`StartCountdown`、`SetVolume` 四个 Tool 均注册并映射到对应 HA Service。
-- [ ] `SetBrightness` HA Service 注册且范围为 0–100；没有创建同义 MCP Tool。
-- [ ] preset、文字、倒计时、亮度、音量的正常/异常参数测试通过；字体本地路径不从 Tool 输入到达。
-- [ ] 服务/适配器错误向上传播，没有成功字符串伪装。
-- [ ] 聚焦测试、P4b2 回归、P3 测试、Ruff 与 `git diff --check` 通过。
+- [x] `SetExpression`、`ShowText`、`StartCountdown`、`SetVolume` 四个 Tool 均注册并映射到对应 HA Service。
+- [x] `SetBrightness` HA Service 注册且范围为 0–100；没有创建同义 MCP Tool。
+- [x] preset、文字、倒计时、亮度、音量的正常/异常参数测试通过；字体本地路径不从 Tool 输入到达。
+- [x] 服务/适配器错误向上传播，没有成功字符串伪装。
+- [x] 聚焦测试、P4b2 回归、P3 测试、Ruff 与 `git diff --check` 通过。
 
 **Commit:** `feat(p4): implement Tivoo expression text countdown and brightness MVP`
 
