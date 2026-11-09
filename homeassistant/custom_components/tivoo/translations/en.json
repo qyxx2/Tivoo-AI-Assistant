@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Tivoo",
+        "description": "Choose the media directory relative to the Home Assistant configuration directory.",
+        "data": {
+          "media_directory": "Media directory"
+        }
+      }
+    }
+  }
+}

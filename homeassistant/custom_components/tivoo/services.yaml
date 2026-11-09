@@ -1,0 +1,19 @@
+stop_countdown:
+  name: Stop countdown
+  description: Stop the currently active Tivoo countdown.
+
+set_volume:
+  name: Set volume
+  description: Set the Tivoo speaker volume from mute to maximum.
+  fields:
+    volume:
+      name: Volume
+      description: 0 is mute and 100 is maximum volume.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+          unit_of_measurement: "%"

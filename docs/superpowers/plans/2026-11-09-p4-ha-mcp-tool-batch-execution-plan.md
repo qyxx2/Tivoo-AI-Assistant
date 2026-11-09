@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
-> 状态：仅计划，尚未实现。
+> 状态：P4b0、P4b1 已完成；P4b2–P4b6 待执行。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)
 > 合同权威来源：[P4 Tool Contract Matrix](../specs/2026-11-09-p4-ha-mcp-tool-contract-matrix.md)
@@ -96,22 +96,24 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 先写 RED：HA 能发现并加载集成、Config Entry setup/unload、单实例约束和 `media_directory` 默认配置行为。
-- [ ] 先写 RED：注册 `tivoo.stop_countdown`，无必需参数；传入不允许的参数/缺失服务必须明确报错。
-- [ ] 先写 RED：注册 `tivoo.set_volume`，必需字段 `volume: integer`，范围 0–100（含边界）；确认 0 不会被当成缺省值。
-- [ ] 定义一个受限的语义命令接缝：本批传递 `stop_countdown`、`set_volume`，后续按 MVP 批次增加已明确的表情、文字、亮度、倒计时和媒体动作；不接受任意 domain/service 或原始协议帧。
-- [ ] 测试使用内存适配器捕获 StopCountdown 和 SetVolume 请求；未配置生产设备适配器时使用明确的 unavailable 实现并抛出 HA 可识别错误。
-- [ ] StopCountdown 的服务调用不得要求启动时长，不读取或保存倒计时剩余时间。
-- [ ] SetVolume 必须精确保留输入 0、100；拒绝小于 0、大于 100 和非整数。服务处理不得使用 `volume or default`。
-- [ ] 服务注册与卸载跟随 Config Entry 生命周期，避免重复注册或卸载后残留 handler。
-- [ ] 只使用 HA 原生集成/服务机制；不添加 TCP socket、SPP、ESP32 连接或命令帧编码。
+- [x] 先写 RED：HA 能发现并加载集成、Config Entry setup/unload、单实例约束和 `media_directory` 默认配置行为。
+- [x] 先写 RED：注册 `tivoo.stop_countdown`，无必需参数；传入不允许的参数/缺失服务必须明确报错。
+- [x] 先写 RED：注册 `tivoo.set_volume`，必需字段 `volume: integer`，范围 0–100（含边界）；确认 0 不会被当成缺省值。
+- [x] 定义一个受限的语义命令接缝：本批传递 `stop_countdown`、`set_volume`，后续按 MVP 批次增加已明确的表情、文字、亮度、倒计时和媒体动作；不接受任意 domain/service 或原始协议帧。
+- [x] 测试使用内存适配器捕获 StopCountdown 和 SetVolume 请求；未配置生产设备适配器时使用明确的 unavailable 实现并抛出 HA 可识别错误。
+- [x] StopCountdown 的服务调用不得要求启动时长，不读取或保存倒计时剩余时间。
+- [x] SetVolume 必须精确保留输入 0、100；拒绝小于 0、大于 100 和非整数。服务处理不得使用 `volume or default`。
+- [x] 服务注册与卸载跟随 Config Entry 生命周期，避免重复注册或卸载后残留 handler。
+- [x] 只使用 HA 原生集成/服务机制；不添加 TCP socket、SPP、ESP32 连接或命令帧编码。
 
 **Exit gate:**
 
-- [ ] Tivoo Config Entry 可 setup/unload，服务恰好注册一次并能正确卸载。
-- [ ] 无参数 StopCountdown 与 SetVolume（0–100）两个服务均通过测试适配器生成明确的语义命令；生产适配器缺失时调用失败而非伪成功。
-- [ ] 没有接入 P3 Conversation Agent、HA MCP 路由或任何 ESP32 传输代码。
-- [ ] 聚焦测试、相关 P3 回归、Ruff、compileall（适用时）和 `git diff --check` 通过。
+- [x] Tivoo Config Entry 可 setup/unload，服务恰好注册一次并能正确卸载。
+- [x] 无参数 StopCountdown 与 SetVolume（0–100）两个服务均通过测试适配器生成明确的语义命令；生产适配器缺失时调用失败而非伪成功。
+- [x] 没有接入 P3 Conversation Agent、HA MCP 路由或任何 ESP32 传输代码。
+- [x] 聚焦测试、相关 P3 回归、Ruff、compileall（适用时）和 `git diff --check` 通过。
+
+**Evidence:** [P4b1 实施报告](../reports/2026-11-09-p4b1-implementation-report.md)。
 
 **Commit:** `feat(p4): add Tivoo HA integration with countdown stop and volume services`
 
