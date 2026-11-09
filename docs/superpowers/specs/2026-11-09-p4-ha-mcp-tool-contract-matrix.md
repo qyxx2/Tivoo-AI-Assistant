@@ -194,37 +194,49 @@ AstrBot 4.29.4 的 MCP Client 对连接关闭错误有自动重连和一次重�
 
 ## 4. Tivoo 自定义工具矩阵
 
-下表中的服务名称来自项目 README 的既有规划；底层方法名/参数来自本机 Tivoo Python 代码。HA 服务实现尚未存在，因此“候选输入”用于明确可复用的现有接口，“待定”部分不得在实现时凭感觉补字段。
+下表中的服务名称来自项目 README 的既有规划；底层方法名/参数来自本机 Tivoo Python 代码，并补充核对了 `solar2ain/tivoo-control`、`d03n3rfr1tz3/esp32-divoom` 和其 HA 集成 `d03n3rfr1tz3/hass-divoom` 的实际实现。媒体文件引用与倒计时停止语义已有上游依据，不再列为未知接口。
 
 | 业务能力 | HA 服务/候选 MCP Tool | 现有实现依据 | 参数合同与边界 | P4 暴露决策 |
 |---|---|---|---|---|
 | 表情预设 | 服务 `tivoo.set_expression`；工具名建议 `tivoo__SetExpression` | `TivooDisplay.preset(name)`；`tivoo.py` 的 `_load_all_presets()`、`presets/` 工厂函数 | 唯一输入沿用现有预设名称 `name`；必须按现有注册表过滤隐藏项/未知项，不由模型自由生成图片字节。枚举值由运行时实际 preset registry 产生，不在本合同抄写一份会过期的列表 | 作为 P4 首批自定义工具 |
-| 动画播放 | 服务 `tivoo.play_animation`；工具名建议 `tivoo__PlayAnimation` | `TivooDisplay.animation(frames, delays)`，底层 `build_image_frame()`、0x49 分块发送 | 现有 Python 接口需要帧数组与 delays；MCP 不应承载原始像素帧或大型数组。项目目前没有已实现的 animation asset ID/URI/查询接口，因此工具参数尚不能冻结 | 服务名保留；在资产引用合同落实前不向 Agent 发布原始帧参数或虚构 `animation_id` |
+| 动画播放 | 服务 `tivoo.play_animation`；工具名建议 `tivoo__PlayAnimation` | `solar2ain/tivoo-control` 的 `anim(path)` 支持 GIF；HA 上游 `hass-divoom` 的 `image(file, time)` 通过 `Image.open()` 读取 GIF 多帧，再按 0x49 分块发送 | `file: string`，相对于集成配置的 `media_directory`；首期只接受 GIF 文件作为动画资源，可选 `time` 覆盖每帧毫秒数。MCP 不承载原始帧数组；目录动画和 JSON stage 文件不是 HA `image` 服务已支持的资源类型 | 作为 P4 自定义工具；复用 `hass-divoom` 文件引用与 GIF 解码模式，不创建 asset ID/URI |
 | 文字显示 | 服务 `tivoo.show_text`；工具名建议 `tivoo__ShowText` | `TivooDisplay.text(value, color, background, speed, step, font_size, font, font_file)`；`tivoo.py` 的 `_gen_text_frames()` | 文本主参数沿用现有方法的 `value`；可选样式只能映射到现有方法支持的 color/background/speed/step/font_size/font。不得把本机文件路径 `font_file` 暴露给 LLM。step 与 font_size 的已知 CLI 范围分别是 1–8、8–16；服务层最终 Schema 应与实际渲染函数校验一致 | 作为 P4 首批自定义工具；不暴露文件路径 |
-| 图片显示 | 服务 `tivoo.show_image`；工具名建议 `tivoo__ShowImage` | `TivooDisplay.image(path, timecode, resample)`；`image_file_to_pixels()`、`build_image_frame()`、0x44 静态图片帧 | 现有 Python API 使用本机 path，但项目尚无面向 HA/AstrBot 的稳定媒体资源引用格式。不得把 NAS 任意绝对路径作为模型输入，也不得把图片二进制/调色板数据塞入 MCP 参数 | 服务名保留；资源 ID/URI 与授权边界未定义前不发布给 Agent |
+| 图片显示 | 服务 `tivoo.show_image`；工具名建议 `tivoo__ShowImage` | `TivooDisplay.image(path, timecode, resample)`；HA 上游 `hass-divoom` 的 `divoom.image(file, time)` 同时支持静态图片和 GIF；`process_image()` 处理 PNG/JPG/GIF 帧并复用原有帧编码 | `file: string`，相对于配置的 `media_directory`；支持 Pillow 可读取的静态图片文件，GIF 也会被识别为多帧。可选 `time: integer`（0–65535 ms）覆盖 GIF 帧间隔；未提供则沿用 GIF 自带帧时长。禁止传 NAS 任意绝对路径、URL、原始图片字节或调色板数据 | 作为 P4 首批自定义工具；与动画工具共用同一文件引用根目录和图像编码通路 |
 | 亮度 | HA 服务 `tivoo.set_brightness`；默认不创建重复 MCP Tool | `TivooDisplay.brightness(value)`；payload 0x74，范围 0–100；HA 实体规划 `number.tivoo_brightness` | MCP 控制优先走 number 实体的原生控制工具；服务和 number 实体必须使用相同 0–100 语义 | 服务保留；通过原生实体暴露 AI 控制 |
-| 倒计时启动 | 服务 `tivoo.start_countdown`；工具名建议 `tivoo__StartCountdown` | `TivooDisplay.countdown(minutes, seconds, start=True)`；`commands.countdown_payload()`；payload 0x72 0x03 | minutes 为 0–99，seconds 为 0–59；默认 seconds=0。倒计时语义是 MM:SS，不是小时/分钟。真实 Tivoo 固件支持仍需实机验收 | 可注册；将硬件能力状态标为待 P5/P6 实测 |
-| 倒计时停止 | 服务 `tivoo.stop_countdown`；工具名建议 `tivoo__StopCountdown` | 同一个 `TivooDisplay.countdown(minutes, seconds, start=False)`；payload 0x72 0x03 | 当前已有方法停止时仍要求传入原倒计时的 minutes/seconds（seconds 默认为 0，原时长的 seconds 为 0 时可省略）。项目 README 只列出 stop 服务名称，没有无参数停止接口。首版合同按现有方法要求传入原时长；不得擅自假设设备保存值可被无参数停止 | 需在 P4 实现前固定服务输入；如要求无参停止，需先设计状态保存，不可直接猜测 |
+| 倒计时启动 | 服务 `tivoo.start_countdown`；工具名建议 `tivoo__StartCountdown` | `TivooDisplay.countdown(minutes, seconds, start=True)`；`commands.countdown_payload()`；上游 `show_countdown(value=True, countdown="MM:SS")`；payload 0x72 0x03 | `countdown: string`，格式 `MM:SS`；分钟 00–99、秒 00–59。上游 HA 集成也接受 `HH:MM:SS`，但会忽略小时，只取末尾 `MM:SS`；本项目首期统一使用 `MM:SS` | 可注册；将硬件能力状态标为待 P5/P6 实测 |
+| 倒计时停止 | 服务 `tivoo.stop_countdown`；工具名建议 `tivoo__StopCountdown` | 上游 `show_countdown(value=False, countdown=None)`；ESP32 `Divoom::show_countdown()` 在 countdown 缺省时发送 `0x72 0x03 0x00 0x00 0x00` | **无必需参数**。停止时不需要重传启动时长、不需要 HA 保存当前倒计时；缺省时长按上游实现编码为 `00:00`。本机 `commands.countdown_payload()` 的 minutes 参数是必填的内部函数参数，适配时传 `minutes=0, seconds=0, start=False` 即可，不应暴露给 LLM | 可注册为无参数停止工具；实机支持仍需 P5/P6 验收 |
 | 内置 Timer | 不在当前 README 的 P4 工具列表中 | `TivooDisplay.timer(start=True)`；payload 0x72 0x00 | 与 MM:SS 倒计时 0x72 0x03 是两个不同命令。不能把 stop_countdown 偷换成 timer(False) | 不自动加入 P4；另有明确需求再纳入 |
 | 其他 Divoom 命令 | 不作为 P4 默认工具 | `commands.py` 还有 volume/playstate/date/weather/alarm/memorial/radio/sleep/effects/visualization/design/game 等构建器 | 上游通用 Divoom 实现及离线 payload 测试，不等于当前 Tivoo 固件已支持；项目目标也未要求全部暴露 | 不加入首期 Tool list；逐项实测和需求确认后再评估 |
 
 ### 4.1 首期可冻结的输入字段
 
-以下字段名直接沿用现有 Python API；实际 HA 服务 Schema 与 MCP Tool Schema 必须保持一致，不得在 Tool 层再次改名。此处只定义已有实现可以支撑的字段；资源引用尚未存在的功能继续保持未发布状态。
+服务字段以已核对的 HA 上游 Divoom 服务合同为主，本机 Python API 作为 payload 构建层；MCP Tool Schema 与 HA 服务 Schema 必须保持一致，不得在 Tool 层再次改名。媒体路径使用集成配置的 `media_directory` 相对路径，不是 asset ID/URL。
 
 | 服务 | 必需字段 | 可选字段 | 类型/约束来源 |
 |---|---|---|---|
 | `tivoo.set_expression` | `name: string` | 无 | `TivooDisplay.preset(name)`；有效值由运行时 preset registry 决定，隐藏项/未知项拒绝 |
 | `tivoo.show_text` | `value: string` | `color: string`、`background: string`、`speed: integer`、`step: integer`、`font_size: integer`、`font: string` | 对齐 `TivooDisplay.text()`；`step` 沿用 CLI 1–8，`font_size` 沿用 CLI 8–16，`font` 必须来自 `FONT_NAMES`；不暴露 `font_file` |
-| `tivoo.start_countdown` | `minutes: integer` | `seconds: integer`（默认 0） | 对齐 `countdown_payload()`：minutes 0–99、seconds 0–59，含义为 MM:SS |
-| `tivoo.stop_countdown` | `minutes: integer` | `seconds: integer`（默认 0） | 必须对应启动时传入的原始时长；不是无参数 stop |
+| `tivoo.start_countdown` | `countdown: string`（`MM:SS`） | 无 | 对齐上游 `countdown` 字符串语义；分钟 00–99、秒 00–59 |
+| `tivoo.stop_countdown` | 无 | 无 | 对齐上游 `value=false` 且 `countdown` 缺省时发送 `00:00`；无需保留上次时长 |
 | `tivoo.set_brightness`（服务，不单独注册 Tool） | `value: integer` | 无 | 对齐 `TivooDisplay.brightness()` 与 `number.tivoo_brightness`：0–100 |
-| `tivoo.show_image` | 暂无 | 暂无 | 资源引用格式未定义，不接受任意 path |
-| `tivoo.play_animation` | 暂无 | 暂无 | 当前 API 的 frames/delays 不适合作为 MCP 输入，等待资产引用合同 |
+| `tivoo.show_image` | `file: string` | `time: integer`（0–65535 ms） | `file` 相对于配置的 `media_directory`；静态 PNG/JPG 或 GIF；GIF 默认使用文件内帧时长 |
+| `tivoo.play_animation` | `file: string` | `time: integer`（0–65535 ms） | `file` 相对于同一 `media_directory`；首期限定 GIF，`time` 可覆盖 GIF 帧间隔；目录动画/JSON stage 暂不暴露 |
 
-`show_text` 的 `font_file` 是服务端本地文件路径参数，不属于 LLM 可输入面；字体只允许通过已安装的字体名称选择。`show_image` 和 `play_animation` 不因为 README 已列出服务名称就自动得到一套猜测出来的参数结构。
+`show_text` 的 `font_file` 是服务端本地文件路径参数，不属于 LLM 可输入面；字体只允许通过已安装的字体名称选择。
 
-### 4.2 工具命名建议
+### 4.2 媒体文件引用合同
+
+复用 HA 上游 `d03n3rfr1tz3/hass-divoom` 已有的文件引用方式，不再引入 asset ID、URI 或 HTTP URL：
+
+- Tivoo 集成配置使用 `media_directory`，按上游实现通过 `hass.config.path()` 相对 HA 配置目录解析；首期默认值沿用上游常量 `pixelart`。
+- 工具的 `file` 是相对于该目录的文件路径，例如 `generated/hello.gif`，不是 NAS 绝对路径。
+- 解析后必须确认规范化路径仍位于 `media_directory` 内；上游 `_resolve_path()` 使用 `realpath()` 和 `commonpath()` 拒绝越界文件。
+- 静态图片沿用现有 Pillow `Image.open()` → `process_image()` → `send_frames()` 编码通路。GIF 的所有帧会自动读取；未传 `time` 时沿用 GIF 自带的 frame duration，传入时覆盖每帧时间。
+- `solar2ain/tivoo-control` 的 `anim(path)` 还支持帧目录；其 `prepare` / `send` 使用本地 JSON stage 文件，结构是 `frames` 与 `delays`。这些是 CLI 本地文件工作流，不是 HA 上游 `image` 服务支持的格式。P4 首期只暴露静态图片文件和 GIF，不暴露目录、JSON stage、原始帧数组或任意 URL。
+
+`show_image` 与 `play_animation` 是项目对模型暴露的语义化工具；底层共享同一文件根目录、GIF 解码和 Tivoo 帧发送通路，不应再实现两套媒体协议。若后续不需要区分静态/动画两个工具，也可只保留上游风格的统一 `show_image(file, time)` 动作，但不影响本合同的 `file` 语义。
+
+### 4.3 工具命名建议
 
 P4 新增的项目自有 Tool 使用 HA 域名前缀：
 
@@ -234,12 +246,14 @@ P4 新增的项目自有 Tool 使用 HA 域名前缀：
 | `tivoo__ShowText` | `tivoo.show_text` |
 | `tivoo__StartCountdown` | `tivoo.start_countdown` |
 | `tivoo__StopCountdown` | `tivoo.stop_countdown` |
+| `tivoo__ShowImage` | `tivoo.show_image` |
+| `tivoo__PlayAnimation` | `tivoo.play_animation` |
 
-`tivoo__PlayAnimation` 与 `tivoo__ShowImage` 是预留名称，资源输入合同确定后才加入实际工具列表。若实现者需要调整大小写或工具显示名，应保持稳定、唯一、以 `tivoo__` 开头，并同步更新测试矩阵。
+`ShowImage` 与 `PlayAnimation` 使用上节已经冻结的 `file` / `time` 输入，不另建资源 ID 或帧数组参数。若实现者需要调整工具显示名，应保持稳定、唯一、以 `tivoo__` 开头，并同步更新测试矩阵。
 
 不为 `number.tivoo_brightness` 再注册同义 Tool。不要用原始协议命令号作为 LLM 工具名或参数。
 
-### 4.3 ToolAnnotations
+### 4.4 ToolAnnotations
 
 HA 的 ToolAnnotations 默认值偏保守（默认不是只读、destructive、非幂等、open-world）。每个 Tivoo Tool 应显式声明，不依赖默认值：
 
@@ -354,8 +368,8 @@ P4b1 若依赖的某个 Tivoo 服务尚无真实 handler，可以使用测试替
 | P4-C06 | 工具注册过滤 | Tivoo `llm.py` 只向 `assist` API 提供项目工具；不注册进 HA 管理 API | P4 |
 | P4-C07 | 服务复用 | Tool 调用对应的 `tivoo.*` HA 服务，参数校验和业务逻辑与自动化/脚本共用 | P4 |
 | P4-C08 | 失败传播 | 不合法参数、服务不存在、设备不可用等情况不会返回伪成功；MCP 返回 error | P4 |
-| P4-C09 | 参数范围 | 亮度 0–100、倒计时 minutes 0–99/seconds 0–59 等边界与既有 builder 一致；非法值拒绝 | P4 |
-| P4-C10 | 媒体参数边界 | 未定义可部署媒体引用前，工具列表不接受任意 NAS 路径、原始图片字节或原始动画帧数组 | P4 |
+| P4-C09 | 参数范围 | 亮度 0–100、倒计时 `MM:SS`（分钟 00–99/秒 00–59）；停止工具无必需参数并编码为 `72 03 00 00 00` | P4 |
+| P4-C10 | 媒体参数边界 | `file` 相对于 `media_directory`；静态图片/GIF 可读，路径越界被拒绝；不接受任意绝对路径、URL、原始图片字节或帧数组 | P4 |
 | P4-C11 | P3 回归 | P3 HTTP Chat、session_id、SSE → ChatLog 行为不因 MCP 改动发生变化；MCP 不作为文本 STT 入口 | P4 |
 | P4-C12 | 断线与重试 | 按 AstrBot 4.29.4 MCP Client 实际行为验证重连；记录非幂等动作在响应丢失时是否重复 | P4 |
 | P4-C13 | 设备传输隔离 | AstrBot 没有 TCP 7777/7778、SPP、ESP32 连接；所有操作经过 HA 服务层 | P4 |
@@ -365,13 +379,12 @@ P4b1 若依赖的某个 Tivoo 服务尚无真实 handler，可以使用测试替
 
 这些问题是当前代码/规格尚未给出答案的真实缺口，不得在实现时猜测：
 
-1. **媒体资源引用**：`show_image` 的本机 API 使用 path，`play_animation` 使用 frames/delays；项目没有已经实现的跨 HA 服务边界的 asset ID/URI、访问控制和生命周期接口。先复用/设计项目 Tivoo Gateway 的资源入口，再决定 MCP 参数。首期不允许 LLM 传入任意绝对文件路径。
-2. **动画资源类型**：已有 preset 是 Python 工厂函数，可直接通过 `set_expression` 映射；一般动画文件/生成动画的资产标识、落盘路径、清理策略尚未定义。不要把整个 pixel frame 列表放进 MCP。
-3. **倒计时停止**：现有 `TivooDisplay.countdown(minutes, seconds, start=False)` 停止时仍需要提供 minutes，seconds 默认 0；调用方应传入启动时使用的原时长。README 的 `stop_countdown` 还没有正式参数说明。如需无参数停止，先补设计并明确如何保存当前倒计时。
-4. **Tivoo 固件功能兼容性**：payload builder 和离线测试只证明字节构建，不证明当前 Tivoo 固件支持所有 Divoom 扩展命令。特别是 countdown/timer、weather、alarm 等需实机逐项验证。P4 工具清单只放有明确需求且测试通过的能力。
-5. **协议代码可部署形式与许可证**：本机 Tivoo SDK 位于另一个工作区；需要检查其上游许可证、确认允许的复用方式，并保留版权声明。esp32-divoom 参考代码的许可证与 Tivoo Python 源码的许可证要分别核实，不可把一个仓库的许可证推定到另一个仓库。
-6. **MCP 其他集成工具的集合影响**：`/api/mcp/assist` 使用 HA Assist API 汇总的 LLM Tools。后续若 HA 安装更多第三方 LLM Tool 平台，它们也可能进入同一 Assist API 工具集合；P4 应在实际环境中检查最终清单，不应假定它只包含 Tivoo 工具。
-7. **主动播报/会话启动**：README 中 `assist_satellite.announce` 与 `assist_satellite.start_conversation` 是主动交互链路需要的 HA 操作；当前 HA Assist API 的原生工具并不等于任意 HA Service 调用器。若后续需要让 AstrBot 通过 MCP 执行这两个动作，必须为明确的业务操作注册受限 Tool，并依据 HA Core 对应服务 Schema，不允许增加通用 service-call Tool。本项归属主动交互接入阶段，P4 不擅自扩大范围。
+1. **动画资源类型边界**：`solar2ain/tivoo-control` 的 `anim(path)` 支持 GIF 或帧目录，`prepare` / `send` 支持本地 JSON stage（`frames` / `delays`）；HA 上游 `hass-divoom` 的 `image(file,time)` 通过 Pillow `Image.open()` 读取文件，已有静态图/GIF 能力，但没有帧目录或 JSON stage 输入。P4 首期按 HA 可复用接口只接受静态图片/GIF；目录和 stage JSON 暂不支持，不为此新增自定义资源格式。
+2. **AstrBot 生成文件落盘位置**：上游服务的 `file` 必须位于 HA 配置的 `media_directory` 之下。AstrBot 生成图片/动画后如何将文件安全放入该目录，属于部署/集成文件交接问题，不是 MCP 媒体 URI 协议；P4 实现时必须验证这条文件交接链，不应因此放开任意绝对路径或公网 URL。
+3. **Tivoo 固件功能兼容性**：payload builder 和离线测试只证明字节构建，不证明当前 Tivoo 固件支持所有 Divoom 扩展命令。倒计时停止报文有上游实现，但当前 Tivoo 固件是否实际响应仍需实机验收；weather、alarm 等也需逐项验证。P4 工具清单只放有明确需求且测试通过的能力。
+4. **协议代码可部署形式与许可证**：本机 Tivoo SDK 位于另一个工作区；需要检查其上游许可证、确认允许的复用方式，并保留版权声明。esp32-divoom、hass-divoom 与 Tivoo Python 源码的许可证分别核实，不可把一个仓库的许可证推定到另一个仓库。
+5. **MCP 其他集成工具的集合影响**：`/api/mcp/assist` 使用 HA Assist API 汇总的 LLM Tools。后续若 HA 安装更多第三方 LLM Tool 平台，它们也可能进入同一 Assist API 工具集合；P4 应在实际环境中检查最终清单，不应假定它只包含 Tivoo 工具。
+6. **主动播报/会话启动**：README 中 `assist_satellite.announce` 与 `assist_satellite.start_conversation` 是主动交互链路需要的 HA 操作；当前 HA Assist API 的原生工具并不等于任意 HA Service 调用器。若后续需要让 AstrBot 通过 MCP 执行这两个动作，必须为明确的业务操作注册受限 Tool，并依据 HA Core 对应服务 Schema，不允许增加通用 service-call Tool。本项归属主动交互接入阶段，P4 不擅自扩大范围。
 
 ## 10. 参考实现与文档
 
@@ -389,6 +402,15 @@ P4b1 若依赖的某个 Tivoo 服务尚无真实 handler，可以使用测试替
 - `/home/Gold/WorkSpace/BluetoothBridgeTest/esp32-divoom/components/divoom/util.cpp`
 - `/home/Gold/WorkSpace/BluetoothBridgeTest/esp32-divoom/components/divoom/bluetooth_spp.cpp`
 - `/home/Gold/WorkSpace/BluetoothBridgeTest/esp32-divoom/components/divoom/output_bluetooth.cpp`
+
+### 已核对的上游资源与命令合同
+
+- [solar2ain/tivoo-control README](https://github.com/solar2ain/tivoo-control/blob/main/README.md)：`image <path>`、`anim <path>`（GIF/帧目录）、`prepare` / `send` stage 工作流。
+- [solar2ain/tivoo-control `tivoo_macos.py`](https://github.com/solar2ain/tivoo-control/blob/main/tivoo_macos.py)：`anim(path)` 的 GIF/目录读取，以及 stage JSON 的 `frames` / `delays` 结构。
+- [d03n3rfr1tz3/esp32-divoom README](https://github.com/d03n3rfr1tz3/esp32-divoom/blob/main/README.md)：`MODE countdown [value] [countdown]`，value=0 停止、value=1 启动，时间为 `mm:ss`。
+- [esp32-divoom `components/divoom/divoom.cpp`](https://github.com/d03n3rfr1tz3/esp32-divoom/blob/main/components/divoom/divoom.cpp)：缺省 countdown 字符串时将时间字节置为 0、0；停止不要求上次时长。
+- [d03n3rfr1tz3/hass-divoom README](https://github.com/d03n3rfr1tz3/hass-divoom/blob/main/README.md)：`divoom.image` 的 `file` 相对 `media_directory`、静态/动画文件与可选帧间隔；`divoom.countdown` 的 value 必填、countdown 可选。
+- [hass-divoom `custom_components/divoom/services.py`](https://github.com/d03n3rfr1tz3/hass-divoom/blob/main/custom_components/divoom/services.py)、[`notify.py`](https://github.com/d03n3rfr1tz3/hass-divoom/blob/main/custom_components/divoom/notify.py)、[`devices/divoom.py`](https://github.com/d03n3rfr1tz3/hass-divoom/blob/main/custom_components/divoom/devices/divoom.py)：媒体根目录校验、GIF 多帧解码及倒计时缺省字段的实际实现。
 
 ### 上游与官方源码
 
