@@ -18,4 +18,4 @@ if [[ "$#" -eq 0 ]]; then
   set -- tests
 fi
 
-exec "${PYTHON_BIN}" -m pytest -p pytest_homeassistant.bootstrap -p pytest_asyncio.plugin "$@"
+exec "${PYTHON_BIN}" -m pytest -p pytest_homeassistant.bootstrap -p pytest_asyncio.plugin -p pytest_socket "$@"

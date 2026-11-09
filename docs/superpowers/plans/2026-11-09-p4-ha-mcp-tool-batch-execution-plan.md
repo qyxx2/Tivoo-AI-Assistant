@@ -231,27 +231,27 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 在 AstrBot WebUI 添加 HA MCP Server；凭据由用户/现有安全配置入口录入，不写入 Git、计划、截图、日志或测试 fixture。
-- [ ] 确认 MCP initialize 成功，`tools/list` 发现七个 MVP Tool：SetExpression、ShowText、StartCountdown、StopCountdown、SetVolume、ShowImage、PlayAnimation。
-- [ ] 将七个 MVP Tool 授权给实际 Tivoo 助手使用的 Agent Persona；确认它们进入 Persona 的可调用工具集。
-- [ ] 检查完整 `tools/list`：HA Assist API 可能聚合其他集成工具；按 integration/source 区分，只要求本项目七个 MVP Tool 完整出现。
-- [ ] 在独立开发 HA（启用内存测试适配器）环境通过 MCP 调用七个工具，验证每个 `tools/call` 经过 HA LLM Tool → 对应 HA Service → 语义 Adapter；图片/GIF 使用 HA media directory 中的测试文件。
-- [ ] 通过 HA Service 直接调用 `tivoo.set_brightness`，验证 0、100、越界输入；此服务不要求存在同义 MCP Tool。
-- [ ] 对 StartCountdown、StopCountdown、SetVolume 分别验证参数到达适配器；SetVolume 测试 0 和 100；验证服务错误作为 MCP tool error 返回。
-- [ ] 验证有效普通用户 Token 可访问 Assist API，错误 Token 被拒绝；确认不会授予 AstrBot HA 管理权限。
-- [ ] 验证 AstrBot MCP 断开重连和 4.29.4 实际重试行为；对非幂等动作使用测试适配器模拟响应丢失，不在真实 Tivoo 上重复触发动画或倒计时。
-- [ ] 若目标 HA/AstrBot 环境不可访问或没有可用凭据，完成本地协议/接口验证后将对应运行时项标为 BLOCKED；不读取 NAS 配置文件寻找 Token，也不以静态配置猜测连接成功。
+- [ ] **BLOCKED（目标环境不可用）**：在 AstrBot WebUI 添加 HA MCP Server。凭据仍只能由用户在现有安全配置入口录入，不写入 Git、计划、截图、日志或测试 fixture。
+- [x] 在开发机使用 MCP 2.3.0 Streamable HTTP 客户端对 HA 原生 `/api/mcp/assist` 完成 initialize 和 `tools/list`；普通用户下发现七个 Tivoo MVP Tool。**AstrBot 4.29.4 实例内的 initialize/list 仍 BLOCKED**，不能用客户端 SDK 测试替代。
+- [ ] **BLOCKED（目标环境不可用）**：将七个 MVP Tool 授权给实际 Tivoo Agent Persona，并确认 Persona 的可调用工具集。不得根据配置推测授权已生效。
+- [x] 本地协议测试对完整列表按 `tivoo__` 前缀筛选，只核对七个项目 Tool；不假设 HA Assist 总工具数等于七。
+- [x] 在开发机本地 HA 测试应用中通过真实 Streamable HTTP 请求调用七个工具，验证 MCP `tools/call` → HA LLM Tool → HA Service → 内存语义 Adapter；图片/GIF 使用临时 `media_directory` 测试文件。该证据不是 AstrBot Persona 运行时证据。
+- [x] 通过 HA Service 验证 `tivoo.set_brightness` 接受 0 和 100，101 由 HA Schema 拒绝；未新增 `SetBrightness` MCP Tool。
+- [x] 本地 MCP HTTP 测试验证 StartCountdown、无参 StopCountdown、SetVolume 0/100 的参数到达内存适配器；另验证 Service/Adapter 异常映射为 MCP `is_error=true`。
+- [x] 使用测试内临时创建的普通 HA 用户 LLAT 验证 Assist MCP 访问；无效 Bearer Token 返回 401。Token 不进入 fixture 文件、日志或报告；普通用户不是管理员。
+- [ ] **BLOCKED（AstrBot 运行时不可用）**：无法对 4.29.4 做真实断线/响应丢失故障注入。已按固定提交源码核对：`ClosedResourceError` 会触发重连后重发工具调用；Tenacity `stop_after_attempt(2)` 表示最多两次总尝试（初次加一次重试）。对非幂等动作存在响应丢失后重复执行风险；本批没有叠加自定义重试层，也未触发真实设备动作。
+- [x] 目标 AstrBot/HA 运行时不可访问且没有可用凭据；已完成本地协议/接口验证，并将实际 AstrBot/Persona/重连运行时项标为 BLOCKED。未访问 NAS、未搜集 Token、未用静态配置推测连接状态。
 
 **Exit gate:**
 
-- [ ] AstrBot 4.29.4 完成 HA Streamable HTTP initialize 和七个 MVP Tool 的发现。
-- [ ] 目标 Persona 已获准使用全部七个 MVP Tool；独立开发 HA 与内存适配器可用时，七个工具均完成一次端到端工具调用。
-- [ ] 亮度 HA Service 的成功/参数错误路径有运行时或自动化测试证据。
-- [ ] 普通 HA 用户认证、无效 Token 拒绝、服务异常映射均有证据。
-- [ ] 非幂等 Tool 的重连/重试风险有可复现测试记录；没有叠加自定义通用重试层。
-- [ ] Token 没有进入仓库、测试输出或验收报告。
+- [ ] **BLOCKED**：AstrBot 4.29.4 实例内的 HA initialize 和工具发现未能实测；本地 HA MCP endpoint 由 MCP SDK 客户端完成 initialize/list。
+- [ ] **BLOCKED（Persona 授权）**；本地 HA MCP → LLM Tool → Service → 内存 Adapter 的七项调用 PASS，但未通过实际 Persona 发起。
+- [x] 亮度 HA Service 的 0、100 成功与 101 Schema 错误有自动化测试证据。
+- [x] 普通用户 LLAT、无效 Token 401、服务异常 MCP tool error 均有自动化证据。
+- [ ] **PARTIAL / BLOCKED**：固定版本源码已确认重连与一次重试实现及非幂等重放风险；响应丢失故障注入因 AstrBot 运行时不可用未能复现。没有添加额外重试层。
+- [x] Token 仅在测试进程内短暂生成；未写入仓库文件、测试日志或验收报告。
 
-**Commit:** `test(p4): verify AstrBot access to all Tivoo MVP tools`
+**Commit:** `test(p4): verify HA Assist MCP access to Tivoo tools`
 
 ## 10. P4b6 — 合同矩阵验收与收尾
 
