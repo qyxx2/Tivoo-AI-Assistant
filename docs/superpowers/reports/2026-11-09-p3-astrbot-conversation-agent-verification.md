@@ -91,3 +91,14 @@ README 中的 P3 项目状态本次保持不变：由于真实 HA/AstrBot 验收
 - AstrBot 自定义集成已部署并重启 HA 容器；真实 HA UI / AstrBot 业务验收仍由用户手动进行并保持 BLOCKED。
 - P3 整体状态维持 BLOCKED，直至第 4 节人工验收证据补齐。
 - 本批次只进行本地提交；不 push、不 merge。
+
+
+## 7. 部署后 SSE 生命周期事件兼容热修复
+
+- **现场根因：** 用户提供的 HA traceback 指向 sse.py 对 run_started 的未知事件异常。核对 AstrBot 4.29.4 源码后确认，WebChatMessageEvent.send_typing() 会发送 run_started；同一 SSE 响应还会在 visible plain chunks 之后发送 complete。这两个事件是生命周期/完成状态，不是新文本；如果只忽略 run_started，流还会在 complete 处再次失败。
+- **代码改动：** 只在 _IGNORED_TYPES 中增加 run_started 和 complete。session_id、plain 文本增量、SSE error、正常 end、EOF 与未知事件校验逻辑不变。
+- **回归测试：** test_parser_ignores_run_lifecycle_events_and_continues_visible_text 覆盖 session_id → user_message_saved → run_started → plain → complete → message_saved → end，断言解析器仅产出 session_id、plain 和 end。TDD RED 分别暴露 run_started 与 complete 两个未兼容事件，GREEN 后通过。
+- **提交：** a020a52 — fix(p3): ignore AstrBot run lifecycle SSE events。
+- **本地验证：** ./scripts/test-ha.sh -q → **92 passed, 63 warnings**；Ruff check、Ruff format check（13 files）、Python compileall、pip check、git diff --check 均通过。
+- **部署：** 仅更新 /volume1/docker/homeassistant/config/custom_components/astrbot/sse.py。远端 SHA-256 与本地一致：8c97e19805e92da233379457dc4223b62df54ce6827bc34eb0d009b0c1875505。仅重启 homeassistant 容器；只读状态检查确认 running=true，镜像仍为 HA Core 2026.11.0。
+- **NAS 测试边界：** 未在 NAS 运行任何测试、配置检查、Assist 对话、AstrBot API 请求或日志扫描；未修改 Config Entry/session 或其他服务。现在等待用户在 HA Assist 中进行真实文本对话验收。其余 P3 人工验收项仍保持 BLOCKED，README 的 P3 状态不变。
