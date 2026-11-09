@@ -216,3 +216,48 @@ async def test_stop_http_error_is_reported_without_a_retry(hass, monkeypatch):
     assert session.calls[0]["url"] == (
         f"{BASE_URL}/api/v1/chat/sessions/{SESSION_ID}/stop"
     )
+
+
+async def test_only_exact_owner_mismatch_error_is_classified_as_recoverable(
+    hass, monkeypatch
+):
+    session = FakeSession(
+        FakeResponse(
+            status=200,
+            content_type="application/json",
+            payload={
+                "status": "error",
+                "message": "session_id belongs to another username",
+            },
+        )
+    )
+    monkeypatch.setattr(api_module, "async_get_clientsession", lambda _: session)
+    client = api_module.AstrBotApiClient(hass, BASE_URL, API_KEY)
+
+    with pytest.raises(AstrBotApiError) as error:
+        async with client.async_chat(USERNAME, SESSION_ID, MESSAGE):
+            pytest.fail("owner mismatch JSON error must not be accepted as SSE")
+
+    assert type(error.value).__name__ == "AstrBotSessionOwnerMismatchError"
+    assert len(session.calls) == 1
+
+
+async def test_generic_session_json_error_is_not_classified_as_owner_mismatch(
+    hass, monkeypatch
+):
+    session = FakeSession(
+        FakeResponse(
+            status=200,
+            content_type="application/json",
+            payload={"status": "error", "message": "session not found"},
+        )
+    )
+    monkeypatch.setattr(api_module, "async_get_clientsession", lambda _: session)
+    client = api_module.AstrBotApiClient(hass, BASE_URL, API_KEY)
+
+    with pytest.raises(AstrBotApiError) as error:
+        async with client.async_chat(USERNAME, SESSION_ID, MESSAGE):
+            pytest.fail("JSON error must not be accepted as SSE")
+
+    assert type(error.value) is AstrBotApiError
+    assert len(session.calls) == 1

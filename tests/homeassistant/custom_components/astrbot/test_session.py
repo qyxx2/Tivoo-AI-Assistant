@@ -310,3 +310,21 @@ async def test_agent_stats_and_context_compression_do_not_change_session_id(
 
     record = await _stored_record(hass)
     assert set(record) == STORAGE_FIELDS
+
+
+async def test_invalidating_owner_conflict_removes_persisted_session_and_rotates(
+    hass, clock
+):
+    _, manager = await _setup_entry(hass)
+    old_session_id = manager.get_session_id()
+    await manager.async_confirm_session(old_session_id)
+
+    await manager.async_invalidate_session(old_session_id)
+
+    assert await _stored_record(hass) is None
+    new_session_id = manager.get_session_id()
+    assert new_session_id != old_session_id
+    assert UUID(new_session_id).version == 4
+
+    with pytest.raises(ValueError):
+        await manager.async_confirm_session(old_session_id)

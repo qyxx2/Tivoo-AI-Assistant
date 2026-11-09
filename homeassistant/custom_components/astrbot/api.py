@@ -12,6 +12,10 @@ class AstrBotApiError(Exception):
     """Base error for AstrBot HTTP API failures."""
 
 
+class AstrBotSessionOwnerMismatchError(AstrBotApiError):
+    """The requested session belongs to a different AstrBot username."""
+
+
 class AstrBotAuthenticationError(AstrBotApiError):
     """The configured API Key was not accepted."""
 
@@ -108,6 +112,11 @@ class AstrBotApiClient:
         if not 200 <= response.status < 300:
             message = error_message or f"AstrBot returned HTTP {response.status}"
             raise AstrBotHttpError(response.status, message)
+        if (
+            response.status == 200
+            and error_message == "session_id belongs to another username"
+        ):
+            raise AstrBotSessionOwnerMismatchError(error_message)
         if error_message is not None:
             raise AstrBotApiError(error_message)
 

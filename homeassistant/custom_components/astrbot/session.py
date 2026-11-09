@@ -61,6 +61,16 @@ class AstrBotSessionManager:
 
         return self._session_id
 
+    async def async_invalidate_session(self, session_id: str) -> None:
+        """Drop a session mapping after AstrBot confirms an owner mismatch."""
+        if session_id != self._session_id:
+            raise ValueError("AstrBot session_id does not match the active session")
+
+        await self._store.async_remove()
+        self._session_id = None
+        self._created_at = None
+        self._last_activity_at = None
+
     async def async_confirm_session(self, session_id: str) -> None:
         """Persist activity only after AstrBot confirms this requested ID."""
         if session_id != self._session_id:

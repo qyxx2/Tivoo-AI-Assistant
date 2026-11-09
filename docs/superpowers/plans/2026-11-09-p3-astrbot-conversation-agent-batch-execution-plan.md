@@ -210,15 +210,15 @@
 - Tests: cancellation, lock ordering, owner mismatch, EOF and stop API integration tests.
 
 **Tasks:**
-- [ ] 先写并发测试：同一个活动 session 的两个 Chat 请求不得并行进入 AstrBot；第二个请求等待第一个结束/取消。
-- [ ] 先写取消测试：关闭当前 SSE reader 后使用同一个 API Key 和 session_id 调用 stop，随后继续传播 CancelledError。
-- [ ] 先写 stop owner 测试：请求体 username 与 API Key AuthContext username 必须都是 api_key:<key_id>；不同自定义 username 必须被测试拒绝。
-- [ ] 先写 stop 失败/超时测试：记录不含密钥的警告，仍传播取消，不宣称上游已停止。
-- [ ] 对已发出的请求发生协议错误或意外 EOF 时，在需要时调用 stop；不能生成成功结果。
-- [ ] 精确识别 session owner mismatch；只有这一确定错误可以丢弃映射、创建新 UUIDv4 并重试一次。其他 4xx、5xx、timeout、connection reset 不得触发新 POST。
-- [ ] SSE error 事件作为本轮失败终止；不把错误内容当成正常 Assistant 回答。
-- [ ] 验证正常结束后锁释放、取消后锁释放、失败后下一轮可用；不允许遗留后台 reader 或 task。
-- [ ] 运行全部 cancellation/serialization/error 测试及 B0–B4 回归。
+- [x] 先写并发测试：同一个活动 session 的两个 Chat 请求不得并行进入 AstrBot；第二个请求等待第一个结束/取消。
+- [x] 先写取消测试：关闭当前 SSE reader 后使用同一个 API Key 和 session_id 调用 stop，随后继续传播 CancelledError。
+- [x] 先写 stop owner 测试：请求体 username 与 API Key AuthContext username 必须都是 api_key:<key_id>；不同自定义 username 必须被测试拒绝。
+- [x] 先写 stop 失败/超时测试：记录不含密钥的警告，仍传播取消，不宣称上游已停止。
+- [x] 对已发出的请求发生协议错误或意外 EOF 时，在需要时调用 stop；不能生成成功结果。
+- [x] 精确识别 session owner mismatch；只有这一确定错误可以丢弃映射、创建新 UUIDv4 并重试一次。其他 4xx、5xx、timeout、connection reset 不得触发新 POST。
+- [x] SSE error 事件作为本轮失败终止；不把错误内容当成正常 Assistant 回答。
+- [x] 验证正常结束后锁释放、取消后锁释放、失败后下一轮可用；不允许遗留后台 reader 或 task。
+- [x] 运行全部 cancellation/serialization/error 测试及 B0–B4 回归。
 
 **Exit gate:**
 - P3-T12、T13、T15、T16 覆盖。
