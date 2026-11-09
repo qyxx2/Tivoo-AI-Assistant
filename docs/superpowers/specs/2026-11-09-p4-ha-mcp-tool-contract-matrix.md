@@ -8,7 +8,7 @@
 
 P4 只负责建立 **AstrBot → Home Assistant 的 MCP 工具调用控制面**，并把项目需要的 Tivoo 操作注册为 HA LLM Tools，使其经 HA 原生 MCP Server 暴露给 AstrBot。
 
-**第一版 MVP 范围已收敛：只要求倒计时启动、倒计时停止和扬声器音量调整三项业务能力。** 首版优先打通 AstrBot → HA MCP → Tivoo LLM Tool → HA Service → 语义命令适配器的完整应用链路。其余已核实的 Tivoo 能力全部保留为可选扩展清单，不属于首版实现任务、验收门或阻塞条件。
+**第一版 MVP 必须完成倒计时启动、倒计时停止和扬声器音量调整三项业务能力。** 这只定义首版交付范围，不删减原定 P4b0–P4b6 批次结构。原计划中的表情、文字、亮度服务及图片/GIF 文件处理仍保留在 P4b3/P4b4，作为后续可选扩展；它们不属于第一版实现任务、验收门或阻塞条件。首版先打通 AstrBot → HA MCP → Tivoo LLM Tool → HA Service → 语义命令适配器的完整应用链路。
 
 P4 不重新实现 MCP Server/Client，不改变 P3 的 Conversation Agent，不直接控制 ESP32、SPP 或音频通道。Tivoo 工具只调用 HA 的业务服务接口；后续阶段由 Tivoo 集成把服务请求接入已规划的设备通信层。
 
@@ -174,12 +174,13 @@ AstrBot 4.29.4 的 MCP Client 对连接关闭错误有自动重连和一次重�
 
 ### 3.2 实体与自定义工具去重
 
-首版只注册倒计时启动/停止和扬声器音量三个 Tivoo 自定义 Tool；这些能力目前没有相应的原生 HA 实体工具可替代。
+第一版只注册三项必需 Tivoo 自定义 Tool；它们目前没有相应的原生 HA 实体工具可替代。
 
 - `tivoo.set_volume` / `tivoo__SetVolume` 是首版必须项，范围 0–100。
 - `tivoo.start_countdown` / `tivoo__StartCountdown` 与 `tivoo.stop_countdown` / `tivoo__StopCountdown` 是首版必须项。
-- 亮度、屏幕开关、播放控制等其他业务能力，即使上游已支持，也不在首版实现。以后如已存在原生 number/switch/media_player 实体并显式暴露给 Assist，应优先复用原生实体工具，避免重复注册项目 Tool。
-- 本节中的实体去重规则只在相应扩展功能被排入后续版本时生效，不要求首版实现这些实体。
+- 原计划的表情、文字、亮度服务继续保留在 P4b3 可选扩展范围；图片/GIF 保留在 P4b4 可选扩展范围。它们不进入首版工具清单，也不构成首版阻塞条件。
+- 屏幕开关、播放控制等其余能力仍按完整能力矩阵作为候选扩展；以后如已有原生 number/switch/media_player 实体并显式暴露给 Assist，应优先复用原生实体工具，避免重复注册项目 Tool。
+- 本节中的实体去重规则在相应扩展功能实际排期时生效，不要求首版实现这些实体。
 
 注意：实体“已暴露给 Assist”与工具“已注册”是两个不同条件。必须同时确认实体已实现、功能状态语义可靠且已暴露，才能用原生实体工具替代项目自定义 Tool。
 
@@ -247,7 +248,7 @@ Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模�
 | `tivoo.stop_countdown` | `tivoo__StopCountdown` | 无 | 不接收任何参数；映射上游 `show_countdown(value=False, countdown=None)`，不读取或保存启动时长。 |
 | `tivoo.set_volume` | `tivoo__SetVolume` | `volume: integer` | 0–100，包含 0；上游将 0–100 映射到设备音量 0–15。不得用 `value or default` 将 0 当作缺省值。 |
 
-服务层需要保留语义命令接缝：测试环境可使用内存适配器验证调用参数；生产适配器在 P6 传输层接入前必须明确返回 unavailable，不得伪成功。首版不要求实现音量实体、播放控制、亮度、屏幕开关、媒体文件配置或其他扩展服务。
+服务层需要保留语义命令接缝：测试环境可使用内存适配器验证调用参数；生产适配器在 P6 传输层接入前必须明确返回 unavailable，不得伪成功。首版只要求本节三项业务服务；音量不要求另建实体。亮度、屏幕开关、播放控制和媒体服务继续保留在后续扩展批次中，不提前纳入首版。
 
 ### 4.2 后续媒体扩展的文件引用合同（非首版）
 
@@ -261,7 +262,7 @@ Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模�
 
 `show_image` 与 `play_animation` 是项目对模型暴露的语义化工具；底层共享同一文件根目录、GIF 解码和 Tivoo 帧发送通路，不应再实现两套媒体协议。若后续不需要区分静态/动画两个工具，也可只保留上游风格的统一 `show_image(file, time)` 动作，但不影响本合同的 `file` 语义。
 
-### 4.3 第一版注册工具与后续候选工具
+### 4.3 第一版必需 Tool 与后续批次保留项
 
 第一版 MCP 工具清单固定为三项：
 
@@ -273,9 +274,11 @@ Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模�
 
 首版 `tools/list` 中不应出现其他项目自定义 Tivoo Tool。HA Assist API 仍可能汇总其他集成注册的工具，验收时按 integration/source 区分，不把第三方工具计为 Tivoo 项目工具。
 
-下面这些是后续版本的候选 Tool，不属于首版注册范围：`SetExpression`、`ShowText`、`ShowImage`、`PlayAnimation`、`SetBrightness`、`SetScreenPower`、`SetPlayState`、`ShowClock`、`SetDateTime`、`SetWeather`、`SetLight`、`ShowLyrics`、`ShowScoreboard`、`SetTimer`、`SetNoiseMeter`、`SetAlarm`、`SetMemorial`、`SetAudioSource`、`SetSleepMode`、`ShowDesign`。`effects`、`visualization`、`game`、`game_control` 在缺乏有效 Tivoo 索引/状态证据时，即使进入后续版本也先保持 Service only。
+原计划中已经明确安排在 P4b3/P4b4 的扩展仍保留，不视为从 P4 删除：P4b3 预留 `SetExpression`、`ShowText` 及亮度 HA Service；P4b4 预留 `ShowImage`、`PlayAnimation` 和媒体文件处理。它们不在第一版执行范围内，只有在首版主链路通过后再决定是否执行扩展子任务。
 
-这些候选项的详细来源、参数和型号限制保留在 4.0 完整能力矩阵中。首版不创建它们的 HA Service 或 LLM Tool，不以其完成情况作为 P4 MVP 退出条件。
+其余后续候选 Tool 为：`SetScreenPower`、`SetPlayState`、`ShowClock`、`SetDateTime`、`SetWeather`、`SetLight`、`ShowLyrics`、`ShowScoreboard`、`SetTimer`、`SetNoiseMeter`、`SetAlarm`、`SetMemorial`、`SetAudioSource`、`SetSleepMode`、`ShowDesign`。`SetBrightness` 仍不创建同义 MCP Tool，优先通过将来的 `number.tivoo_brightness` 原生实体控制。`effects`、`visualization`、`game`、`game_control` 在缺乏有效 Tivoo 索引/状态证据时，即使进入后续版本也先保持 Service only。
+
+以上扩展项的详细来源、参数和型号限制保留在 4.0 完整能力矩阵中。它们不属于首版实现任务或首版验收门。
 
 ### 4.4 MVP ToolAnnotations
 
@@ -368,19 +371,23 @@ AstrBot 4.29.4 内置 MCP Client 在特定连接资源关闭异常时会重连�
 - P4 不额外建立通用任务队列、请求去重数据库或自定义幂等协议。若真实测试发现重复执行对实际使用造成明显影响，再以该阶段的测试结果决定是否增加最小必要机制。
 - 不在 HA 或 AstrBot 两侧叠加多层盲目重试。
 
-## 7. P4 第一版批次边界
+## 7. P4 批次边界与第一版范围
 
-P4 第一版只安排打通核心流程所需的批次。完整批次任务、文件范围、测试与退出门以 [P4 Batch Execution Plan](../plans/2026-11-09-p4-ha-mcp-tool-batch-execution-plan.md) 为准。
+P4 保留原定七个批次 P4b0–P4b6。第一版只执行其中与倒计时和音量主链路有关的必需子任务；P4b3 中的表情/文字/亮度扩展子任务及 P4b4 图片/GIF 子任务继续保留为可选扩展，不因首版范围收敛而删除。
 
-| 批次 | 内容 | 完成条件 |
-|---|---|---|
-| P4b0 | 版本、源码、测试环境与复用前置核对 | HA/AstrBot 接口和本地测试入口有当前证据；Tivoo 命令复用边界明确 |
-| P4b1 | HA Tivoo 集成骨架与三个 MVP 服务 | 注册 `start_countdown`、`stop_countdown`、`set_volume`；服务经同一语义命令适配器执行 |
-| P4b2 | 三个 MVP LLM Tools | HA Assist API 仅增加三个项目自定义 Tivoo Tool；每个 Tool 只调用对应 HA Service |
-| P4b3 | AstrBot MCP 联调与端到端应用链路验收 | AstrBot 4.29.4 的目标 Persona 可发现并调用这三个工具；本地测试适配器证明 MCP → Tool → Service → Adapter 链路 |
-| P4b4 | P3 回归、MVP 合同验收与收尾 | P4-C01–C13 中首版适用项全部有证据；不适用的扩展合同明确标为后续版本 |
+| 批次 | 原定目标 | 第一版必须完成部分 | 可选/后续部分 |
+|---|---|---|---|
+| P4b0 | 版本、源码、测试环境及协议复用前置核查 | 全部前置核查 | 无 |
+| P4b1 | 建立 Tivoo HA 集成、服务注册和 StopCountdown 服务 | 集成骨架、StopCountdown Service、SetVolume Service | StartCountdown Service 延续到 P4b3 |
+| P4b2 | 实现 HA LLM Tools 平台及首个 Tool | LLM Tools 平台、StopCountdown Tool | 无 |
+| P4b3 | 表情、文字、倒计时工具和亮度服务 | StartCountdown Service/Tool、SetVolume Tool | SetExpression、ShowText Tools、SetBrightness Service |
+| P4b4 | 图片/GIF 文件处理及媒体工具 | 不属于首版 | ShowImage/PlayAnimation、媒体目录与文件处理 |
+| P4b5 | AstrBot MCP 配置、Persona 授权和运行时验证 | 验证 StartCountdown、StopCountdown、SetVolume 三个必需 Tool | 已单独批准的扩展才纳入运行时验证 |
+| P4b6 | P4 合同矩阵验收、P3 回归和收尾 | 首版合同项全部有证据 | 扩展合同明确标记 DEFERRED，不阻塞 MVP |
 
-依赖顺序：`P4b0 → P4b1 → P4b2 → P4b3 → P4b4`。不要并行扩展外围 Tivoo 功能；先以最少业务动作跑通整体调用链。
+第一版依赖路径：`P4b0 → P4b1 → P4b2 → P4b3（MVP 子集）→ P4b5 → P4b6`。P4b4 是独立的媒体扩展批次；只有明确决定在首版之后纳入媒体功能时，才要求它在对应扩展验收前完成。P4b3 的可选表情/文字/亮度子任务也保留在原批次中，但不得混入首版实现或首版验收。
+
+详细任务、文件范围、测试与提交门见 [P4 Batch Execution Plan](../plans/2026-11-09-p4-ha-mcp-tool-batch-execution-plan.md)。
 
 ## 8. P4 第一版验收矩阵
 
@@ -388,10 +395,10 @@ P4 第一版只安排打通核心流程所需的批次。完整批次任务、�
 |---|---|---|---|
 | P4-C01 | HA MCP Server 路由 | HA Core 2026.11.0 原生 `/api/mcp/assist` 可达 | MVP |
 | P4-C02 | Streamable HTTP 初始化 | AstrBot 4.29.4 使用 `transport=streamable_http` 与 Bearer header 完成 initialize | MVP |
-| P4-C03 | MCP 工具发现 | 三个 Tivoo 项目 Tool：`StartCountdown`、`StopCountdown`、`SetVolume` 出现在目标 Persona 工具集；不出现其他项目自定义 Tivoo Tool | MVP |
+| P4-C03 | MCP 工具发现 | 三个必需 Tivoo 项目 Tool：`StartCountdown`、`StopCountdown`、`SetVolume` 出现在目标 Persona 工具集；首版不注册可选扩展 Tool | MVP |
 | P4-C04 | 权限边界 | 普通 HA 用户有效 Token 可用；无效 Token 拒绝；不需要管理员权限 | MVP |
 | P4-C05 | 实体暴露范围 | 未暴露实体不成为可调用对象；本版工具为显式自定义业务动作 | MVP |
-| P4-C06 | 工具注册过滤 | Tivoo `llm.py` 仅向 `assist` API 提供三个 MVP 工具 | MVP |
+| P4-C06 | 工具注册过滤 | Tivoo `llm.py` 仅向 `assist` API 提供首版必需的三个 Tool；扩展 Tool 只在对应扩展批次实施后注册 | MVP |
 | P4-C07 | 服务复用 | 三个 Tool 分别调用 `tivoo.start_countdown`、`tivoo.stop_countdown`、`tivoo.set_volume`；与自动化共用同一服务处理逻辑 | MVP |
 | P4-C08 | 失败传播 | 不合法参数、服务不存在、适配器不可用等情况明确失败，不返回伪成功；MCP 返回 error | MVP |
 | P4-C09 | 参数范围 | 倒计时严格 `MM:SS`（分钟 00–99、秒 00–59）；Stop 无参数；Volume 为整数 0–100 且 0 是有效值 | MVP |
@@ -399,13 +406,14 @@ P4 第一版只安排打通核心流程所需的批次。完整批次任务、�
 | P4-C11 | P3 回归 | P3 HTTP Chat、session_id、SSE → ChatLog 不受影响；MCP 不作为文本 STT 入口 | MVP |
 | P4-C12 | 断线与重试 | 按 AstrBot 4.29.4 实际行为验证连接恢复；明确 StartCountdown 非幂等动作的响应丢失风险 | MVP |
 | P4-C13 | 设备传输隔离 | AstrBot 不直接连接 TCP 7777/7778、SPP 或 ESP32；动作经 HA Service 和语义适配器 | MVP |
-| P4-C14 | Tivoo 实机动作 | 真实音量/倒计时在 Tivoo 上生效并有设备侧证据 | P5/P6 |
+| P4-C14 | Tivoo 实机动作 | 真实音量/倒计时在 Tivoo 上生效并有设备侧证据；扩展功能按纳入版本分别验收 | P5/P6 |
+| P4-C15 | 可选显示扩展 | 表情/文字/亮度等只有在 P4b3 扩展子任务获准执行时才要求验收；不影响首版 MVP | 后续扩展 |
 
 只有标为 MVP 的合同项决定 P4 第一版是否完成。后续扩展项保持在能力矩阵中，不构成首版的 PARTIAL 或 BLOCKED。
 
 ## 9. 未冻结项与实现前必须解决的问题
 
-以下问题是可选扩展或后续硬件阶段需要解决的真实缺口。它们不阻塞只包含倒计时与音量的 P4 第一版；涉及首版三个服务的参数/接口问题仍必须先解决：
+以下问题是可选扩展或后续硬件阶段需要解决的真实缺口。它们不阻塞第一版倒计时与音量主链路；涉及首版三个必需服务/Tool 的参数与接口问题仍必须先解决：
 
 1. **后续媒体扩展的动画资源类型边界**：`solar2ain/tivoo-control` 的 `anim(path)` 支持 GIF 或帧目录，`prepare` / `send` 支持本地 JSON stage（`frames` / `delays`）；HA 上游 `hass-divoom` 的 `image(file,time)` 通过 Pillow `Image.open()` 读取文件，已有静态图/GIF 能力，但没有帧目录或 JSON stage 输入。未来媒体扩展按 HA 可复用接口只接受静态图片/GIF；目录和 stage JSON 暂不支持，不为此新增自定义资源格式。
 2. **后续媒体扩展的 AstrBot 文件落盘位置**：上游服务的 `file` 必须位于 HA 配置的 `media_directory` 之下。AstrBot 生成图片/动画后如何将文件安全放入该目录，属于后续部署/集成文件交接问题，不是 MCP 媒体 URI 协议；媒体扩展实施时必须验证这条文件交接链，不应因此放开任意绝对路径或公网 URL。
