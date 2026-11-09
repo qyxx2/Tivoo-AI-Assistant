@@ -1,0 +1,14 @@
+# Synology NAS benchmark environment
+
+- Test date: 2026-11-07
+- Device: Synology DS920
+- OS/kernel: Linux 4.4.180+, x86_64 (Synology geminilake_920+)
+- CPU: Intel Celeron 1005M @ 1.90 GHz
+- Logical CPUs: 2
+- RAM: 3.89 GiB total; about 1.96 GiB available at test start
+- Runtime: Docker, python:3.11-slim-bookworm
+- sherpa-onnx: 2.0.1
+- Docker memory limit: 1 GiB (memory-swap also limited to 1 GiB)
+- Threads tested: 1, 2
+- Per WAV: 1 warm-up + 5 measured decodes; reported median
+- NAS-local package download proxy: local HTTP proxy (endpoint omitted)

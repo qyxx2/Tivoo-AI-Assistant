@@ -1,0 +1,13 @@
+﻿engine,threads,phase,sample_rate_hz,audio_duration_s,generation_s,rtf,model_load_s,peak_rss_mb,wav
+matcha,1,first,22050,12.0185,2.9857,0.2484,2.1204,244.9,matcha_t1_first.wav
+matcha,1,warm,22050,11.9846,2.9846,0.249,2.1204,248.5,matcha_t1_warm.wav
+matcha,2,first,22050,12.0029,1.9338,0.1611,2.1187,238.7,matcha_t2_first.wav
+matcha,2,warm,22050,12.0097,1.864,0.1552,2.1187,246.8,matcha_t2_warm.wav
+matcha,4,first,22050,11.9965,1.3305,0.1109,2.2077,240.0,matcha_t4_first.wav
+matcha,4,warm,22050,11.9794,1.3094,0.1093,2.2077,248.3,matcha_t4_warm.wav
+melo,1,first,44100,11.2332,22.1991,1.9762,3.6053,408.1,melo_t1_first.wav
+melo,1,warm,44100,11.0472,22.221,2.0115,3.6053,414.2,melo_t1_warm.wav
+melo,2,first,44100,11.401,13.2432,1.1616,3.7542,408.7,melo_t2_first.wav
+melo,2,warm,44100,11.2135,13.1219,1.1702,3.7542,414.9,melo_t2_warm.wav
+melo,4,first,44100,11.2151,8.1068,0.7229,3.7648,410.1,melo_t4_first.wav
+melo,4,warm,44100,11.2332,8.9877,0.8001,3.7648,414.9,melo_t4_warm.wav

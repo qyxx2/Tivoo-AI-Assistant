@@ -1,0 +1,60 @@
+# Secrets and local deployment settings
+.env
+.env.*
+!.env.example
+**/secrets.yaml
+**/secrets.yml
+**/config.local.json
+
+# Python environments and generated caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+
+# Node dependencies and build output
+node_modules/
+dist/
+
+# ESP-IDF / PlatformIO build artifacts
+esp32/firmware/build/
+esp32/firmware/managed_components/
+esp32/firmware/sdkconfig
+esp32/firmware/sdkconfig.old
+.pio/
+
+# Downloaded speech model assets (keep source manifests and benchmark code)
+benchmarks/voice/stt/sherpa-onnx-paraformer-zh-small-2024-03-09/
+benchmarks/voice/tts/nas/models/
+tts-benchmark-matcha-melo/models/**
+!tts-benchmark-matcha-melo/models/**/
+!tts-benchmark-matcha-melo/models/MODEL_SOURCES.md
+!tts-benchmark-matcha-melo/models/SHA256SUMS
+!tts-benchmark-matcha-melo/models/**/README.md
+!tts-benchmark-matcha-melo/models/**/LICENSE
+!tts-benchmark-matcha-melo/models/**/generate_user_dict.py
+
+# Model weights, including future downloads outside the model directories
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+*.tflite
+
+# Runtime logs and generated audio captures
+*.log
+*.wav
+
+# Temporary and operating-system files
+*.tmp
+*.swp
+*~
+.DS_Store
+Thumbs.db

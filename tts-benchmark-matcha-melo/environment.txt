@@ -1,0 +1,12 @@
+Test date: 2026-11-07
+Host kernel: Linux 4.19.113 aarch64
+CPU architecture: ARM64
+Logical CPUs: 8
+CPU family: Qualcomm Kryo / Cortex-A77 class (as reported by lscpu)
+RAM total at start: 10 GiB
+RAM available at start: approximately 3.4 GiB
+Python: 3.14.4
+sherpa-onnx: 2.0.1
+Execution: native Python process, ONNX Runtime CPU provider
+Proxy: http://127.0.0.1:7897
+Temporary test directory: /tmp (removed after artifacts were copied)

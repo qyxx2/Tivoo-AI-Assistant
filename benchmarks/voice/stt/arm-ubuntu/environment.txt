@@ -1,0 +1,14 @@
+# ARM Ubuntu benchmark environment
+
+- Test date: 2026-11-07
+- OS/kernel: Linux 4.19.113, aarch64
+- CPU: ARM Cortex-A77 / Qualcomm Kryo-4XX-Silver class
+- Logical CPUs: 8
+- RAM: 10 GiB total (about 3.4 GiB available before the TTS test session)
+- Python: 3.14.4
+- sherpa-onnx: 2.0.1 (native manylinux2014 aarch64 wheel)
+- NumPy: 2.5.4
+- Runtime: native process on ARM Ubuntu, CPU provider; no Docker
+- Proxy for package/model downloads: http://127.0.0.1:7897
+- Threads tested: 1, 2, 4
+- Per WAV: 1 warm-up + 5 measured decodes; reported median
