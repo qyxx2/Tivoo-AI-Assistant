@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0、P3b1 已完成；P3b2–P3b6 尚未开始。
+> 状态：P3b0、P3b1、P3b2 已完成；P3b3–P3b6 尚未开始。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -122,15 +122,15 @@
 - Tests: HTTP client tests with fake HA aiohttp session and streaming response fixtures.
 
 **Tasks:**
-- [ ] 先写 POST 路由、headers、body 的合同测试。
-- [ ] 验证请求只有 username、session_id、message、enable_streaming=true；message 原样传入；不发送 locale、config_id、config_name、platform_id 或 HA conversation_id。
-- [ ] 验证 Bearer API Key、Accept: text/event-stream、Content-Type: application/json；secret 不出现在 URL、query、日志或异常字符串。
-- [ ] 通过 HA 共享 aiohttp ClientSession 发送请求；不在每次对话中创建 ClientSession，不添加 HTTP 依赖。
-- [ ] HTTP 响应先检查状态和 Content-Type，再交给 SSE 层。正确区分 401、403、其他非 2xx、200 JSON error envelope 与 text/event-stream。
-- [ ] JSON error envelope 即使在 HTTP 200 时也必须作为失败；不得把它交给 SSE parser。
-- [ ] stop API path 固定为 POST /api/v1/chat/sessions/{session_id}/stop，认证使用同一 API Key；停止调用具体时机由 B5 负责。
-- [ ] 测试 transport failure 不会触发 Chat POST 自动重试。
-- [ ] 运行 API Client 聚焦测试及 B0/B1 回归。
+- [x] 先写 POST 路由、headers、body 的合同测试。
+- [x] 验证请求只有 username、session_id、message、enable_streaming=true；message 原样传入；不发送 locale、config_id、config_name、platform_id 或 HA conversation_id。
+- [x] 验证 Bearer API Key、Accept: text/event-stream、Content-Type: application/json；secret 不出现在 URL、query、日志或异常字符串。
+- [x] 通过 HA 共享 aiohttp ClientSession 发送请求；不在每次对话中创建 ClientSession，不添加 HTTP 依赖。
+- [x] HTTP 响应先检查状态和 Content-Type，再交给 SSE 层。正确区分 401、403、其他非 2xx、200 JSON error envelope 与 text/event-stream。
+- [x] JSON error envelope 即使在 HTTP 200 时也必须作为失败；不得把它交给 SSE parser。
+- [x] stop API path 固定为 POST /api/v1/chat/sessions/{session_id}/stop，认证使用同一 API Key；停止调用具体时机由 B5 负责。
+- [x] 测试 transport failure 不会触发 Chat POST 自动重试。
+- [x] 运行 API Client 聚焦测试及 B0/B1 回归。
 
 **Exit gate:**
 - P3-T03、T12 的 HTTP 合同和认证失败分支覆盖。
@@ -138,6 +138,8 @@
 - 网络失败、HTTP 错误和 JSON error envelope 具有不同诊断类型；不自动重发原始 Chat POST。
 
 **Commit:** feat(p3): add AstrBot OpenAPI client
+
+**B2 verification (2026-11-09):** Ubuntu 本地 API 聚焦测试 `./scripts/test-ha.sh -q tests/homeassistant/custom_components/astrbot/test_api.py`：10 passed；完整 HA 测试 `./scripts/test-ha.sh -q`：57 passed。Ruff check、Ruff format check 和 `git diff --check` 均通过。5 条 warning 来自 HA/backoff 测试依赖的弃用提示。未配置真实 API Key、未发起在线 AstrBot Chat/Stop 请求、未部署 NAS；未实现 SSE Parser 或 ConversationEntity。
 
 ## 7. Batch 3 — Incremental AstrBot SSE Parser
 
