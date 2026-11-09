@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
-> 状态：P4b0、P4b1 已完成；P4b2–P4b6 待执行。
+> 状态：P4b0–P4b2 已完成；P4b3–P4b6 待执行。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)
 > 合同权威来源：[P4 Tool Contract Matrix](../specs/2026-11-09-p4-ha-mcp-tool-contract-matrix.md)
@@ -129,21 +129,23 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 先写 RED：HA LLM 平台能发现 Tivoo `llm.py`；只对 `api_id == LLM_API_ASSIST` 返回工具，其他 API 返回 `None`。
-- [ ] 使用同步 callback `async_get_tools(hass, llm_context, api_id) -> LLMTools | None`；遵循 HA Core 2026.11.0 LazyIntegrationPlatforms 接口，不将其写成 async，也不加入实体 `PLATFORMS`。
-- [ ] 注册 `tivoo__StopCountdown`；工具继承 HA `Tool`，参数采用 `probatio.Schema`，工具显式设置 `integration="tivoo"`。
-- [ ] 工具调用只调用 `hass.services.async_call("tivoo", "stop_countdown", {}, blocking=True, context=llm_context.context)`；不在 Tool 内构造帧或直达设备。
-- [ ] 显式设置 ToolAnnotations：`read_only=False`、`destructive=False`、`idempotent=True`、`open_world=False`，不依赖 HA 默认值。
-- [ ] 返回 `ToolResult(data=<JSON object>)`。服务缺失、设备不可用和校验错误必须传播为工具失败。
-- [ ] 只有 Tivoo Config Entry 正常加载时才暴露项目工具；集成未配置/卸载后不留下无效 Tool。
-- [ ] 在测试中验证普通非管理员 HA 用户访问 Assist API 的范围；不把工具注册到 `homeassistant` 管理 API。
+- [x] 先写 RED：HA LLM 平台能发现 Tivoo `llm.py`；只对 `api_id == LLM_API_ASSIST` 返回工具，其他 API 返回 `None`。
+- [x] 使用同步 callback `async_get_tools(hass, llm_context, api_id) -> LLMTools | None`；遵循 HA Core 2026.11.0 LazyIntegrationPlatforms 接口，不将其写成 async，也不加入实体 `PLATFORMS`。
+- [x] 注册 `tivoo__StopCountdown`；工具继承 HA `Tool`，参数采用 `probatio.Schema`，工具显式设置 `integration="tivoo"`。
+- [x] 工具调用只调用 `hass.services.async_call("tivoo", "stop_countdown", {}, blocking=True, context=llm_context.context)`；不在 Tool 内构造帧或直达设备。
+- [x] 显式设置 ToolAnnotations：`read_only=False`、`destructive=False`、`idempotent=True`、`open_world=False`，不依赖 HA 默认值。
+- [x] 返回 `ToolResult(data=<JSON object>)`。服务缺失、设备不可用和校验错误必须传播为工具失败。
+- [x] 只有 Tivoo Config Entry 正常加载时才暴露项目工具；集成未配置/卸载后不留下无效 Tool。
+- [x] 在测试中验证普通非管理员 HA 用户访问 Assist API 的范围；不把工具注册到 `homeassistant` 管理 API。
 
 **Exit gate:**
 
-- [ ] P4-C03、C06、C07、C08 的 StopCountdown 垂直切片通过。
-- [ ] Assist API 工具清单包含 `tivoo__StopCountdown`，管理 API 不包含该工具。
-- [ ] MCP Tool → HA Service 的调用参数无额外字段，且服务异常不被包装成成功结果。
-- [ ] P3 Conversation Agent 与 HTTP/SSE 测试无变化、无回归。
+- [x] P4-C03、C06、C07、C08 的 StopCountdown 垂直切片通过。
+- [x] Assist API 工具清单包含 `tivoo__StopCountdown`，管理 API 不包含该工具。
+- [x] MCP Tool → HA Service 的调用参数无额外字段，且服务异常不被包装成成功结果。
+- [x] P3 Conversation Agent 与 HTTP/SSE 测试无变化、无回归。
+
+**Evidence:** [P4b2 实施报告](../reports/2026-11-09-p4b2-implementation-report.md)。
 
 **Commit:** `feat(p4): expose countdown stop as HA LLM tool`
 
