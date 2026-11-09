@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0–P3b5 已完成；P3b6 本地自动化验收与证据报告已完成，真实 HA/AstrBot 部署验收 BLOCKED（需用户确认）。
+> 状态：P3b0–P3b5 已完成；P3b6 本地自动化验收和 NAS 集成部署已完成，真实 HA/AstrBot 业务验收待用户手动完成。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -240,8 +240,9 @@
 **Tasks:**
 - [x] 对照 P3-T01 至 P3-T16 逐项检查自动化覆盖和人工验收证据；未运行项目标记 PARTIAL / BLOCKED，不推断通过。逐项结果见验收报告。
 - [x] 运行全部 HA 集成测试、目标 unit tests、当前环境可用的 lint/编译/依赖检查和 git diff --check。
-- [ ] BLOCKED（需用户确认部署）：将代码加载到当前 HA 2026.11.0 容器，确认 Settings/Assist 可选择 conversation.astrbot。
-- [ ] BLOCKED（需专用 chat-scope API Key 与部署确认）：通过 HA 网页 Assist 发起真实文本对话，核对 AstrBot 收到的原始文本、username、session_id 和 SSE 增量。
+- [x] 已将 9 个 AstrBot 集成文件部署到当前 HA 2026.11.0 配置目录，逐文件 SHA-256 与提交一致，并重启容器确认 running；未在 NAS 上运行测试。
+- [ ] 用户手动确认 Settings/Assist 中可选择 `conversation.astrbot`。
+- [ ] BLOCKED（需专用 chat-scope API Key）：通过 HA 网页 Assist 发起真实文本对话，核对 AstrBot 收到的原始文本、username、session_id 和 SSE 增量。
 - [ ] BLOCKED（现场验收）：真实多轮、HA conversation_id 换新、HA Core 重启恢复及 API Key 轮换。5 分钟和 24 小时边界已有本地虚拟时钟/Store 自动化测试。
 - [ ] BLOCKED（现场验收）：通过真实取消验证 AstrBot stop owner 校验；不清除 AstrBot 历史或删除 session。
 - [x] 自动化证明 SSE 增量进入 HA ChatLog，并返回标准 ConversationResult。

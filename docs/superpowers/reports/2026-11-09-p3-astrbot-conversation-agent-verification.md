@@ -3,7 +3,7 @@
 > 日期：2026-11-09
 > 分支：`feature/p3-astrbot-conversation-agent`
 > 本次批次：P3b6
-> 状态：**本地自动化验收通过；真实 HA/AstrBot 部署验收 BLOCKED**
+> 状态：**本地自动化验收通过；已部署到 NAS HA；真实业务验收待用户手动完成**
 > 报告范围：P3-T01 至 P3-T16，不包含 P4/P5/P6 实现。
 
 ## 1. 验收结论
@@ -15,13 +15,13 @@ P3b0–P3b5 已在本分支提交。本次 P3b6 在开发机完成了合同覆�
 - 文本输入、HTTP 请求体、username/session_id、SSE 解析、ChatLog 增量、标准 ConversationResult、会话过期策略、取消/Stop 编排及 owner mismatch 恢复均有自动化覆盖。
 - HA Core 2026.11.0 的 Assist Pipeline 可以消费本集成产生的 ChatLog 增量，并在流式 TTS 输入能力开启时启动并持续读取文本流。
 
-本次没有部署或修改 NAS 上的 HA 容器，没有在生产 HA 中录入专用 AstrBot API Key，也没有向真实 AstrBot 服务发送 Chat/Stop 请求。因此 HA UI 选择、真实 API Key 的 `AuthContext.username` owner 校验、HA Core 进程重启后的在线恢复和真实模型多轮对话均未获得现场证据。**P3 整体不能标记为完成，需保持 BLOCKED，直至第 4 节人工验收完成。**
+已将提交 `300e7aa` 中的 9 个受 Git 跟踪文件部署到 NAS 的 `/volume1/docker/homeassistant/config/custom_components/astrbot/`，逐文件 SHA-256 与提交内容一致，并重启 `homeassistant` 容器；重启后容器状态为 `running`，镜像仍为 `2026.11.0`。没有在 NAS 上运行 pytest、配置检查或 Assist 对话，也没有录入生产 API Key 或向真实 AstrBot 发送 Chat/Stop 请求。因此 HA UI 选择、真实 API Key 的 `AuthContext.username` owner 校验、HA Core 重启后的 session 恢复和真实模型多轮对话仍待用户手动验证。**P3 整体保持 BLOCKED，直至第 4 节人工验收完成。**
 
 ## 2. 本地验证环境与命令
 
 - 开发机：Ubuntu ARM64，Python 3.14.4。
 - 测试 HA Core：`homeassistant==2026.11.0`，`pytest-homeassistant==2026.11.0`。
-- 项目目标 AstrBot 版本依据已冻结的 P3 合同矩阵为 4.29.4；本批次未重新连接 NAS 核验运行中的 AstrBot 版本。
+- 项目目标 AstrBot 版本依据已冻结的 P3 合同矩阵为 4.29.4；本次只核对 HA 容器，未读取 NAS 上 AstrBot 容器的运行版本。
 - HA Assist Pipeline 的导入依赖按 HA Core 对应组件 manifest 补入 `requirements_test.txt`：`mutagen==1.48.1`、`ha-ffmpeg==3.2.2`、`pymicro-vad==1.0.1`、`pyspeex-noise==1.0.2`。均为本地测试依赖，不是 AstrBot 集成运行时依赖。
 
 最终验证命令与结果：
@@ -63,16 +63,16 @@ P3b0–P3b5 已在本分支提交。本次 P3b6 在开发机完成了合同覆�
 - `test_astrbot_session_survives_over_five_minutes_and_entry_reload`：将时间推进 6 分钟后重载 Store，确认 AstrBot 活动 session 不因 HA 5 分钟 ChatSession 生命周期而轮换。
 ## 4. 人工验收与 BLOCKED 项
 
-以下项目需要当前 NAS 的 HA/AstrBot 运行环境和用户专用 API Key，本批次没有执行。
+以下项目需要用户在已部署的 NAS HA/AstrBot 环境中手动验证；本次未代替用户执行这些测试。
 
-1. **HA 部署及 UI（T01）**：把本分支 `homeassistant/custom_components/astrbot/` 安装到当前 HA 配置目录，重载/重启 HA 后，在 Settings → Voice assistants / Assist Pipeline 中确认可选择 AstrBot Conversation Agent。此步骤会修改 NAS 当前 HA 容器的文件/运行状态，**必须先得到用户明确确认**。
+1. **HA 部署及 UI（T01）**：部署已完成：9 个集成源文件位于 `/config/custom_components/astrbot/`，宿主机目录为 `/volume1/docker/homeassistant/config/custom_components/astrbot/`；SHA-256 与提交 `300e7aa` 一致，HA 容器已重启并确认运行。**没有做 UI 验证**；请手动在 Settings → Voice assistants / Assist Pipeline 确认可选择 AstrBot Conversation Agent。
 2. **真实文本请求（T02–T04、T08、T11）**：由用户在 HA 网页 Assist 中配置专用 AstrBot OpenAPI Key（scope 仅需 `chat`，同时记录 `key_id`），发送中文文本并核对 AstrBot 收到的 message 原文、username、session_id、SSE 增量及最终回答。连续多轮需跨不同 HA conversation ID 复用活动 AstrBot session。
 3. **HA 重启恢复（T06）**：真实 HA Core 重启后发起下一轮，确认未过期 Store 中的 session_id 被恢复。当前自动化只模拟 Config Entry reload。
 4. **24h 与身份轮换（T07、T16）**：24h 边界已有虚拟时钟单测；现场重点确认 HA 配置使用新的 `key_id` 后 username 变更且不再使用旧 session。只替换同一 key_id 对应 secret 不应重置 session。
 5. **真实取消与 owner 校验（T13、T15）**：模型生成过程中取消 HA 对话，观察 Stop 请求成功；在 AstrBot 4.29.4 真实端确认 Chat 请求 username 与 API Key 的 `AuthContext.username=api_key:<key_id>` 完全一致，Stop owner 校验通过。当前本地测试只证明客户端发出了同 key 的 Stop 请求。
 6. **真实 TTS Provider（T14）**：选择后续实现中确实支持流式文本输入的 TTS Provider，验证 Pipeline 触发流式输入条件。当前假 TTS 流只验证 HA Pipeline 的消费接口，不验证 Provider 音频能力。真实 TTS 分句、PCM callback、TTS Proxy 和 Tivoo 播放仍属 P5/P6，不作为 P3 已完成证据。
 
-**部署边界：** 本报告完成前没有连接 NAS、复制集成文件、重启/重载 HA、修改生产 Config Entry、创建/删除 AstrBot session 或使用真实 API Key。需要用户确认后，才执行第 1 项部署和后续现场测试。
+**部署边界：** 本次仅连接指定 NAS，将 Git 提交中的 AstrBot 自定义集成 9 个文件复制到 HA 的 `/config/custom_components/astrbot/`，核对 SHA-256，并重启 `homeassistant` 容器确认其处于 running。未在 NAS 执行任何测试；未修改 HA 其他集成/配置，未修改生产 Config Entry，未创建/删除 AstrBot session，未使用真实 API Key。后续 UI、Assist、真实 AstrBot 与会话验收由用户手动执行。
 ## 5. 范围复核
 
 本批次代码改动只涉及：
@@ -81,13 +81,13 @@ P3b0–P3b5 已在本分支提交。本次 P3b6 在开发机完成了合同覆�
 - `tests/homeassistant/custom_components/astrbot/test_session.py`
 - `requirements_test.txt`（为 HA Core Assist Pipeline 测试导入补充测试依赖）
 
-验收报告与 P3b6 进度记录仅更新 P3 文档。未修改 `homeassistant/custom_components/tivoo`、ESP32 固件、AstrBot 插件、MCP、STT/TTS Provider 或 NAS 部署文件；未实现 P4/P5/P6 功能。
+验收报告、P3 计划与 P3b6 进度记录仅更新 P3 文档。未修改 `homeassistant/custom_components/tivoo`、ESP32 固件、AstrBot 插件、MCP、STT/TTS Provider 或 NAS 部署文件；未实现 P4/P5/P6 功能。
 
 README 中的 P3 项目状态本次保持不变：由于真实 HA/AstrBot 验收仍 BLOCKED，不把本地模拟测试通过表述为 P3 全部完成。
 
 ## 6. P3b6 收尾状态
 
 - 本地自动化验收、T01–T16 覆盖审计、P3b6 报告和范围复核完成。
-- P3b6 的 NAS 部署/真实服务验收步骤标记为 BLOCKED，等待用户确认是否部署至当前 HA 容器。
+- AstrBot 自定义集成已部署并重启 HA 容器；真实 HA UI / AstrBot 业务验收仍由用户手动进行并保持 BLOCKED。
 - P3 整体状态维持 BLOCKED，直至第 4 节人工验收证据补齐。
 - 本批次只进行本地提交；不 push、不 merge。
