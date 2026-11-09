@@ -58,3 +58,6 @@ tts-benchmark-matcha-melo/models/**
 *~
 .DS_Store
 Thumbs.db
+
+# Local Superpowers execution state (plans remain under docs/superpowers/)
+.superpowers/
