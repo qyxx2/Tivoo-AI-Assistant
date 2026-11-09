@@ -343,18 +343,28 @@ AstrBot 4.29.4 内置 MCP Client 在特定连接资源关闭异常时会重连�
 - P4 不额外建立通用任务队列、请求去重数据库或自定义幂等协议。若真实测试发现重复执行对实际使用造成明显影响，再以该阶段的测试结果决定是否增加最小必要机制。
 - 不在 HA 或 AstrBot 两侧叠加多层盲目重试。
 
-## 7. P4 批次边界建议
+## 7. P4 批次边界
 
-只用于 P4 实现拆分，不代表本次创建代码：
+本节给出 P4 批次索引。每批的具体文件范围、任务顺序、测试、退出门和提交约定，以 [P4 Batch Execution Plan](../plans/2026-11-09-p4-ha-mcp-tool-batch-execution-plan.md) 为准；总体架构与批次目标见 [P4 Implementation Plan](../plans/2026-11-09-p4-ha-mcp-tool-implementation-plan.md)。
 
 | 批次 | 内容 | 完成条件 | 明确不做 |
 |---|---|---|---|
-| P4b0 | HA 原生 MCP Server / Assist API 接入确认 | AstrBot 4.29.4 通过 Streamable HTTP 初始化，能拉取 HA Assist tools | 不自建 MCP 服务、不触碰 P3 Chat API |
-| P4b1 | Tivoo LLM Tools 平台合同落地 | HA 的 `tivoo/llm.py` 能按 Assist API 提供工具；工具通过 HA `tivoo.*` 服务执行；输入/错误/结果 Schema 对齐 | 不直接连接 TCP、ESP32、SPP；不写 Tivoo 帧编码 |
-| P4b2 | AstrBot 端工具配置与实际 Agent 验证 | MCP Server 在 AstrBot WebUI 连接成功，工具在指定 Persona 可见且可调用；只使用必要工具 | 不把 token 写入仓库；不增加自定义 MCP 插件或第二套 Client |
-| P4b3 | 合同与回归验收 | 工具清单、权限、服务调用、输入校验、失败返回、断线行为通过测试；记录 P5/P6 前置项 | 不把模拟服务成功称为 Tivoo 实机验收 |
+| P4b0 | 版本、源码、测试环境和协议复用前置核对 | HA/AstrBot 接口、测试入口及 SDK 复用条件有当前证据；差异和阻塞项已记录 | 不实现工具代码、不猜接口 |
+| P4b1 | Tivoo HA 集成骨架、语义命令接缝和 StopCountdown 服务切片 | 集成可加载；无参数服务能通过测试适配器产生语义命令，生产适配器缺失时明确失败 | 不写 LLM Tool、不连接 TCP/ESP32/SPP |
+| P4b2 | HA LLM Tools 注册和 StopCountdown Tool | 仅 Assist API 发现工具；Tool 复用 HA 服务，参数/错误/结果符合合同 | 不自建 MCP Server/Client，不提供任意服务调用 |
+| P4b3 | 表情、文字、倒计时 Tools 与亮度服务 | SetExpression、ShowText、StartCountdown、StopCountdown 的映射与校验通过；亮度不重复注册 Tool | 不实现 Tivoo 实体或硬件传输 |
+| P4b4 | 图片/GIF 文件服务与媒体 Tools | 相对 media_directory 的文件合同、格式、时长和路径边界测试通过 | 不新增 asset ID/URI、帧目录、JSON stage 或 MCP 二进制载荷 |
+| P4b5 | AstrBot MCP 配置、Persona 授权和运行时验证 | AstrBot 4.29.4 连接 HA Assist MCP，目标 Persona 可发现工具；鉴权/错误/重试行为有证据 | 不写自定义 MCP Client、不将 Token 写入仓库 |
+| P4b6 | P4-C01–C13 合同验收、P3 回归和收尾 | 每项有 PASS/PARTIAL/BLOCKED 结论及证据；C14 转交 P5/P6 | 不把测试适配器结果当作 Tivoo 实机验收 |
 
-P4b1 若依赖的某个 Tivoo 服务尚无真实 handler，可以使用测试替身验证 LLM Tool → HA 服务的调用合同；生产工具不得对缺失 handler 返回伪成功。P5/P6 完成后再补真正的设备端到端验收。
+依赖顺序：
+
+```text
+P4b0 → P4b1 → P4b2 ─┬→ P4b3 ─┐
+                    └→ P4b4 ─┴→ P4b5 → P4b6
+```
+
+P4b3 与 P4b4 可在 P4b2 后分别执行；AstrBot 运行时验收必须等待两个批次完成。P4b0 是前置审查批，不要求为了形式创建空提交。StopCountdown 的无参服务合同在 P4 验收；字节级 `72 03 00 00 00` 只在纯 payload builder 的合法复用条件确认后纳入 P4 测试，否则明确作为 P6 adapter 验收项，不得由 P4 Tool 层重写协议编码。
 
 ## 8. P4 验收矩阵
 
@@ -424,4 +434,4 @@ P4b1 若依赖的某个 Tivoo 服务尚无真实 handler，可以使用测试替
 
 ---
 
-**本次 P4 文档工作范围：** 仅创建本合同矩阵。不新增代码、不修改 P3 文档、不修改 README、不连接 NAS 做设备测试、不部署 MCP 服务、不填写或提交任何 HA/AstrBot Token。
+**本合同矩阵创建范围（2026-11-09）：** 创建合同矩阵时不新增代码、不修改 P3 文档或 README、不连接 NAS 做设备测试、不部署 MCP 服务、不填写或提交任何 HA/AstrBot Token。P4 批次执行计划随后单独建立，见本节链接。
