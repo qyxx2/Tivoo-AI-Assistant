@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0 已完成；P3b1–P3b6 尚未开始。
+> 状态：P3b0、P3b1 已完成；P3b2–P3b6 尚未开始。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -92,15 +92,15 @@
 - Tests: session manager 单元测试、HA Store 重启恢复测试。
 
 **Tasks:**
-- [ ] 先写 username 派生测试：唯一身份必须是 api_key:<key_id>；不得使用 HA context.user_id、HA conversation_id、显示名或设备 ID。
-- [ ] 先写 UUIDv4、首次创建、未满 24 小时复用、达到/超过 24 小时轮换的测试。
-- [ ] 先写 Store 数据结构测试：version、api_key_id、username、session_id、created_at、last_activity_at；不允许持久化用户消息或 Assistant 正文。
-- [ ] 先写 HA 重启恢复和 HA conversation_id 变化测试；验证未过期时仍复用同一 AstrBot session_id。
-- [ ] 先写身份变化测试：Base URL/key_id 改变时重新生成；仅替换同一 key_id 的 secret 不重置会话。
-- [ ] 先写 agent_stats / token 统计 / 上下文压缩不触发轮换的回归测试。
-- [ ] 实现最小 Store manager。候选 session 可先在内存生成；仅在符合合同的 AstrBot session_id 接受确认后写入/更新活动记录。
-- [ ] 对旧版本、损坏、缺失字段或身份不匹配记录进行明确恢复；不尝试修补并复用来源不明的 session_id。
-- [ ] 运行全部 session 聚焦测试和 B0 回归。
+- [x] 先写 username 派生测试：唯一身份必须是 api_key:<key_id>；不得使用 HA context.user_id、HA conversation_id、显示名或设备 ID。
+- [x] 先写 UUIDv4、首次创建、未满 24 小时复用、达到/超过 24 小时轮换的测试。
+- [x] 先写 Store 数据结构测试：version、api_key_id、username、session_id、created_at、last_activity_at；不允许持久化用户消息或 Assistant 正文。
+- [x] 先写 HA 重启恢复和 HA conversation_id 变化测试；验证未过期时仍复用同一 AstrBot session_id。
+- [x] 先写身份变化测试：Base URL/key_id 改变时重新生成；仅替换同一 key_id 的 secret 不重置会话。
+- [x] 先写 agent_stats / token 统计 / 上下文压缩不触发轮换的回归测试。
+- [x] 实现最小 Store manager。候选 session 可先在内存生成；仅在符合合同的 AstrBot session_id 接受确认后写入/更新活动记录。
+- [x] 对旧版本、损坏、缺失字段或身份不匹配记录进行明确恢复；不尝试修补并复用来源不明的 session_id。
+- [x] 运行全部 session 聚焦测试和 B0 回归。
 
 **Exit gate:**
 - P3-T04 至 T07 的会话身份和生命周期行为由自动化测试覆盖。
@@ -109,6 +109,8 @@
 - 无聊天内容持久化。
 
 **Commit:** feat(p3): persist single active AstrBot session
+
+**B1 verification (2026-11-09):** Ubuntu 本地聚焦测试 30 passed；完整 HA 测试套件 47 passed；Ruff check/format 和 git diff --check 通过。HA Store 记录只包含会话元数据，且严格拒绝额外字段；Base URL 作为非敏感身份字段保存以识别服务端地址变化。没有写入 API Key secret，没有发起真实 AstrBot 请求，也没有访问 NAS 运行测试。HA Store 通过集成 unload/setup 重载验证了持久恢复。
 
 ## 6. Batch 2 — AstrBot HTTP OpenAPI Client
 

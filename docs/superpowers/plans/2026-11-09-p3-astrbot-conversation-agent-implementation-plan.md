@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent Implementation Plan
 
-> 状态：P3b0 已完成（HA 集成基线与 Config Flow）；P3b1–P3b6 尚未开始。
+> 状态：P3b0、P3b1 已完成（HA 集成基线、Config Flow 与单用户 Session Store）；P3b2–P3b6 尚未开始。
 > 工作分支：feature/p3-astrbot-conversation-agent
 > 基线：main / c754f5a22727fa0ded6a2fd0c309c967b162097d
 > 日期：2026-11-09
