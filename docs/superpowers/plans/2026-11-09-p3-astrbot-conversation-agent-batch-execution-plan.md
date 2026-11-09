@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0、P3b1、P3b2 已完成；P3b3–P3b6 尚未开始。
+> 状态：P3b0、P3b1、P3b2、P3b3 已完成；P3b4–P3b6 尚未开始。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -150,15 +150,15 @@
 - Tests: SSE parser unit tests using fragmented byte streams and event fixtures.
 
 **Tasks:**
-- [ ] 先写分段网络数据测试：data 行被任意切开、CRLF、空行 frame separator、heartbeat comment 和最后一帧缓冲。
-- [ ] 第一条数据事件必须为 session_id，且响应 session_id 必须与本次请求一致；run_id/message_id 不得作为会话 ID。
-- [ ] 解析 plain：chain_type 为空或普通文本时产生可见 delta；reasoning、tool_call、tool_call_result 一律过滤。
-- [ ] 忽略 user_message_saved、message_saved、agent_stats 和 heartbeat；这些元数据不得进入 ChatLog。
-- [ ] end 是唯一正常结束标记；error 是失败终止；未收到 end/error 的 EOF 视为不完整响应。
-- [ ] 未知事件、非法 JSON、字段类型错误作为协议异常；不静默跳过未知数据。
-- [ ] 图片/文件/音频/actionrow 等非文本事件不进入 P3 文本流；正常 end 但无任何可见文本时返回无有效响应错误。
-- [ ] 以异步增量形式产出事件；不把整段回答聚合到内存后再交给 ConversationEntity。
-- [ ] 运行 SSE parser 聚焦测试及 B2 回归。
+- [x] 先写分段网络数据测试：data 行被任意切开、CRLF、空行 frame separator、heartbeat comment 和最后一帧缓冲。
+- [x] 第一条数据事件必须为 session_id，且响应 session_id 必须与本次请求一致；run_id/message_id 不得作为会话 ID。
+- [x] 解析 plain：chain_type 为空或普通文本时产生可见 delta；reasoning、tool_call、tool_call_result 一律过滤。
+- [x] 忽略 user_message_saved、message_saved、agent_stats 和 heartbeat；这些元数据不得进入 ChatLog。
+- [x] end 是唯一正常结束标记；error 是失败终止；未收到 end/error 的 EOF 视为不完整响应。
+- [x] 未知事件、非法 JSON、字段类型错误作为协议异常；不静默跳过未知数据。
+- [x] 图片/文件/音频/actionrow 等非文本事件不进入 P3 文本流；正常 end 但无任何可见文本时返回无有效响应错误。
+- [x] 以异步增量形式产出事件；不把整段回答聚合到内存后再交给 ConversationEntity。
+- [x] 运行 SSE parser 聚焦测试及 B2 回归。
 
 **Exit gate:**
 - P3-T07 至 T10、T12 的 SSE 事件行为覆盖。
@@ -166,6 +166,8 @@
 - 正常 end、error、未知事件和意外 EOF 有清晰区分。
 
 **Commit:** feat(p3): parse AstrBot SSE stream
+
+**B3 verification (2026-11-09):** Ubuntu 本地 SSE 聚焦测试 19 passed；完整 HA 测试 `./scripts/test-ha.sh -q`：76 passed，5 条 HA/backoff 依赖弃用 warning。Ruff check、Ruff format check 和 `git diff --check` 通过。覆盖分段 UTF-8/CRLF、heartbeat、增量产出、事件分类/过滤、session_id 首帧与一致性、字段类型、严格 end/error/EOF 和空文本响应。未配置真实 API Key、未发起在线 AstrBot 请求、未部署 NAS；未实现 ConversationEntity/ChatLog。
 
 ## 8. Batch 4 — HA ConversationEntity and ChatLog streaming
 
