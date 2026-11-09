@@ -32,7 +32,7 @@
 - 检查工作分支、HEAD、工作区和 main 基线；确保 P4 文档提交在当前分支。
 - 重新核对运行目标 Home Assistant Core 与 AstrBot 版本；目标仍为 HA 2026.11.0、AstrBot 4.29.4。若有版本变化，先复核 HA LLM Tools、MCP Streamable HTTP 和 AstrBot MCP Client 源码，再更新矩阵。
 - 本地 HA 测试环境沿用 `.venv`、`pytest-homeassistant==2026.11.0`、Ruff、`scripts/test-ha.sh`。若现有环境已失配，先修复/记录测试入口，不复制整套 HA 运行时。
-- 先核对 `BluetoothBridgeTest/tivoo/UPSTREAM.md` 声明的来源及许可证，并查看上游仓库当前许可证文件。纯 Python 模块在许可证和版权义务确认后才可 vendoring；不能从外部工作区绝对路径运行时导入，也不能把 BluetoothBridge Transport 带入 HA。
+- 核对 BluetoothBridgeTest/tivoo/UPSTREAM.md、固定上游 commit 和各参考仓库自己的许可证/来源。按模块优先复用现有纯协议、payload builder、图像/文字/GIF 渲染与 HA 服务实现；README 声明 MIT 但缺少独立 LICENSE 文件不构成一概拒绝个人研究复用的理由。保留来源、commit 和现有版权/许可声明；未来公开分发时再核查对应分发义务。不得从外部工作区绝对路径运行时导入，也不能把 BluetoothBridge Transport 带入 HA。
 - 当前 `homeassistant/custom_components/tivoo/` 只有占位文件。不得假定有现成的 Tivoo HA 服务、实体、LLM Tools 或设备连接管理器。
 - 不读取、复制或写入 NAS 上的 HA/AstrBot Token；任何需要真实凭据的 UI 配置由用户提供/录入或使用现有安全凭据存储。
 
@@ -40,7 +40,7 @@
 
 | Batch | 内容 | 依赖 | MVP 交付要求 |
 |---|---|---|---|
-| P4b0 | 版本、源码、测试和协议复用前置核对 | 无 | 确认所有 MVP 服务/Tool 的真实接口、复用许可和本地测试入口；必须 |
+| P4b0 | 版本、源码、测试和协议复用前置核对 | 无 | 确认所有 MVP 服务/Tool 的真实接口、可复用模块与来源、以及本地测试入口；必须 |
 | P4b1 | Tivoo HA 集成骨架、服务注册与 StopCountdown/SetVolume 服务 | P4b0 | 集成可加载；StopCountdown、SetVolume Service 可用；media_directory 配置基础就位；必须 |
 | P4b2 | HA LLM Tools 平台与首个 StopCountdown Tool 垂直切片 | P4b1 | Assist API 正确发现 StopCountdown Tool，服务委派和错误传播通过；必须 |
 | P4b3 | 表情、文字、倒计时工具和亮度服务 | P4b2 | SetExpression、ShowText、StartCountdown、SetVolume Tools；SetBrightness Service；必须 |
@@ -67,15 +67,15 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 - [x] 核对 AstrBot 4.29.4 `mcp_client.py` 的 Streamable HTTP、headers、工具发现/调用和断线重试路径；不创建自己的 MCP Client。
 - [x] 确认 `/api/mcp/assist` 与 Assist API 的认证、权限和工具集合行为；区分 Assist API 与管理 API。
 - [x] 核对项目现有 HA 测试入口、P3 自动化回归、Ruff/compile 检查；记录完整测试命令。
-- [x] 核实 Tivoo Python 纯协议模块的上游许可证和本机来源声明。当前上游 README 声明 MIT，但仓库无 LICENSE 文件；本批决定不复制/vendor 未带完整许可文本的外部 SDK。
-- [x] 记录协议复用边界：不从外部工作区绝对路径导入；不复用 BluetoothBridge Transport/直接 SPP。P4 仅实现必要语义适配，逐字复制上游代码前须补齐许可/版权证据。
-- [x] 将许可证文件缺失记录为复用限制；HA/AstrBot 版本与接口无阻塞，不通过猜测参数继续。
+- [x] 核实 Tivoo Python 纯协议模块的来源与许可信息：固定上游 README 声明 MIT，但仓库无独立 LICENSE 文件；将其作为需保留来源及声明的记录项，不将文件缺失等同于禁止个人研究复用。
+- [x] 记录按模块复用边界：优先采用匹配合同的纯协议/payload/render builder、HA 服务/媒体处理实现；比对本地变更并保留上游来源。不得从外部工作区绝对路径导入；BluetoothBridge Transport/直接 SPP 不进入 HA 运行时。
+- [x] 将许可证材料现状与技术复用决策分开记录；没有把独立 LICENSE 文件缺失设置为本地个人研究复用的统一阻塞项。HA/AstrBot 版本与接口无阻塞，不通过猜测参数继续。
 
 **Exit gate:**
 
 - [x] HA/AstrBot 版本和关键方法签名有当前源码依据。
 - [x] 本地 P3 测试和静态检查能运行；测试命令与环境已明确。
-- [x] 已决定是否允许复用纯 Tivoo SDK 代码；当前不 vendoring 缺少 LICENSE 文件的上游源码。
+- [x] 已决定纯 Tivoo SDK 的复用原则：按模块优先复用，不整体照搬；保留来源/commit/声明，部署包中不依赖开发机绝对路径。
 - [x] HA/AstrBot 接口与 P4 矩阵一致，无需修改合同矩阵。
 
 **Evidence:** [P4b0 前置核查报告](../reports/2026-11-09-p4b0-preflight-report.md)。
@@ -168,7 +168,7 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 - [ ] ToolAnnotations：SetExpression、ShowText、StartCountdown 为 `idempotent=False`；SetVolume 为 `idempotent=True`；写操作统一 `read_only=False`、`destructive=False`、`open_world=False`、`integration="tivoo"`。
 - [ ] 所有 Tool 都使用 `hass.services.async_call(..., blocking=True, context=llm_context.context)` 调用服务，不得直达命令适配器。
 - [ ] 测试覆盖有效/无效 preset、文字样式上下界、禁止 `font_file`、倒计时格式边界、亮度 0/100 与越界、音量 0/100 与越界；音量 0 必须无损到达 b1 服务/适配器。
-- [ ] 如 P4b0 许可证/来源核查允许，复用纯 payload/render builder 并添加 golden tests；否则只使用许可明确的模块和语义命令接缝，不重写整套 wire encoder。
+- [ ] 优先复用与当前功能合同匹配的纯 payload/render builder，并添加或沿用 golden tests；先核对本机副本与固定上游 commit 的差异、保留来源声明。若某个具体模块确实不适合当前运行环境或边界，再仅为该模块做最小适配；不得因单独 LICENSE 文件缺失而重写整套 wire encoder。
 
 **Exit gate:**
 
@@ -262,7 +262,7 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 - [ ] 验证 StartCountdown、StopCountdown、SetVolume 三项完整链路：通过 AstrBot Persona 分别执行 `MM:SS` 启动、无参停止、音量 0/100 设置；逐层确认 MCP `tools/call`、HA LLM Tool、HA Service 和内存语义 Adapter 收到的动作/参数一致。
 - [ ] 通过错误输入测试确认倒计时格式、音量边界、媒体路径越界和文字/preset 非法输入会明确失败，不产生伪成功。
 - [ ] 媒体验收覆盖相对 media_directory、PNG/JPG/GIF、GIF timing、路径穿越/逃逸 symlink/缺失文件拒绝。
-- [ ] 验证 StopCountdown 无参数语义及 `72 03 00 00 00` wire 语义。若 P4b0 未能确认纯 payload builder 合规复用，则字节级检查转为 P6 adapter 待办，不在 Tool 层另写编码器。
+- [ ] 验证 StopCountdown 无参数语义及对应 wire payload。若 P4 当前范围只覆盖 HA Service/语义 Adapter，字节级验证由复用的 payload builder 测试或 P6 传输 Adapter 验证；不在 LLM Tool 层另写编码器。
 - [ ] 验证 AstrBot 4.29.4 断线恢复/重试，不引入自定义协议或额外重试框架。
 - [ ] 运行 P3 全套 HA 测试，确认 Chat API、session、SSE、ChatLog、取消与 P4 完全隔离。
 - [ ] 运行开发机完整测试与静态检查：`./scripts/test-ha.sh -q`、Ruff check、Ruff format check、Python compileall、`pip check`、`git diff --check`。
@@ -314,7 +314,7 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 - 每批结束运行本批聚焦测试和必要回归；P4b2 之后至少运行 P3 现有测试。最终运行 `./scripts/test-ha.sh -q`、Ruff check/format、compileall、pip check 和 `git diff --check`。
 - 不在 NAS 上运行耗时测试或负载测试。开发机 Ubuntu 测试通过后，只进行必要的远程 MCP 连通/配置验证；不扫描、清理或修改无关 NAS 文件、容器和会话。
 - 每批结束记录：基线 SHA、实际修改文件、RED/GREEN 命令与结果、静态检查、人工验收状态、提交 SHA、剩余 BLOCKED/DEFERRED 项。所有明确列入 MVP 的功能都必须有验收证据；仅未声明的其他服务允许保持 DEFERRED。
-- 遇到合同缺失、上游版本变化、许可证不明、HA 实际服务语义不同或 AstrBot 工具发现与预期不一致，先停止对应批次并更新合同/计划；不在实现中私自扩展协议。
+- 遇到合同缺失、上游版本变化、HA 实际服务语义不同或 AstrBot 工具发现与预期不一致，先停止受影响批次并更新合同/计划。若来源或具体模块的许可/声明存在疑点，只暂停该模块的引入，核实或换用其他已有实现；不得把局部问题扩大为整个 SDK 禁用，也不得因此自动重写已有协议/编码器。
 - 用户未另行授权时不部署生产改动、不更改生产 HA Config Entry、不触发真实 Tivoo 非幂等动作、不 push、不 merge。
 
 ## 13. P4 范围外项目

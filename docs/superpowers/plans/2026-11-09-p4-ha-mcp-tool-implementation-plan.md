@@ -83,7 +83,7 @@ P4 交付的是 HA 工具接口、服务语义、AstrBot MCP 连接与 Persona �
 
 ### 4.1 Tivoo 命令复用
 
-首版需要表情、文字、亮度、图片/GIF、倒计时和音量对应的纯业务/协议能力。本机 `BluetoothBridgeTest/tivoo/` 中的渲染与 payload builder 复用前仍须通过 P4b0 许可证/来源检查；TivooDisplay 的 Transport 依赖 Android Bluetooth Bridge，不得直接搬入 HA 容器或从开发机绝对路径导入。若许可证证据不足，HA 侧保留语义命令接口并按已确认来源复用允许使用的代码，不 vendoring 未获许可的模块，也不重写整套协议。未声明的其他服务不随 MVP 扩大。
+首版需要表情、文字、亮度、图片/GIF、倒计时和音量对应的纯业务/协议能力。本机 BluetoothBridgeTest/tivoo 中的纯 payload builder、图像/文字/GIF 渲染和 preset registry 应按模块优先复用；先比对本机副本与固定上游 commit 的差异，保留来源、commit 和原有声明。solar2ain/tivoo-control README 声明 MIT 但仓库没有独立 LICENSE 文件，这一材料情况需要记录，不作为个人研究场景下拒绝所有模块复用的统一门槛。TivooDisplay 的 Transport 依赖 Android Bluetooth Bridge，不得直接搬入 HA 容器或从开发机绝对路径导入；仅排除这部分不符合架构的运行时传输代码。对某个具体模块若来源或适用边界确实不清楚，只暂停该模块并核实/替换来源，不重写整套协议。未声明的其他服务不随 MVP 扩大。
 
 ### 4.2 命令接口的深度与测试
 
