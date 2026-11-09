@@ -63,20 +63,22 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] 核对 HA Core 实际目标版本及本地 `homeassistant.helpers.llm`、`homeassistant.components.llm`、`mcp_server` 的真实接口。
-- [ ] 核对 AstrBot 4.29.4 `mcp_client.py` 的 Streamable HTTP、headers、工具发现/调用和断线重试路径；不创建自己的 MCP Client。
-- [ ] 确认 `/api/mcp/assist` 与 Assist API 的认证、权限和工具集合行为；区分 Assist API 与管理 API。
-- [ ] 核对项目现有 HA 测试入口、P3 自动化回归、Ruff/compile 检查；记录完整测试命令。
-- [ ] 核实 Tivoo Python 纯协议模块的上游许可证和本机来源声明。若证据不足，不复制源码；不得用运行时引用外部工作区的方式绕过部署边界。
-- [ ] 记录本轮实际需要复用的纯函数范围，以及不复用的 BluetoothBridge/直接 SPP Transport。
-- [ ] 将版本变化、接口差异、许可证不确定性或 AstrBot WebUI 无法访问等真实问题列为明确阻塞，不通过猜测参数继续。
+- [x] 核对 HA Core 实际目标版本及本地 `homeassistant.helpers.llm`、`homeassistant.components.llm`、`mcp_server` 的真实接口。
+- [x] 核对 AstrBot 4.29.4 `mcp_client.py` 的 Streamable HTTP、headers、工具发现/调用和断线重试路径；不创建自己的 MCP Client。
+- [x] 确认 `/api/mcp/assist` 与 Assist API 的认证、权限和工具集合行为；区分 Assist API 与管理 API。
+- [x] 核对项目现有 HA 测试入口、P3 自动化回归、Ruff/compile 检查；记录完整测试命令。
+- [x] 核实 Tivoo Python 纯协议模块的上游许可证和本机来源声明。当前上游 README 声明 MIT，但仓库无 LICENSE 文件；本批决定不复制/vendor 未带完整许可文本的外部 SDK。
+- [x] 记录协议复用边界：不从外部工作区绝对路径导入；不复用 BluetoothBridge Transport/直接 SPP。P4 仅实现必要语义适配，逐字复制上游代码前须补齐许可/版权证据。
+- [x] 将许可证文件缺失记录为复用限制；HA/AstrBot 版本与接口无阻塞，不通过猜测参数继续。
 
 **Exit gate:**
 
-- [ ] HA/AstrBot 版本和关键方法签名有当前源码依据。
-- [ ] 本地 P3 测试和静态检查能运行；测试命令与环境已明确。
-- [ ] 已决定是否允许复用纯 Tivoo SDK 代码；未确认的代码不进入项目。
-- [ ] 若任何接口与 P4 矩阵不符，先更新矩阵并单独提交，再开始 P4b1。
+- [x] HA/AstrBot 版本和关键方法签名有当前源码依据。
+- [x] 本地 P3 测试和静态检查能运行；测试命令与环境已明确。
+- [x] 已决定是否允许复用纯 Tivoo SDK 代码；当前不 vendoring 缺少 LICENSE 文件的上游源码。
+- [x] HA/AstrBot 接口与 P4 矩阵一致，无需修改合同矩阵。
+
+**Evidence:** [P4b0 前置核查报告](../reports/2026-11-09-p4b0-preflight-report.md)。
 
 **Commit:** `docs(p4): record implementation preflight`（只有实际新增前置记录时提交；无内容变化则不创建空提交）
 

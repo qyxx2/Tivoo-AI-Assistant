@@ -12,3 +12,8 @@ mutagen==1.48.1
 ha-ffmpeg==3.2.2
 pymicro-vad==1.0.1
 pyspeex-noise==1.0.2
+
+# Home Assistant Core 2026.11.0 native MCP Server dependencies.
+mcp==2.3.0
+aiohttp_sse==2.2.0
+anyio==4.15.1
