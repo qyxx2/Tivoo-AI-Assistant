@@ -38,24 +38,24 @@
 
 ## 3. 批次与依赖图
 
-| Batch | 内容 | 依赖 | 独立交付 / 第一版要求 |
+| Batch | 内容 | 依赖 | MVP 交付要求 |
 |---|---|---|---|
-| P4b0 | 版本、源码、测试和协议复用前置核对 | 无 | 可执行的本地实施基线与阻塞项记录；必须 |
-| P4b1 | Tivoo HA 集成骨架、服务注册与 StopCountdown、SetVolume 服务 | P4b0 | HA 可加载集成；两个服务有真实成功/失败语义；必须 |
-| P4b2 | HA LLM Tools 平台与首个 StopCountdown Tool 垂直切片 | P4b1 | Assist API 正确发现 StopCountdown Tool；必须 |
-| P4b3 | 表情、文字、倒计时工具与亮度服务 | P4b2 | StartCountdown Service/Tool、SetVolume Tool 是 MVP 必须部分；表情/文字/亮度为保留的可选扩展 |
-| P4b4 | 图片/GIF 文件处理、服务与媒体 Tools | P4b2 | 完整保留为可选媒体扩展，不阻塞首版 |
-| P4b5 | AstrBot MCP 配置、Persona 授权与运行时验证 | P4b3；若验证媒体扩展则另需 P4b4 | 验证 AstrBot 可调用三个首版必需 Tool；必须 |
-| P4b6 | P4-C01–C15 合同验收、P3 回归与收尾 | P4b5 | MVP 证据齐全；可选扩展标为 DEFERRED；必须 |
+| P4b0 | 版本、源码、测试和协议复用前置核对 | 无 | 确认所有 MVP 服务/Tool 的真实接口、复用许可和本地测试入口；必须 |
+| P4b1 | Tivoo HA 集成骨架、服务注册与 StopCountdown/SetVolume 服务 | P4b0 | 集成可加载；StopCountdown、SetVolume Service 可用；media_directory 配置基础就位；必须 |
+| P4b2 | HA LLM Tools 平台与首个 StopCountdown Tool 垂直切片 | P4b1 | Assist API 正确发现 StopCountdown Tool，服务委派和错误传播通过；必须 |
+| P4b3 | 表情、文字、倒计时工具和亮度服务 | P4b2 | SetExpression、ShowText、StartCountdown、SetVolume Tools；SetBrightness Service；必须 |
+| P4b4 | 图片/GIF 文件处理、服务与媒体 Tools | P4b2 | ShowImage、PlayAnimation 和媒体文件处理；必须 |
+| P4b5 | AstrBot MCP 配置、Persona 授权与运行时验证 | P4b3、P4b4 | Persona 发现/授权七个必需 Tool，运行时调用通过；必须 |
+| P4b6 | P4-C01–C15 合同验收、P3 回归与收尾 | P4b5 | 验收全部 MVP 实现，并完成倒计时启停/音量完整链路验证；必须 |
 
-第一版依赖路径：
+依赖顺序：
 
 ```text
-P4b0 → P4b1 → P4b2 → P4b3(MVP 子集) → P4b5 → P4b6
-                         └──────── P4b4（可选媒体扩展，不阻塞 MVP）
+P4b0 → P4b1 → P4b2 ─┬→ P4b3 ─┐
+                    └→ P4b4 ─┴→ P4b5 → P4b6
 ```
 
-P4b3 中表情/文字/亮度与 P4b4 媒体任务均保留原合同和实现设计，但第一版不执行这些可选子任务。若用户在首版验收后决定纳入扩展，再恢复相应子任务并追加独立提交/验收；不能把“暂缓”解释成“从 P4 计划删除”。
+P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5 必须等待两者完成。只有未明确列入 MVP 清单的其他 Tivoo 服务才保留为可选扩展。
 
 ## 4. P4b0 — 版本、源码与本地验证前置
 
@@ -82,22 +82,22 @@ P4b3 中表情/文字/亮度与 P4b4 媒体任务均保留原合同和实现设�
 
 ## 5. P4b1 — Tivoo HA 集成骨架、服务注册与 StopCountdown/SetVolume 服务切片
 
-**Purpose:** 从当前空目录建立 HA `tivoo` 集成，先打通两个首版基础服务：无参数 StopCountdown 与 SetVolume。用它们验证 Service Schema、语义命令分派和失败传播；本批不引入 LLM Tool 或 MCP。
+**Purpose:** 从当前空目录建立 HA `tivoo` 集成，先打通两个基础服务：无参数 StopCountdown 与 SetVolume。同步建立媒体目录配置基础，供 P4b4 媒体服务使用；本批不引入 LLM Tool 或 MCP。
 
 **Files (expected):**
 
 - Create: `homeassistant/custom_components/tivoo/manifest.json`、`__init__.py`、`const.py`。
-- Create: 如 HA Config Entry 加载路径确有需要，再新增最小 `config_flow.py` 与必要翻译。第一版不引入 `media_directory` 配置项；该选项仅在 P4b4 媒体扩展获准实施时增加。不保存设备 Token 或 AstrBot 凭据。
+- Create: 按 HA Config Entry 实际加载方式新增最小 `config_flow.py` 与必要翻译；提供 `media_directory` 配置，默认 `pixelart`，路径相对 HA 配置目录。不保存设备 Token 或 AstrBot 凭据。
 - Create: `services.py`、`services.yaml`；Python 服务 Schema 是执行时校验依据，YAML 只描述 UI 文案/字段，二者保持一致。
 - Create: 最小的语义命令接口及适配器；按实际代码结构决定是否单独模块，不预先铺设多层抽象。
 - Tests: `tests/homeassistant/custom_components/tivoo/` 下的加载、卸载、服务 Schema、服务调用和失败测试。
 
 **Tasks:**
 
-- [ ] 先写 RED：HA 能发现并加载集成、Config Entry setup/unload 与单实例约束；不为首版媒体扩展创建配置项。
+- [ ] 先写 RED：HA 能发现并加载集成、Config Entry setup/unload、单实例约束和 `media_directory` 默认配置行为。
 - [ ] 先写 RED：注册 `tivoo.stop_countdown`，无必需参数；传入不允许的参数/缺失服务必须明确报错。
 - [ ] 先写 RED：注册 `tivoo.set_volume`，必需字段 `volume: integer`，范围 0–100（含边界）；确认 0 不会被当成缺省值。
-- [ ] 定义一个受限的语义命令接缝：当前 MVP 只传递 `stop_countdown`、`set_volume`，不接受任意 domain/service 或原始协议帧。
+- [ ] 定义一个受限的语义命令接缝：本批传递 `stop_countdown`、`set_volume`，后续按 MVP 批次增加已明确的表情、文字、亮度、倒计时和媒体动作；不接受任意 domain/service 或原始协议帧。
 - [ ] 测试使用内存适配器捕获 StopCountdown 和 SetVolume 请求；未配置生产设备适配器时使用明确的 unavailable 实现并抛出 HA 可识别错误。
 - [ ] StopCountdown 的服务调用不得要求启动时长，不读取或保存倒计时剩余时间。
 - [ ] SetVolume 必须精确保留输入 0、100；拒绝小于 0、大于 100 和非整数。服务处理不得使用 `volume or default`。
@@ -115,7 +115,7 @@ P4b3 中表情/文字/亮度与 P4b4 媒体任务均保留原合同和实现设�
 
 ## 6. P4b2 — HA LLM Tools 平台与 StopCountdown Tool
 
-**Purpose:** 通过第一项工具验证 HA 的真实 LLM Tools 注册路径与服务复用关系。选择 StopCountdown，是因为其公开合同无参数，能同时验证空 Schema、错误传播和不依赖历史倒计时状态。
+**Purpose:** 通过首个 StopCountdown Tool 验证 HA 的真实 LLM Tools 注册路径与服务复用关系。其他 MVP Tools 在 P4b3/P4b4 按原批次完成，本批不提前实现。
 
 **Files (expected):**
 
@@ -145,92 +145,75 @@ P4b3 中表情/文字/亮度与 P4b4 媒体任务均保留原合同和实现设�
 
 ## 7. P4b3 — 表情、文字、倒计时工具与亮度服务
 
-**Purpose:** 延续原定 P4b3 范围。在这个批次中完成首版剩余必需能力（StartCountdown、SetVolume Tool），并保留表情、文字和亮度服务的可选扩展设计。首版执行时只做 MVP 必需子集；表情/文字/亮度子任务不提前混入首版。
-
-### 7.1 第一版必须完成的 MVP 子集
+**Purpose:** 完成 MVP 的表情预设、文字显示、倒计时启动和亮度 HA Service，并提供 SetVolume MCP Tool（其 HA Service 已在 P4b1 完成）。本批以下项目全部是 MVP 必须。
 
 **Expected files:**
 
-- Modify: Tivoo `services.py`、`services.yaml`、`llm.py`、语义命令接口。
-- Tests: StartCountdown Service/Tool、SetVolume Tool 参数、服务委派、注解与失败路径。
+- Modify: Tivoo `services.py`、`services.yaml`、`llm.py`、语义命令接口及允许复用的 preset/text render modules。
+- Tests: preset registry、text rendering/service schema、countdown start、brightness service、volume MCP Tool、ToolAnnotations and service delegation.
 
 **Tasks:**
 
-- [ ] 先写 RED：注册 `tivoo.start_countdown`，必需 `countdown: string`，严格格式 `MM:SS`；分钟 00–99、秒 00–59。
-- [ ] `tivoo.start_countdown` 复用 b1 的语义命令接缝；映射上游 `show_countdown(value=True, countdown=...)`，不接受小时、宽松格式或静默截断。
-- [ ] 在 `llm.py` 中注册 `tivoo__StartCountdown`，参数 Schema 与 HA Service 完全一致；Tool 只调用对应 Service。
-- [ ] 在 `llm.py` 中注册 `tivoo__SetVolume`，必需整数 `volume` 0–100；该 Tool 只调用 P4b1 已实现的 `tivoo.set_volume`，不复制音量映射或 payload builder。
-- [ ] StartCountdown 显式设置 `idempotent=False`；SetVolume 设置 `idempotent=True`；两者都设置 `read_only=False`、`destructive=False`、`open_world=False` 和 `integration="tivoo"`。
-- [ ] StartCountdown / SetVolume 的 HA Service Schema 与 `probatio.Schema` 分别适配框架，并以合同测试验证字段、类型、必需性和范围一致。
-- [ ] 所有 Tool 都通过 `hass.services.async_call(..., blocking=True, context=llm_context.context)` 调用服务，不得直达命令适配器。
-- [ ] SetVolume 测试覆盖 0、100、越界和非整数；0 必须无损到达 b1 的服务/适配器。
-- [ ] 若 b0 许可证/来源检查允许复用纯 payload builder，可在此添加 golden test；否则只验证语义命令，不复制或手写 wire encoder。
+- [ ] 为 `tivoo.set_expression` 实现必需 `name`；只接受运行时 preset registry 中真实存在且非隐藏的预设名称，未知项拒绝。
+- [ ] 注册 `tivoo__SetExpression`，参数只包含 `name`；Tool 只调用 `tivoo.set_expression` HA Service。
+- [ ] 为 `tivoo.show_text` 实现必需 `value` 与可选 `color`、`background`、`speed`、`step`、`font_size`、`font`；`step=1–8`、`font_size=8–16`，`font` 必须来自有效字体列表。
+- [ ] 不在 Service 或 Tool schema 暴露 `font_file`；字体文件路径属于服务端资源，拒绝用户/LLM 传入本机路径。
+- [ ] 注册 `tivoo__ShowText`，参数与 HA Service 完全一致；Tool 只调用 `tivoo.show_text`。
+- [ ] 为 `tivoo.start_countdown` 增加必需 `countdown: string`；严格 `MM:SS`，分钟 00–99、秒 00–59；拒绝宽松格式、小时和静默截断。
+- [ ] `tivoo.start_countdown` 复用语义命令接缝，映射上游 `show_countdown(value=True, countdown=...)`；注册 `tivoo__StartCountdown`，Tool 只调用对应 Service。
+- [ ] 为 `tivoo.set_brightness` 注册 HA Service，`value: integer 0–100`；这是 MVP 必需服务，按原计划不注册重复 `SetBrightness` MCP Tool。
+- [ ] 在 `llm.py` 注册 `tivoo__SetVolume`，必需整数 `volume` 0–100；只调用 P4b1 已实现的 `tivoo.set_volume`，不复制音量映射/payload 逻辑。
+- [ ] ToolAnnotations：SetExpression、ShowText、StartCountdown 为 `idempotent=False`；SetVolume 为 `idempotent=True`；写操作统一 `read_only=False`、`destructive=False`、`open_world=False`、`integration="tivoo"`。
+- [ ] 所有 Tool 都使用 `hass.services.async_call(..., blocking=True, context=llm_context.context)` 调用服务，不得直达命令适配器。
+- [ ] 测试覆盖有效/无效 preset、文字样式上下界、禁止 `font_file`、倒计时格式边界、亮度 0/100 与越界、音量 0/100 与越界；音量 0 必须无损到达 b1 服务/适配器。
+- [ ] 如 P4b0 许可证/来源核查允许，复用纯 payload/render builder 并添加 golden tests；否则只使用许可明确的模块和语义命令接缝，不重写整套 wire encoder。
 
-**MVP Exit gate:**
+**Exit gate:**
 
-- [ ] 首版三个工具 `StartCountdown`、`StopCountdown`、`SetVolume` 均已注册；StopCountdown 在 b2 已有测试，StartCountdown/SetVolume 在本批通过测试。
-- [ ] 三个 Tool 均只调用对应的 HA Service；所有参数限制与合同矩阵一致。
-- [ ] SetVolume 的 0、100 和范围拒绝行为通过测试；StartCountdown 的 MM:SS 边界通过测试。
+- [ ] `SetExpression`、`ShowText`、`StartCountdown`、`SetVolume` 四个 Tool 均注册并映射到对应 HA Service。
+- [ ] `SetBrightness` HA Service 注册且范围为 0–100；没有创建同义 MCP Tool。
+- [ ] preset、文字、倒计时、亮度、音量的正常/异常参数测试通过；字体本地路径不从 Tool 输入到达。
 - [ ] 服务/适配器错误向上传播，没有成功字符串伪装。
 - [ ] 聚焦测试、P4b2 回归、P3 测试、Ruff 与 `git diff --check` 通过。
 
-**MVP Commit:** `feat(p4): add countdown start and volume MCP tools`
+**Commit:** `feat(p4): implement Tivoo expression text countdown and brightness MVP`
 
-### 7.2 保留的可选扩展子集（不属于第一版执行门）
+## 8. P4b4 — 图片/GIF 文件处理与媒体 Tools
 
-首版验收前不执行以下任务。它们保留在 P4b3，只有在核心链路通过且明确决定扩展时才恢复执行：
-
-- `tivoo.set_expression` / `tivoo__SetExpression`：`name` 只接受运行时 preset registry 中真实存在且非隐藏的预设；拒绝未知项。
-- `tivoo.show_text` / `tivoo__ShowText`：`value` 加可选 `color`、`background`、`speed`、`step`、`font_size`、`font`；`step=1–8`、`font_size=8–16`，font 必须来自有效字体名称；不得暴露 `font_file`。
-- `tivoo.set_brightness`：普通 HA Service，范围 0–100；AI 控制优先通过未来的 `number.tivoo_brightness` 原生实体，不注册重复的 `SetBrightness` Tool。
-- 扩展工具仍须复用同一 HA Service/语义适配器边界；各自的 ToolAnnotations 和服务验证在扩展执行时按合同补齐。
-
-**Optional extension exit gate（仅在明确排期扩展时适用）：**
-
-- [ ] Expression、Text 和 Brightness 服务/Tool 参数符合完整合同矩阵与上游边界。
-- [ ] 无效 preset/字体/显示参数拒绝；字体文件路径不会从 Tool 输入到达。
-- [ ] 亮度服务 0–100；没有创建同义 `SetBrightness` Tool。
-- [ ] 对应测试和必要回归通过；独立记录扩展提交。
-
-首版报告将本小节标记为 `DEFERRED`，不把未执行当作 P4b3 MVP 缺陷。
-
-**P4-C09 wire note:** StopCountdown 的无参数业务合同在 b1/b2 验证。若已合法复用纯 payload builder，则验证 `72 03 00 00 00`；若许可证/可部署来源未确认，字节级验证转交 P6 adapter 测试，不在 Tool 层重写协议。
-
-## 8. P4b4 — 图片/GIF 文件合同与媒体 Tools
-
-**Purpose:** 保留原定图片/GIF 文件处理与媒体 Tools 扩展。它不属于第一版倒计时/音量 MVP；只有在首版链路验收通过并明确决定加入媒体功能后才执行。P4 只接收 HA 配置目录内的文件引用，不增加远程资源协议。
+**Purpose:** 实现 MVP 必需的图片与 GIF 文件处理。P4 只接收 HA 配置目录下 `media_directory` 内的相对文件引用，不增加远程资源协议。
 
 **Files (expected):**
 
-- Modify: Tivoo `services.py`、`services.yaml`、`llm.py`、媒体路径解析模块（仅当它能形成可复用的单一职责模块时）。
-- Tests: 媒体文件夹具、路径边界、图片格式、GIF 帧时长和工具调用测试。
+- Modify: Tivoo `services.py`、`services.yaml`、`llm.py`、媒体路径/图像解码模块（只在形成清晰复用边界时拆分）。
+- Tests: PNG/JPG/GIF fixtures、路径边界、GIF timing、Tool→Service delegation tests.
 
 **Tasks:**
 
-- [ ] 为集成配置 `media_directory` 使用 HA 配置目录相对路径，默认 `pixelart`；解析根目录时使用 `hass.config.path()`。
-- [ ] 为 `tivoo.show_image` 增加必需 `file: string` 和可选 `time: integer`；静态 PNG/JPG 和 GIF 均可接受。
-- [ ] 为 `tivoo.play_animation` 增加同样的 `file/time`；首期只接受 GIF，帧目录和 JSON stage 文件不属于 HA 上游服务合同。
-- [ ] 未提供 `time` 时保留 GIF 内嵌 frame duration；提供时校验 0–65535 毫秒并覆盖原始帧时长。
-- [ ] 用 `realpath()` 与 `commonpath()` 验证解析后的文件仍处于 media directory 内；拒绝绝对路径、路径穿越、逃逸 symlink 和目录。
-- [ ] 拒绝不存在/不可读文件、非支持格式以及无效 timing；错误应在 HA Service 层清楚出现并作为 MCP Tool error 传播。
-- [ ] `ShowImage` 与 `PlayAnimation` 共享媒体路径解析和 GIF/图像读取逻辑，不实现两套文件协议。
+- [ ] 使用 P4b1 创建的 `media_directory` 配置；默认 `pixelart`，根目录通过 `hass.config.path()` 解析。
+- [ ] 为 `tivoo.show_image` 增加必需 `file: string` 和可选 `time: integer`；支持静态 PNG/JPG 和 GIF。
+- [ ] 为 `tivoo.play_animation` 增加必需 GIF `file: string` 和可选 `time: integer`；帧目录与 JSON stage 文件不在支持范围。
+- [ ] 未提供 `time` 时保留 GIF 内嵌 frame duration；提供时校验 0–65535 毫秒并覆盖帧间隔。
+- [ ] 使用 `realpath()` 与 `commonpath()` 验证解析后的文件仍处于 `media_directory` 内；拒绝绝对路径、路径穿越、逃逸 symlink 和目录。
+- [ ] 拒绝不存在/不可读文件、非支持格式和无效 timing；错误在 HA Service 层明确出现并作为 MCP Tool error 传播。
+- [ ] `ShowImage` 与 `PlayAnimation` 共用媒体路径解析和图像/GIF 读取实现，不实现两套文件协议。
+- [ ] 注册 `tivoo__ShowImage`、`tivoo__PlayAnimation`；两者只调用对应 HA Service；ToolAnnotations 均为写操作且 `idempotent=False`。
 - [ ] MCP 参数不接受 URL、asset ID、NAS 任意绝对路径、原始图片字节、palette、frame arrays 或 HTTP 资源地址。
-- [ ] 测试文件放在 HA media directory 测试夹具下；验证通过后只把经过验证的规范化文件引用交给语义命令接口。
-- [ ] 不实现 AstrBot 生成文件跨容器复制/上传接口。该交接尚无上游合同，单独记录为后续部署问题，不发明 URL 或资源 ID。
+- [ ] 测试使用 HA media directory 下的 PNG/JPG/GIF 测试夹具；至少验证一张静态图和一份多帧 GIF 被正确解析/转发，及文件不存在/路径逃逸的错误传播。
+- [ ] 不实现 AstrBot 生成文件跨容器复制/上传协议。运行时使用者需将待显示文件放入 HA `media_directory`；P4 不发明 URL/asset ID。
 
-**Optional extension exit gate（不属于 MVP 退出条件）:**
+**Exit gate:**
 
-- [ ] `ShowImage` 支持静态图片/GIF，`PlayAnimation` 只支持 GIF；参数符合 P4 矩阵。
-- [ ] 有效相对文件路径可通过；路径越界、symlink 逃逸、目录、URL、绝对路径和无效格式均被拒绝。
-- [ ] GIF 自带时长与显式 `time` 覆盖行为由测试证明。
-- [ ] 两个 Tool 调用同一 HA Service 参数合同与同一媒体处理路径，没有 MCP 二进制载荷。
-- [ ] 聚焦测试、P4b2 回归、P3 全套测试、Ruff 与 diff 检查通过。
+- [ ] `ShowImage` 支持静态 PNG/JPG/GIF，`PlayAnimation` 仅支持 GIF；参数符合合同矩阵。
+- [ ] 有效相对路径通过；越界、symlink 逃逸、目录、URL、绝对路径、无效格式、缺失文件均明确拒绝。
+- [ ] GIF 原始时长和显式 `time` 覆盖由测试证明。
+- [ ] 两个 Tool 调用对应 HA Service，共用文件路径与帧处理逻辑，没有 MCP 二进制载荷。
+- [ ] 聚焦测试、P4b2/P4b3 回归、P3 全套测试、Ruff 与 `git diff --check` 通过。
 
-**Optional extension commit:** `feat(p4): expose Tivoo image and animation tools`
+**Commit:** `feat(p4): implement Tivoo image and GIF MVP tools`
 
 ## 9. P4b5 — AstrBot MCP 配置、Persona 与运行时验证
 
-**Purpose:** 使用 AstrBot 4.29.4 已有 MCP Client 连接 HA 原生 Assist MCP API，并确认目标 Agent Persona 实际可发现、调用项目工具。此批不写 AstrBot 插件或自定义 Client。
+**Purpose:** 使用 AstrBot 4.29.4 已有 MCP Client 连接 HA 原生 Assist MCP API，确认目标 Agent Persona 实际发现并获准使用全部七个 MVP Tivoo Tool；不写 AstrBot 插件或自定义 Client。
 
 **Configuration contract:**
 
@@ -242,79 +225,84 @@ P4b3 中表情/文字/亮度与 P4b4 媒体任务均保留原合同和实现设�
 
 **Tasks:**
 
-- [ ] 在 AstrBot WebUI 使用上述配置添加 HA MCP Server；凭据由用户/现有安全配置入口录入，不写入 Git、计划、截图、日志或测试 fixture。
-- [ ] 确认 MCP initialize 成功，AstrBot 显示 server connected，`tools/list` 能发现三个首版必需 Tivoo Tool：StartCountdown、StopCountdown、SetVolume。
-- [ ] 将该 MCP Server 的三个必需 Tool 授权给实际 Tivoo 助手使用的 Agent Persona；确认工具不只是出现在服务器列表而是进入对应 Persona 的可调用工具集。
-- [ ] 检查完整 `tools/list`：HA Assist API 可能聚合其他已安装集成的 LLM Tools；按来源识别 Tivoo 工具，不假设清单只含 Tivoo，也不把第三方工具误记为项目交付。若可选扩展尚未执行，不要求这些扩展 Tool 出现。
-- [ ] 在独立开发 HA（启用内存测试适配器）环境分别调用 StartCountdown、StopCountdown、SetVolume，验证 `tools/call` 经过 MCP → HA Tool → HA Service → 命令适配器；SetVolume 测试 0 和 100；验证 service error 会返回 MCP tool error。生产 HA 不安装/启用内存适配器。
-- [ ] 若 P4b3 可选表情/文字子任务或 P4b4 媒体扩展已获准实施，再附加验证这些扩展 Tool；否则不要求它们存在。
-- [ ] 验证有效普通用户 Token 可访问 Assist API，错误 Token 被拒绝；确认不会因为 `/api/mcp/assist` 路由把管理员权限交给 AstrBot。
+- [ ] 在 AstrBot WebUI 添加 HA MCP Server；凭据由用户/现有安全配置入口录入，不写入 Git、计划、截图、日志或测试 fixture。
+- [ ] 确认 MCP initialize 成功，`tools/list` 发现七个 MVP Tool：SetExpression、ShowText、StartCountdown、StopCountdown、SetVolume、ShowImage、PlayAnimation。
+- [ ] 将七个 MVP Tool 授权给实际 Tivoo 助手使用的 Agent Persona；确认它们进入 Persona 的可调用工具集。
+- [ ] 检查完整 `tools/list`：HA Assist API 可能聚合其他集成工具；按 integration/source 区分，只要求本项目七个 MVP Tool 完整出现。
+- [ ] 在独立开发 HA（启用内存测试适配器）环境通过 MCP 调用七个工具，验证每个 `tools/call` 经过 HA LLM Tool → 对应 HA Service → 语义 Adapter；图片/GIF 使用 HA media directory 中的测试文件。
+- [ ] 通过 HA Service 直接调用 `tivoo.set_brightness`，验证 0、100、越界输入；此服务不要求存在同义 MCP Tool。
+- [ ] 对 StartCountdown、StopCountdown、SetVolume 分别验证参数到达适配器；SetVolume 测试 0 和 100；验证服务错误作为 MCP tool error 返回。
+- [ ] 验证有效普通用户 Token 可访问 Assist API，错误 Token 被拒绝；确认不会授予 AstrBot HA 管理权限。
 - [ ] 验证 AstrBot MCP 断开重连和 4.29.4 实际重试行为；对非幂等动作使用测试适配器模拟响应丢失，不在真实 Tivoo 上重复触发动画或倒计时。
-- [ ] 记录其他集成的工具是否出现在 Assist API 中，以及是否影响目标 Persona 工具选择；不为过滤第三方工具添加未经需求确认的自定义 MCP Server。
-- [ ] 若目标 HA/AstrBot 环境不可访问或没有可用凭据，完成本地协议/接口验证后将运行时项标为 BLOCKED；不读取 NAS 配置文件来寻找 Token，也不以静态配置猜测连接成功。
+- [ ] 若目标 HA/AstrBot 环境不可访问或没有可用凭据，完成本地协议/接口验证后将对应运行时项标为 BLOCKED；不读取 NAS 配置文件寻找 Token，也不以静态配置猜测连接成功。
 
 **Exit gate:**
 
-- [ ] AstrBot 4.29.4 完成 HA Streamable HTTP initialize 和工具发现。
-- [ ] 目标 Persona 已获准使用 StartCountdown、StopCountdown、SetVolume 三个首版必需 Tool；独立开发 HA 与内存适配器可用时，三项调用均通过完整链路。若没有独立测试实例，则把完整成功调用标为 BLOCKED，只验收工具发现与不可用错误传播，不把生产环境切换为 fake adapter。
+- [ ] AstrBot 4.29.4 完成 HA Streamable HTTP initialize 和七个 MVP Tool 的发现。
+- [ ] 目标 Persona 已获准使用全部七个 MVP Tool；独立开发 HA 与内存适配器可用时，七个工具均完成一次端到端工具调用。
+- [ ] 亮度 HA Service 的成功/参数错误路径有运行时或自动化测试证据。
 - [ ] 普通 HA 用户认证、无效 Token 拒绝、服务异常映射均有证据。
-- [ ] 非幂等工具的重连/重试风险有可复现测试记录；没有叠加自定义通用重试层。
+- [ ] 非幂等 Tool 的重连/重试风险有可复现测试记录；没有叠加自定义通用重试层。
 - [ ] Token 没有进入仓库、测试输出或验收报告。
 
-**Commit:** `test(p4): verify AstrBot countdown and volume MCP integration`
+**Commit:** `test(p4): verify AstrBot access to all Tivoo MVP tools`
 
 ## 10. P4b6 — 合同矩阵验收与收尾
 
-**Purpose:** 逐项审计 P4-C01 至 P4-C15，以自动化结果和真实运行证据区分 PASS、PARTIAL、BLOCKED、DEFERRED；首版只要求倒计时/音量核心合同通过，P4-C14 仍属于 P5/P6。
+**Purpose:** 验收全部明确列入 MVP 的功能实现，并重点证明倒计时启动、倒计时停止和音量调整的完整 AstrBot→MCP→HA→Service→Adapter 调用链。其他未声明 Tivoo 服务仍作为可选扩展，不纳入本次验收范围。
 
 **Tasks:**
 
-- [ ] 对照 P4-C01 至 P4-C15 建立合同追踪表；首版适用项链接到具体测试、命令输出或现场验证；可选扩展未执行时标记 DEFERRED，不从“服务已注册”推断“设备动作已成功”。
-- [ ] 验证 MCP 路由、Streamable HTTP、工具发现、普通用户认证与 Assist API 权限。
-- [ ] 验证首版三个 Tool 的注册过滤、实体暴露边界、服务复用、参数合同、失败传播和 JSON ToolResult。
-- [ ] 媒体文件相对路径、根目录包含关系、静态图片/GIF、GIF timing 和越界拒绝只在 P4b4 已执行时验收；否则标记 DEFERRED。
-- [ ] P4b3 表情/文字/亮度可选子任务如未执行，标记 DEFERRED，不阻塞首版。
-- [ ] 验证无参 StopCountdown 及 `72 03 00 00 00` wire 语义。若 P4b0 未能确认纯 payload builder 的合规复用方式，则把字节级检查标为 P6 adapter 待办；不得在 Tool 层另写协议编码器。
+- [ ] 对照 P4-C01 至 P4-C15 建立合同追踪表；每项链接到具体测试、命令输出或受控运行证据。
+- [ ] 验证 MCP 路由、Streamable HTTP、七个必需 Tool 的发现和 Persona 授权、普通用户认证与 Assist API 权限。
+- [ ] 验证 SetExpression、ShowText、ShowImage、PlayAnimation 四个显示/媒体 Tool 的参数 Schema、服务委派、正常执行路径和失败传播。
+- [ ] 验证 SetBrightness Service 的 0–100 参数边界和调用路径；它是 HA Service，不要求另建 SetBrightness MCP Tool。
+- [ ] 验证 StartCountdown、StopCountdown、SetVolume 三项完整链路：通过 AstrBot Persona 分别执行 `MM:SS` 启动、无参停止、音量 0/100 设置；逐层确认 MCP `tools/call`、HA LLM Tool、HA Service 和内存语义 Adapter 收到的动作/参数一致。
+- [ ] 通过错误输入测试确认倒计时格式、音量边界、媒体路径越界和文字/preset 非法输入会明确失败，不产生伪成功。
+- [ ] 媒体验收覆盖相对 media_directory、PNG/JPG/GIF、GIF timing、路径穿越/逃逸 symlink/缺失文件拒绝。
+- [ ] 验证 StopCountdown 无参数语义及 `72 03 00 00 00` wire 语义。若 P4b0 未能确认纯 payload builder 合规复用，则字节级检查转为 P6 adapter 待办，不在 Tool 层另写编码器。
 - [ ] 验证 AstrBot 4.29.4 断线恢复/重试，不引入自定义协议或额外重试框架。
 - [ ] 运行 P3 全套 HA 测试，确认 Chat API、session、SSE、ChatLog、取消与 P4 完全隔离。
 - [ ] 运行开发机完整测试与静态检查：`./scripts/test-ha.sh -q`、Ruff check、Ruff format check、Python compileall、`pip check`、`git diff --check`。
 - [ ] 检查变更范围只涉及 Tivoo HA 集成、对应测试、必要依赖与 P4 文档；没有改动 P3 实现、AstrBot 插件、ESP32、TCP 7777/7778 或 NAS 部署文件。
-- [ ] 创建 P4 验收报告，区分自动化 PASS、AstrBot 运行时 PASS、生产文件交接 BLOCKED、设备实测 DEFERRED。
+- [ ] 创建 P4 验收报告，区分自动化 PASS、AstrBot 运行时 PASS、媒体文件交接限制和设备实测 DEFERRED。
 - [ ] 仅在全部对应门通过后更新 README 的 P4 状态；未通过项保留明确状态和后续归属。
 
 **Exit gate:**
 
-- [ ] P4-C01–C09、P4-C11–C13 的首版适用项均有 PASS/PARTIAL/BLOCKED 结论及证据；P4-C10 媒体和 P4-C15 显示扩展如未实施，明确标记 DEFERRED；字节级报文若因许可证/代码复用条件未能在 P4 验证，必须记入 P6 adapter 待办而不标 PASS。
-- [ ] 本地 HA 自动化和 P3 回归通过；静态检查与 diff 检查通过。
-- [ ] AstrBot 实际 Persona 能发现并调用 StartCountdown、StopCountdown、SetVolume 三个首版必需 Tool；所有失败路径都没有伪成功。
-- [ ] C14 实机动作不作为 P4 关闭前提；报告明确转交 P5/P6。
+- [ ] P4-C01–C13、C15 的 MVP 适用项均有 PASS/PARTIAL/BLOCKED 结论及证据；没有把未声明服务列成遗漏。
+- [ ] 表情、文字、亮度 Service、图片/GIF、倒计时启停和音量调整的所有实现与参数合同均有测试/运行时证据。
+- [ ] AstrBot 实际 Persona 能发现并调用七个 MVP Tool。
+- [ ] StartCountdown、StopCountdown、SetVolume 的 MCP → HA LLM Tool → HA Service → 语义 Adapter 完整链路全部通过；所有失败路径都没有伪成功。
+- [ ] P3 回归、类型/静态检查与 diff 检查通过。
+- [ ] C14 实机动作不作为 P4 关闭前提；真实硬件回执转交 P5/P6。
 - [ ] 最终变更审查完成并本地提交；不 push、不 merge。
 
-**Commit:** `test(p4): verify HA MCP Tivoo tool contracts`
+**Commit:** `test(p4): accept all Tivoo MVP features and core MCP flow`
 
 ## 11. 合同到批次追踪
 
-| 合同 ID | 主要 Batch | 第一版验证重点 |
+| 合同 ID | 主要 Batch | MVP 验证重点 |
 |---|---|---|
 | P4-C01 MCP 路由 | P4b0、P4b5 | HA 原生 `/api/mcp/assist` 可达 |
 | P4-C02 Streamable HTTP | P4b0、P4b5 | AstrBot 4.29.4 initialize 与 Bearer header |
-| P4-C03 工具发现 | P4b2、P4b3、P4b5 | 三个首版必需 Tool 出现在指定 Persona；扩展工具按是否排期决定 |
+| P4-C03 工具发现 | P4b2–P4b5 | 七个 MVP Tool 出现在指定 Persona |
 | P4-C04 权限边界 | P4b0、P4b5 | 普通 HA 用户 Token 可用；错误 Token 拒绝；不使用管理 API |
-| P4-C05 实体暴露 | P4b5、P4b6 | 原生工具只作用于暴露给 Assist 的实体；不以未实现实体替代必需 Tool |
-| P4-C06 Tool 注册过滤 | P4b2、P4b3 | 仅 `api_id=assist` 返回 Tivoo Tools |
-| P4-C07 服务复用 | P4b1–P4b3 | 三个必需 Tool 调用对应 `tivoo.*` Service；服务处理逻辑可由自动化共用 |
-| P4-C08 失败传播 | P4b1–P4b6 | 参数错误、服务缺失、适配器不可用均不伪成功 |
-| P4-C09 MVP 参数范围 | P4b1–P4b3、P4b6 | Stop 无参数；Start 严格 MM:SS；Volume 整数 0–100 且保留 0 |
-| P4-C10 媒体边界 | P4b4、P4b6 | media_directory 相对路径、PNG/JPG/GIF、GIF timing、路径越界拒绝；未排期则 DEFERRED |
+| P4-C05 实体暴露 | P4b5、P4b6 | 原生工具只作用于暴露给 Assist 的实体；项目自定义 Tool 是明确动作 |
+| P4-C06 Tool 注册过滤 | P4b2–P4b4 | 仅 `api_id=assist` 返回七个 MVP Tool |
+| P4-C07 服务复用 | P4b1–P4b4 | 七个 Tool 调用对应 HA Service；Brightness Service 独立可调用 |
+| P4-C08 失败传播 | P4b1–P4b6 | 参数错误、媒体文件错误、服务缺失、适配器不可用均不伪成功 |
+| P4-C09 MVP 参数范围 | P4b1–P4b3、P4b6 | 倒计时 MM:SS/Stop 无参；Volume/Brightness 0–100；preset/text schema |
+| P4-C10 媒体边界 | P4b1、P4b4–P4b6 | media_directory、PNG/JPG/GIF、GIF timing、路径越界拒绝 |
 | P4-C11 P3 回归 | P4b2–P4b6 | P3 Chat/SSE/session/ChatLog 不变 |
 | P4-C12 断线与重试 | P4b5、P4b6 | 使用 AstrBot 4.29.4 实际重连行为；记录非幂等动作返回丢失风险 |
 | P4-C13 设备传输隔离 | P4b1–P4b6 | AstrBot 不连接 TCP 7777/7778、ESP32/SPP |
 | P4-C14 Tivoo 实机动作 | P5/P6 | 不作为 P4 退出条件；交由设备通信和硬件验收 |
-| P4-C15 显示扩展边界 | P4b3、P4b6 | 表情/文字/亮度仅在可选子任务排期后验收；首版不要求 |
+| P4-C15 未声明功能边界 | P4b6 | 其他未声明服务不混入 MVP；按完整矩阵保留为可选扩展或 Excluded |
 
 ## 12. 全局实施与测试规则
 
-- 一个 Batch 一个执行任务、一个独立提交；执行提示必须引用本批次编号、本文和 P4 合同矩阵，并明确“仅做当前批次”。第一版只执行 P4b3 的 MVP 子集；可选扩展子任务应在单独明确排期后再执行。
+- 一个 Batch 一个执行任务、一个独立提交；执行提示必须引用本批次编号、本文和 P4 合同矩阵，并明确“仅做当前批次”。表情、文字、亮度 Service、图片/GIF、倒计时启停和音量均属本版必做；只有未明确列入清单的其他 Tivoo 服务才是可选扩展。
 - 每个新增服务/Tool 行为先写能观察公开行为的 RED 测试，再实现最小逻辑并 GREEN。测试通过服务与 HA Assist/MCP 接缝，不绑定内部类结构。
 - 优先复用 HA Core 的 Config Entry、Service Registry、LLM Tools、Assist API、MCP Server 和现有 P3 测试脚手架。AstrBot MCP Client 复用 4.29.4 原生实现。
 - HA 服务 Schema 与 LLM Tool 的 `probatio.Schema` 可能属于不同验证框架；共享一份参数合同，分别适配框架并通过合同测试检查字段、类型、默认值和范围，不强行共享不兼容的 Schema 对象。
@@ -323,7 +311,7 @@ P4b3 中表情/文字/亮度与 P4b4 媒体任务均保留原合同和实现设�
 - 文件测试只读取 HA 配置 media directory 内的测试文件；不通过任意 HTTP URL、共享外部绝对路径或原始二进制简化文件交接。
 - 每批结束运行本批聚焦测试和必要回归；P4b2 之后至少运行 P3 现有测试。最终运行 `./scripts/test-ha.sh -q`、Ruff check/format、compileall、pip check 和 `git diff --check`。
 - 不在 NAS 上运行耗时测试或负载测试。开发机 Ubuntu 测试通过后，只进行必要的远程 MCP 连通/配置验证；不扫描、清理或修改无关 NAS 文件、容器和会话。
-- 每批结束记录：基线 SHA、实际修改文件、RED/GREEN 命令与结果、静态检查、人工验收状态、提交 SHA、剩余 BLOCKED/DEFERRED 项。不要因 MVP 通过而虚报可选扩展已完成，也不要因可选扩展未实施而阻塞 MVP。
+- 每批结束记录：基线 SHA、实际修改文件、RED/GREEN 命令与结果、静态检查、人工验收状态、提交 SHA、剩余 BLOCKED/DEFERRED 项。所有明确列入 MVP 的功能都必须有验收证据；仅未声明的其他服务允许保持 DEFERRED。
 - 遇到合同缺失、上游版本变化、许可证不明、HA 实际服务语义不同或 AstrBot 工具发现与预期不一致，先停止对应批次并更新合同/计划；不在实现中私自扩展协议。
 - 用户未另行授权时不部署生产改动、不更改生产 HA Config Entry、不触发真实 Tivoo 非幂等动作、不 push、不 merge。
 
