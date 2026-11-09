@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to AstrBot",
+        "description": "Enter the AstrBot server address and the dedicated OpenAPI key details. The API key is stored as a secret. No chat request is sent during setup.",
+        "data": {
+          "base_url": "AstrBot Base URL",
+          "api_key": "AstrBot API Key",
+          "api_key_id": "AstrBot API Key key_id"
+        },
+        "data_description": {
+          "base_url": "Enter the server address, including port 6185 when using the default port. Do not append /api/v1/chat.",
+          "api_key": "The dedicated OpenAPI key with the chat scope.",
+          "api_key_id": "The non-secret key_id returned when the OpenAPI key was created or listed."
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Enter a valid HTTP or HTTPS base URL without credentials, query parameters, or the /api/v1/chat endpoint.",
+      "required": "This field is required."
+    },
+    "abort": {
+      "single_instance_allowed": "AstrBot is already configured."
+    }
+  }
+}

@@ -1,8 +1,8 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：仅完成分批设计；所有 Batch 均 NOT STARTED。
+> 状态：P3b0 已完成；P3b1–P3b6 尚未开始。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
-> 本轮只创建计划文档，不创建代码或测试实现。
+> 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
 ## 1. Branch and baseline
 
@@ -10,7 +10,7 @@
 - Base：main，commit c754f5a22727fa0ded6a2fd0c309c967b162097d
 - 当前工作树从该基线切出，计划文档提交保留在此分支。
 - 每个后续实现 Batch 在此分支独立提交；不自动 push、merge 或修改 main。
-- 本次计划完成后，工作树只应包含主 Implementation Plan、本文、Superpowers 本地 ledger（ignored）及 .gitignore 的 Superpowers 状态目录规则。
+- 规划阶段的提交只包含主 Implementation Plan、本文及 .gitignore 的 Superpowers 状态目录规则；后续每个实现 Batch 在此分支独立提交。
 
 ## 2. Authority and preconditions
 
@@ -58,26 +58,29 @@
 - Create: homeassistant/custom_components/astrbot/__init__.py
 - Create: homeassistant/custom_components/astrbot/const.py
 - Create: homeassistant/custom_components/astrbot/config_flow.py
-- Create: homeassistant/custom_components/astrbot/strings.json（若 HA 当前配置流本地化要求使用）
-- Tests: 测试入口由 B0 实际确认；预期覆盖 config flow、manifest、entry setup/unload。
+- Create: homeassistant/custom_components/astrbot/translations/en.json（HA 运行时实际读取的自定义集成本地化文件）
+- Create: requirements_test.txt、pytest.ini、scripts/test-ha.sh（固定本地 HA 测试环境和入口）
+- Tests: tests/homeassistant/custom_components/astrbot/test_config_flow.py
 
 **Tasks:**
-- [ ] 核对实际 HA Core 版本与 2026.11.0 ConversationEntity/Config Entry 开发接口；确认 AstrBot 为 4.29.4。
-- [ ] 检查仓库现有 Python 测试结构与可用解释器；选择兼容 HA 2026.11.0 的最小测试方案。优先复用 HA Core 测试能力或兼容的 pytest-homeassistant-custom-component；只有确认缺失时才增加测试依赖。
-- [ ] 先写 Config Flow / manifest / setup 的失败测试，并证明当前项目不存在可加载的 astrbot 集成。
-- [ ] 实现 domain=astrbot、Config Entry setup/unload 和最小 metadata。集成必须独立于 custom_components/tivoo。
-- [ ] Config Flow 保存 AstrBot Base URL、API Key secret 和 API Key key_id 三项；username 自动派生，不提供 username 输入框。
-- [ ] 校验 Base URL 为合法 HTTP(S) 基础地址且不带 /api/v1/chat 后缀；不在 Config Flow 中为了“测试连接”触发真实模型对话。
-- [ ] API Key 只要求 chat scope；若运行时身份映射被 AstrBot 识别为管理员 ID，按合同要求改用新的专用 Key，而不是请求 chat:admin。
-- [ ] 运行 B0 聚焦测试、HA 集成加载测试和 git diff --check。
+- [x] 核对实际 HA Core 版本与 2026.11.0 Config Entry/ConversationEntity 开发接口；确认 AstrBot 运行源码版本为 4.29.4。
+- [x] 检查开发机 Python 3.14.4 和空白测试目录；固定 `pytest-homeassistant==2026.11.0`（其依赖 HA Core 同版）及 `ruff==0.17.4`，通过 `scripts/test-ha.sh` 在 Ubuntu 本地运行。
+- [x] 先写 Config Flow / manifest / setup 失败测试；RED 阶段确认集成缺失导致测试失败，再实现使其通过。
+- [x] 实现 domain=astrbot、Config Entry setup/unload 和最小 metadata。集成独立于 custom_components/tivoo。
+- [x] Config Flow 保存 AstrBot Base URL、API Key secret 和 API Key key_id 三项；username 不提供输入项，由后续批次按合同自动派生。
+- [x] 校验 HTTP(S) Base URL、端口、凭据、query/fragment 和 `/api/v1/chat` 后缀；不在 Config Flow 中触发真实模型请求。
+- [x] 表单明确要求使用专用 `chat` scope API Key；B0 不在线检查 Key scope 或 owner 身份，实际鉴权/username 一致性留给 B2/B6；不申请 `chat:admin`。
+- [x] 运行 B0 聚焦测试、HA 集成加载测试、Ruff lint/format 和 `git diff --check`。
 
 **Exit gate:**
-- HA 可保存并恢复 astrbot Config Entry，setup/unload 无副作用。
-- 三项配置正确保存；secret 不出现在日志和诊断输出；username 不允许单独配置。
+- HA 可创建并加载/卸载 astrbot Config Entry；配置由 HA Config Entry 机制持久化。
+- 三项配置正确保存；secret 使用 PASSWORD selector 且不进入日志；username 不允许单独配置。
 - 本地测试环境固定且与 HA 2026.11.0 兼容。
 - 未创建 ConversationEntity stub、HTTP 客户端或任何 P4/P5/P6 功能。
 
 **Commit:** chore(p3): add astrbot integration config flow
+
+**B0 verification (2026-11-09):** Ubuntu 本地 `./scripts/test-ha.sh -q`：17 passed；Ruff check/format：passed。NAS 仅用于核对运行版本，没有在 NAS 上运行测试；未录入真实 OpenAPI Key，也未发起 AstrBot Chat 请求。
 
 ## 5. Batch 1 — Single-user session identity and Store
 

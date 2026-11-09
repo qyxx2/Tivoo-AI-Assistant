@@ -392,6 +392,7 @@ Tivoo-AI-Assistant/
 │       └── config/               # 配置模板，不含真实密钥
 ├── homeassistant/
 │   ├── custom_components/
+│   │   ├── astrbot/              # P3：AstrBot Conversation Agent（当前已完成 Config Flow 基线）
 │   │   └── tivoo/                # Tivoo 自定义集成
 │   ├── blueprints/
 │   │   └── automation/           # 自动化蓝图
@@ -414,6 +415,18 @@ Tivoo-AI-Assistant/
 ├── tts-benchmark-matcha-melo/    # ARM Ubuntu 的 Matcha / MeloTTS 完整测试
 └── tests/                        # 跨模块集成测试
 ```
+
+### HA 自定义集成本地测试
+
+在 Ubuntu 开发机使用与 HA Core 2026.11.0 匹配的测试环境：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements_test.txt
+./scripts/test-ha.sh
+```
+
+测试仅从 `tests/` 收集；NAS 上的语音基准脚本不属于 pytest 单元测试。
 
 ## 10. 实施顺序
 

@@ -1,0 +1,10 @@
+{
+  "domain": "astrbot",
+  "name": "AstrBot Conversation Agent",
+  "codeowners": ["@qyxx2"],
+  "documentation": "https://github.com/qyxx2/Tivoo-AI-Assistant",
+  "config_flow": true,
+  "integration_type": "service",
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
