@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0–P3b5 已完成；P3b6 本地自动化验收和 NAS 集成部署已完成，真实 HA/AstrBot 业务验收待用户手动完成。
+> 状态：P3b0–P3b5 已完成；P3b6 自动化验收和 NAS 部署已完成；HA 集成安装/实体选择/真实文字对话/跨窗口 session 连续性已现场通过。HA 重启、24h、真实取消/Stop owner 与 API Key 轮换仍待验收。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -241,10 +241,13 @@
 - [x] 对照 P3-T01 至 P3-T16 逐项检查自动化覆盖和人工验收证据；未运行项目标记 PARTIAL / BLOCKED，不推断通过。逐项结果见验收报告。
 - [x] 运行全部 HA 集成测试、目标 unit tests、当前环境可用的 lint/编译/依赖检查和 git diff --check。
 - [x] 已将 9 个 AstrBot 集成文件部署到当前 HA 2026.11.0 配置目录，逐文件 SHA-256 与提交一致，并重启容器确认 running；未在 NAS 上运行测试。
-- [ ] 用户手动确认 Settings/Assist 中可选择 `conversation.astrbot`。
-- [ ] BLOCKED（需专用 chat-scope API Key）：通过 HA 网页 Assist 发起真实文本对话，核对 AstrBot 收到的原始文本、username、session_id 和 SSE 增量。
-- [ ] BLOCKED（现场验收）：真实多轮、HA conversation_id 换新、HA Core 重启恢复及 API Key 轮换。5 分钟和 24 小时边界已有本地虚拟时钟/Store 自动化测试。
-- [ ] BLOCKED（现场验收）：通过真实取消验证 AstrBot stop owner 校验；不清除 AstrBot 历史或删除 session。
+- [x] 用户现场确认自定义集成能添加、`conversation.astrbot` 实体生成，并可在 Voice assistants 中选择。
+- [x] 用户现场通过 HA Web 文字聊天与真实 AstrBot 完成消息往返，HA 正常显示回答。
+- [x] 用户关闭 HA 聊天窗口后重新聊天仍能延续上下文；AstrBot 日志确认使用同一用户对象和同一 session。现场未单独记录两个 HA conversation_id，继续保留自动化跨 ID 证据。
+- [ ] BLOCKED（现场验收）：HA Core 进程重启后恢复未过期 session；当前自动化只覆盖 Config Entry reload。
+- [ ] BLOCKED（现场验收）：真实 24 小时空闲期限复用/轮换；本地虚拟时钟已覆盖 TTL 边界。
+- [ ] BLOCKED（现场验收）：真实取消请求和 AstrBot Stop owner 校验。当前 HA Web 文字聊天没有可用的停止入口；自动化已覆盖客户端取消/Stop 处理。
+- [ ] BLOCKED（现场验收）：生产 API Key 轮换；自动化已覆盖新 key_id 和同 key_id secret 替换规则。
 - [x] 自动化证明 SSE 增量进入 HA ChatLog，并返回标准 ConversationResult。
 - [x] P3-T14 自动化验证 Conversation Agent 的 ChatLog 增量满足 HA Pipeline 流式 TTS 输入条件；真实 Wyoming TTS 分句、PCM callback、TTS Proxy 和 ESP32 播放留给 P5/P6。
 - [x] 最终审查变更只涉及 astrbot 对应测试、测试依赖与 P3 文档；无 Tivoo 集成、MCP、STT/TTS Provider、Satellite 或固件代码。
@@ -253,7 +256,7 @@
 
 **Exit gate:**
 - [x] P3-T01 至 P3-T16 均有明确自动化结果和人工验收状态；未完成项被明确记录为 PARTIAL / BLOCKED。
-- [ ] BLOCKED：HA 网页 Assist 的实际文本对话、多轮现场 session 身份、真实 Stop owner 校验尚待部署和人工验收。
+- [ ] BLOCKED：HA Core 重启恢复、24h 实际空闲期限、真实取消/Stop owner 校验及生产 API Key 轮换尚未完成现场验收。HA 网页文字对话和跨窗口 session 连续性已通过。
 - [x] 不将 TTS 流式播放或 Tivoo 实机语音当作 P3 完成条件。
 
 **Commit:** test(p3): verify AstrBot conversation agent contract

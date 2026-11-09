@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation 接口合同矩阵
 
-> 状态：接口合同已定稿，待实现与验收  
+> 状态：接口合同已冻结；P3 核心文字链路已实现并完成基础现场验收；HA 重启、24h 和取消/Stop owner 等验收仍待完成
 > 日期：2026-11-09  
 > 适用版本：NAS Home Assistant Core 2026.11.0；AstrBot 4.29.4（对应源码 tag：v4.29.4）  
 > 范围：HA Assist Pipeline 与 AstrBot HTTP OpenAPI 之间的 Conversation Agent 适配层  
@@ -248,7 +248,11 @@ data: {"type":"session_id","data":null,"session_id":"<UUIDv4>"}
 
 data: {"type":"user_message_saved","data":{...}}
 
+data: {"type":"run_started","data":{"run_id":"<run_id>"}}
+
 data: {"type":"plain","data":"你好","streaming":true}
+
+data: {"type":"complete","data":"你好","streaming":true}
 
 : heartbeat
 
@@ -260,7 +264,8 @@ data: {"type":"end","data":""}
 - SSE frame 使用 `data: JSON\n\n`。
 - 等待期间会发送 `: heartbeat\n\n` 注释帧。
 - P3 不依赖 `event:` 名称、event ID 或 retry 字段。
-- POST Chat 的第一条数据事件为 `session_id`，之后可有 `user_message_saved` 和流式内容。
+- POST Chat 的第一条数据事件为 `session_id`，之后可有 `user_message_saved`、`run_started`、流式内容和 `complete`。
+- `run_started` 是 Agent 运行开始的非文本生命周期事件；`complete` 是一条流式消息的完成事件。两者均忽略并继续消费后续事件，不进入 ChatLog。
 - `session_id` 事件必须与请求的 ID 一致；不一致视为协议错误。
 - `run_id/message_id` 是单轮执行标识，不是会话 ID，不得保存成 session_id。
 
@@ -275,7 +280,9 @@ data: {"type":"end","data":""}
 | `plain` 且 `chain_type=tool_call` 或 `tool_call_result` | 内部工具调用记录，不加入 ChatLog、不交给 TTS |
 | `agent_stats` | 只作为诊断元数据；不当作压缩事件，不送入 ChatLog |
 | `message_saved` | 忽略保存元数据 |
-| `end` | 正常完成标志；结束 delta stream 并生成 ConversationResult |
+| `run_started` | 忽略 Agent 运行开始状态；不得写入 ChatLog |
+| `complete` | 忽略当前 WebChat 消息完成状态；不得将其当成整个 Chat run 的终止标志，继续等待 `end` |
+| `end` | 整个 Chat run 正常完成标志；结束 delta stream 并生成 ConversationResult |
 | `error` | 本轮失败；不得把它当成正常回答 |
 | heartbeat 注释帧 | 忽略并继续等待 |
 | 图片、文件、音频、actionrow 等非文本事件 | P3 文本范围不处理；若无可见文本，按无有效文本响应失败 |

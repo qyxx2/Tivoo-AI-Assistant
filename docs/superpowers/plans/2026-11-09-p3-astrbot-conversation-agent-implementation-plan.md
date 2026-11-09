@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent Implementation Plan
 
-> 状态：P3b0–P3b5 已完成；P3b6 本地自动化验收通过（91 tests），AstrBot 集成已部署至 NAS HA；真实 HA/AstrBot 业务验收仍待用户手动完成，不能据此声明 P3 整体完成。
+> 状态：P3b0–P3b5 已完成；P3b6 自动化验收通过（92 tests）；HA 安装、实体选择、真实 Web 文字对话和跨窗口 session 连续性已现场通过。HA Core 重启、24h 空闲轮换、真实取消/Stop owner 校验与 API Key 轮换仍待验收，P3 整体暂不关闭。
 > 工作分支：feature/p3-astrbot-conversation-agent
 > 基线：main / c754f5a22727fa0ded6a2fd0c309c967b162097d
 > 日期：2026-11-09
@@ -9,7 +9,7 @@
 
 在 Home Assistant Core 2026.11.0 中提供独立的 AstrBot Conversation Agent。HA Assist Pipeline 将最终 STT 文本交给 AstrBot 4.29.4 的 HTTP OpenAPI；集成将 AstrBot SSE 中的可见文本增量按顺序写入 HA ChatLog，最终通过 HA 原生 ConversationResult 返回。单一 HA 用户在 HA 重启、HA conversation_id 更新以及 AstrBot 上下文压缩后继续使用同一个活动 AstrBot 会话；最近一次被 AstrBot 接受的请求超过 24 小时未活动后才轮换 session_id。
 
-本计划定义 P3 的完整实现批次；P3b0–P3b5 已实现，P3b6 本地自动化验收、验收报告和 NAS 集成部署已完成。真实 HA/AstrBot 业务验收由用户手动完成前，P3 整体保持 BLOCKED；不提前实现 P4/P5/P6。
+本计划定义 P3 的完整实现批次；P3b0–P3b5 已实现，P3b6 本地自动化验收、验收报告和 NAS 集成部署已完成。HA Web 文字对话及跨窗口 session 连续性已通过现场验收；HA Core 重启、24h TTL 和真实取消/Stop owner 等现场项未完成前，P3 整体仍保持 BLOCKED。P4 与这些剩余验收项无实现依赖，可按总体阶段顺序开展独立开发。
 
 ## Architecture
 
@@ -57,7 +57,7 @@ HA Assist Pipeline
 6. **上下文压缩：** 不解析 agent_stats 的 token 数、不推断压缩发生、不因压缩重置 session_id。AstrBot 自己负责上下文压缩和聊天历史。
 7. **请求合同：** POST {base_url}/api/v1/chat；Authorization: Bearer；Accept: text/event-stream；Content-Type: application/json。请求体必须包含 username、session_id、原样 message 和 enable_streaming=true。省略 locale、config_id、config_name、platform_id、conversation_id。
 8. **协议边界：** 不使用 /v1/chat/completions、AstrBot Dashboard WebSocket、MCP 或自行构造 Agent 内部事件。P3 不接收原始音频、不执行 STT/TTS、不注册 HA LLM Tools。
-9. **SSE 到 ChatLog：** 只把普通可见 plain 文本增量交给 ChatLog；reasoning、tool_call、tool_call_result、agent_stats、保存元数据和 heartbeat 不进入回答。按到达顺序原样传递，不重写或重新分句。
+9. **SSE 到 ChatLog：** 只把普通可见 plain 文本增量交给 ChatLog；reasoning、tool_call、tool_call_result、agent_stats、保存元数据、run_started、complete 和 heartbeat 不进入回答。按到达顺序原样传递，不重写或重新分句。
 10. **标准 HA 结果：** 通过 ChatLog 增量流和 HA 原生 async_get_result_from_chat_log() 形成 ConversationResult；不自行拼装历史对象，不重复写入 HA 已记录的用户消息。
 11. **真实流式声明：** 只有真正逐段向 ChatLog 提交增量时才声明 supports_streaming。P3 完成不等于已经具备流式 TTS；P5 Wyoming TTS Provider 必须独立支持 streaming input。
 12. **取消与并发：** AstrBot stop API 是 session 级而非 run 级。对唯一 session 的完整对话请求做串行化，避免并行请求被一次 stop 一并终止。取消时关闭 SSE reader、调用 stop，再继续传播 CancelledError。
