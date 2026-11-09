@@ -184,12 +184,13 @@ async def test_store_restores_the_same_session_after_entry_reload(hass, clock):
     assert restored_manager.get_session_id() == session_id
 
 
-async def test_ha_conversation_identity_does_not_control_astrbot_session(hass, clock):
+async def test_astrbot_session_survives_over_five_minutes_and_entry_reload(hass, clock):
     entry, manager = await _setup_entry(hass)
     session_id = manager.get_session_id()
     await manager.async_confirm_session(session_id)
 
-    # HA can create a new short-lived conversation while the P3 Store remains stable.
+    # HA ChatSession expires after five minutes; P3's session must remain active.
+    clock.advance(timedelta(minutes=6))
     restored_manager = await _reload_entry(hass, entry)
     assert restored_manager.get_session_id() == session_id
 

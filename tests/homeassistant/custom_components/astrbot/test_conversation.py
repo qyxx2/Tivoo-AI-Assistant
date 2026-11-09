@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -14,6 +15,9 @@ from custom_components.astrbot.api import (
 from custom_components.astrbot.const import SESSION_STORE_KEY, SESSION_STORE_VERSION
 from custom_components.astrbot.sse import AstrBotSseRemoteError
 from homeassistant.components import conversation
+from homeassistant.components.assist_pipeline.default_pipeline import (
+    _DefaultPipelineProcessor,
+)
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import Context
 from homeassistant.helpers import chat_session
@@ -745,4 +749,98 @@ async def test_incomplete_sse_stream_is_stopped_and_never_returns_success(
     assert len(stop_calls) == 1
     assert stop_calls[0]["session_id"]
     assert stop_calls[0]["authorization"] == f"Bearer {API_KEY}"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_assist_pipeline_consumes_astrbot_chatlog_deltas_as_streaming_tts_input(
+    hass, enable_custom_integrations, aiohttp_client
+):
+    """Exercise HA Core's real intent-delta-to-TTS streaming bridge."""
+    enable_socket()
+    visible_chunks = [
+        "第一段文本内容足够长，用于验证 HA Assist Pipeline 的 TTS 流式输入能够在回答生成过程中启动。",
+        "第二段文本继续补充上下文，并且保持在模型生成过程中单独到达，不需要等待最终回答。",
+        "第三段是在 TTS 流已经启动之后追加的文本块。",
+    ]
+    tts_first_chunk_consumed = asyncio.Event()
+
+    async def send_event(response, payload):
+        data = json.dumps(payload, ensure_ascii=False)
+        await response.write(f"data: {data}\n\n".encode())
+
+    async def handle_chat(request):
+        body = await request.json()
+        response = web.StreamResponse(
+            status=200, headers={"Content-Type": "text/event-stream"}
+        )
+        await response.prepare(request)
+        await send_event(
+            response,
+            {"type": "session_id", "data": None, "session_id": body["session_id"]},
+        )
+        for chunk in visible_chunks[:2]:
+            await send_event(response, {"type": "plain", "data": chunk})
+        await asyncio.wait_for(tts_first_chunk_consumed.wait(), timeout=5)
+        await send_event(response, {"type": "plain", "data": visible_chunks[2]})
+        await send_event(response, {"type": "end", "data": ""})
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/api/v1/chat", handle_chat)
+    client = await aiohttp_client(app)
+    base_url = str(client.make_url("/")).rstrip("/")
+    entry, _agent = await _setup_agent(hass, base_url)
+
+    class StreamingTtsStream:
+        supports_streaming_input = True
+
+        def __init__(self):
+            self.chunks = []
+
+        def async_set_message_stream(self, stream):
+            self.consumer_task = asyncio.create_task(self._consume(stream))
+
+        async def _consume(self, stream):
+            async for chunk in stream:
+                self.chunks.append(chunk)
+                if len(self.chunks) == 1:
+                    tts_first_chunk_consumed.set()
+
+    events = []
+    host = SimpleNamespace(
+        hass=hass,
+        context=Context(user_id="ha-user-id"),
+        pipeline=SimpleNamespace(
+            conversation_language=MATCH_ALL,
+            stt_language="zh-CN",
+            tts_language="zh-CN",
+            language="zh-CN",
+            prefer_local_intents=False,
+        ),
+        audio_settings=SimpleNamespace(needs_processor=False),
+        tts_audio_output=None,
+        device_id=None,
+        satellite_id=None,
+        process_event=events.append,
+    )
+    processor = _DefaultPipelineProcessor(host)
+    processor._conversation_data = object()
+    processor.intent_agent = SimpleNamespace(
+        id="conversation.astrbot", supports_streaming=True
+    )
+    tts_stream = StreamingTtsStream()
+    processor.tts_stream = tts_stream
+
+    speech, _ = await processor.recognize_intent(
+        "请按增量生成回答", "pipeline-streaming-conversation", None
+    )
+    await tts_stream.consumer_task
+    tts_chunks = tts_stream.chunks
+
+    assert speech == "".join(visible_chunks)
+    assert "".join(tts_chunks) == speech
+    assert len(tts_chunks) >= 2
+    assert any(event.data.get("tts_start_streaming") is True for event in events)
+    assert processor.supports_streaming_response is True
     assert await hass.config_entries.async_unload(entry.entry_id)

@@ -1,6 +1,6 @@
 # P3 AstrBot Conversation Agent — Task Batch Execution Plan
 
-> 状态：P3b0、P3b1、P3b2、P3b3、P3b4 已完成；P3b5–P3b6 尚未开始。
+> 状态：P3b0–P3b5 已完成；P3b6 本地自动化验收与证据报告已完成，真实 HA/AstrBot 部署验收 BLOCKED（需用户确认）。
 > 本文件是 P3 的当前执行合同，细化主 Implementation Plan 的依赖、文件边界、测试顺序和退出门。
 > 规划阶段未创建实现；各批次实际执行状态以本文件和 `.superpowers/sdd/2026-11-09-p3-astrbot-conversation-agent/progress.md` 为准。
 
@@ -238,22 +238,22 @@
 - Update README.md P3 status only after the corresponding acceptance gates have passed.
 
 **Tasks:**
-- [ ] 对照 P3-T01 至 P3-T16 逐项检查自动化覆盖和人工验收证据；未运行项目标记 NOT COVERED / BLOCKED，不得推断通过。
-- [ ] 运行全部 HA 集成测试、目标 unit tests、lint/type checks available in the selected test environment 和 git diff --check。
-- [ ] 将代码加载到 HA 2026.11.0，确认 Settings/Assist 可选择 conversation.astrbot。
-- [ ] 在用户配置专用 chat-scope API Key 后，通过 HA 网页 Assist 发起真实文本对话；核对 AstrBot 收到的原始文本、username、session_id 和 SSE 增量。
-- [ ] 连续多轮、HA conversation_id 换新、等待超过 HA 5 分钟 ChatSession 生命周期、HA 重启恢复、24 小时边界和 key_id 轮换均按各自测试/证据验证。
-- [ ] 通过真实取消验证 AstrBot stop owner 校验；不因测试需要清除 AstrBot 历史或删除 session。
-- [ ] 证明 SSE 增量进入 HA ChatLog，并返回标准 ConversationResult。
-- [ ] P3-T14 仅验证 Conversation Agent 的 ChatLog 增量满足 Pipeline 的流式输入条件；真实 Wyoming TTS 分句、PCM callback、TTS Proxy 和 ESP32 播放明确留给 P5/P6。
-- [ ] 最终审查变更只涉及 astrbot 集成、对应测试与 P3 文档；无 Tivoo 集成、MCP、STT/TTS Provider、Satellite 或固件代码。
-- [ ] 建立 P3 验收报告；只有 T01–T16 达到各自定义标准才更新 README P3 状态。
-- [ ] 独立本地提交最终验收材料；未经用户指示不推送、不合并。
+- [x] 对照 P3-T01 至 P3-T16 逐项检查自动化覆盖和人工验收证据；未运行项目标记 PARTIAL / BLOCKED，不推断通过。逐项结果见验收报告。
+- [x] 运行全部 HA 集成测试、目标 unit tests、当前环境可用的 lint/编译/依赖检查和 git diff --check。
+- [ ] BLOCKED（需用户确认部署）：将代码加载到当前 HA 2026.11.0 容器，确认 Settings/Assist 可选择 conversation.astrbot。
+- [ ] BLOCKED（需专用 chat-scope API Key 与部署确认）：通过 HA 网页 Assist 发起真实文本对话，核对 AstrBot 收到的原始文本、username、session_id 和 SSE 增量。
+- [ ] BLOCKED（现场验收）：真实多轮、HA conversation_id 换新、HA Core 重启恢复及 API Key 轮换。5 分钟和 24 小时边界已有本地虚拟时钟/Store 自动化测试。
+- [ ] BLOCKED（现场验收）：通过真实取消验证 AstrBot stop owner 校验；不清除 AstrBot 历史或删除 session。
+- [x] 自动化证明 SSE 增量进入 HA ChatLog，并返回标准 ConversationResult。
+- [x] P3-T14 自动化验证 Conversation Agent 的 ChatLog 增量满足 HA Pipeline 流式 TTS 输入条件；真实 Wyoming TTS 分句、PCM callback、TTS Proxy 和 ESP32 播放留给 P5/P6。
+- [x] 最终审查变更只涉及 astrbot 对应测试、测试依赖与 P3 文档；无 Tivoo 集成、MCP、STT/TTS Provider、Satellite 或固件代码。
+- [x] 建立 P3 验收报告；由于 T01–T16 尚有现场验收项 BLOCKED，本次不更新 README P3 状态。
+- [x] 已本地提交验收材料；未 push、未 merge。
 
 **Exit gate:**
-- P3-T01 至 P3-T16 均有明确 PASS 证据，或明确记录未完成项并保持 P3 BLOCKED。
-- HA 网页 Assist 的实际文本对话可用；多轮 session 身份稳定；ChatLog 增量/最终结果和取消行为符合合同。
-- 不将 TTS 流式播放或 Tivoo 实机语音当作 P3 完成条件。
+- [x] P3-T01 至 P3-T16 均有明确自动化结果和人工验收状态；未完成项被明确记录为 PARTIAL / BLOCKED。
+- [ ] BLOCKED：HA 网页 Assist 的实际文本对话、多轮现场 session 身份、真实 Stop owner 校验尚待部署和人工验收。
+- [x] 不将 TTS 流式播放或 Tivoo 实机语音当作 P3 完成条件。
 
 **Commit:** test(p3): verify AstrBot conversation agent contract
 
