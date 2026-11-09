@@ -97,6 +97,24 @@ async def test_parser_preserves_visible_text_and_ignores_metadata_and_internal_c
     ]
 
 
+async def test_parser_ignores_run_lifecycle_events_and_continues_visible_text():
+    events = await _parse(
+        _frame({"type": "session_id", "data": None, "session_id": SESSION_ID}),
+        _frame({"type": "user_message_saved", "data": {"message_id": "m-1"}}),
+        _frame({"type": "run_started", "data": {"run_id": "run-1"}}),
+        _frame({"type": "plain", "data": "AstrBot response"}),
+        _frame({"type": "complete", "data": "AstrBot response", "streaming": True}),
+        _frame({"type": "message_saved", "data": {"id": "message-1"}}),
+        _frame({"type": "end", "data": ""}),
+    )
+
+    assert events == [
+        AstrBotSseEvent("session_id", SESSION_ID),
+        AstrBotSseEvent("plain", "AstrBot response"),
+        AstrBotSseEvent("end", ""),
+    ]
+
+
 async def test_parser_requires_session_id_as_first_data_event():
     with pytest.raises(AstrBotSseProtocolError, match="first data event"):
         await _parse(

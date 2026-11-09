@@ -35,7 +35,9 @@ class AstrBotSseEvent:
     data: str
 
 
-_IGNORED_TYPES = frozenset({"user_message_saved", "message_saved", "agent_stats"})
+_IGNORED_TYPES = frozenset(
+    {"user_message_saved", "message_saved", "agent_stats", "run_started", "complete"}
+)
 _IGNORED_CHAIN_TYPES = frozenset(
     {"reasoning", "tool_call", "tool_call_result", "agent_stats"}
 )
