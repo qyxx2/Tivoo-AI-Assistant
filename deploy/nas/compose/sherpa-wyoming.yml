@@ -1,0 +1,48 @@
+services:
+  sherpa-wyoming:
+    image: ghcr.io/qyxx2/tivoo-sherpa-wyoming:${IMAGE_TAG:?Set IMAGE_TAG to a published sha-<commit> tag}
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: 10400
+      MODELS_DIR: /models
+      WAKE_WORD_PHRASE: "${WAKE_WORD_PHRASE:?Set WAKE_WORD_PHRASE in the deployment environment}"
+      KWS_NUM_THREADS: "${KWS_NUM_THREADS:-1}"
+      KWS_SCORE: "${KWS_SCORE:-1.0}"
+      KWS_THRESHOLD: "${KWS_THRESHOLD:-0.25}"
+      STT_NUM_THREADS: "${STT_NUM_THREADS:-2}"
+      TTS_NUM_THREADS: "${TTS_NUM_THREADS:-1}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    expose:
+      - "10400"
+    volumes:
+      - type: bind
+        source: "${NAS_MODELS_DIR:?Set NAS_MODELS_DIR to a persistent NAS path}/kws"
+        target: /models/kws
+      - type: bind
+        source: "${NAS_MODELS_DIR:?Set NAS_MODELS_DIR to a persistent NAS path}/stt"
+        target: /models/stt
+      - type: bind
+        source: "${NAS_MODELS_DIR:?Set NAS_MODELS_DIR to a persistent NAS path}/tts"
+        target: /models/tts
+    networks:
+      - ha
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - sherpa_wyoming.healthcheck
+        - --host
+        - 127.0.0.1
+        - --port
+        - "10400"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+
+networks:
+  ha:
+    external: true
+    name: "${HA_DOCKER_NETWORK:?Set HA_DOCKER_NETWORK to the existing HA Docker network}"

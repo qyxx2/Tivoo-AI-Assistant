@@ -1,0 +1,4 @@
+# Reference format consumed by sherpa-onnx-cli text2token.
+# The service generates these runtime files from WAKE_WORD_PHRASE on startup.
+# Spaces in the generated label are normalized to underscores. Do not mount this example.
+demo_wake_phrase @demo_wake_phrase
