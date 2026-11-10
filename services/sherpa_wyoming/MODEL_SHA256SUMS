@@ -1,0 +1,12 @@
+# SHA-256 checksums relative to the configured models directory (/models).
+# KWS checksums are intentionally pending acquisition of the official release;
+# P7Ab2 will download, validate and append the five KWS asset checksums.
+3ef6c19369b912f7caf3cef8e545c5ccd1a33d9d7ec792a46668dc41c4b229ec  stt/sherpa-onnx-paraformer-zh-small-2024-03-09/model.int8.onnx
+4b2d964e18b9cf139b473003b6698fb2ed9a2a5ec55b93daa677b28f578897aa  stt/sherpa-onnx-paraformer-zh-small-2024-03-09/tokens.txt
+78a9fd17e9a6c20198dca4e69d18f941303f8ab39ec61dde04cfc7595262ddfd  tts/matcha-icefall-zh-baker/model-steps-3.onnx
+56209b2bf609d5ac1d66ede6dae7bf5254bd3f8aa24c4a6823713d5b884d87ba  tts/matcha-icefall-zh-baker/tokens.txt
+38b886d46aefa50da6322a64d72fd595d5f4fae1051adb160d647541b1e0a4a2  tts/matcha-icefall-zh-baker/lexicon.txt
+1ac2b6fa56b1442320c4de7db08353bab8963a2b57f365eebcdd3a2d3562f8d7  tts/matcha-icefall-zh-baker/phone.fst
+eb8aa079ae3cb81d8f4404992f39d61a0cb990947512b5b8d1e54d1f6980e718  tts/matcha-icefall-zh-baker/date.fst
+743f402181fcfebf76cc2f0546b71fa26476e626fbe4e460fb7b4c3a7a8bd5bd  tts/matcha-icefall-zh-baker/number.fst
+0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  tts/vocos-22khz-univ.onnx

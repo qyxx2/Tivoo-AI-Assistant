@@ -21,10 +21,13 @@ permissions:
   contents: read
 
 jobs:
-  verify-amd64-builder:
-    name: Verify GitHub-hosted amd64 Buildx
+  sherpa-wyoming-image-smoke:
+    name: Dockerfile check and linux/amd64 dependency smoke
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Verify runner architecture
         shell: bash
         run: |
@@ -44,8 +47,24 @@ jobs:
           printf '%s\n' "$builder"
           grep -Eq '^Platforms:.*linux/amd64' <<< "$builder"
 
-      - name: Record image destination
-        shell: bash
+      - name: Check Dockerfile
+        working-directory: services/sherpa_wyoming
+        run: docker buildx build --check --file Dockerfile .
+
+      - name: Build linux/amd64 dependency smoke image
+        working-directory: services/sherpa_wyoming
         run: |
-          echo 'Reserved GHCR image: `ghcr.io/qyxx2/tivoo-sherpa-wyoming`' >> "$GITHUB_STEP_SUMMARY"
-          echo 'This bootstrap job validates the runner and builder only. Dockerfile checks, image builds, image smoke tests, Compose validation and publishing are enabled in their planned later batches.' >> "$GITHUB_STEP_SUMMARY"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target ci-smoke \
+            --load \
+            --file Dockerfile \
+            --tag tivoo-sherpa-wyoming:ci-smoke .
+
+      - name: Run dependency and model API smoke
+        run: docker run --rm tivoo-sherpa-wyoming:ci-smoke
+
+      - name: Record image destination
+        run: |
+          echo 'Reserved GHCR image: ghcr.io/qyxx2/tivoo-sherpa-wyoming' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This batch checks the Dockerfile and runs a linux/amd64 dependency/API import smoke. Image publishing, Compose validation and deployment remain assigned to P7Ab7.' >> "$GITHUB_STEP_SUMMARY"

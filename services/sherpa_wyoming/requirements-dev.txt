@@ -1,0 +1,23 @@
+# Python 3.11 development and test lock generated with uv on ARM64.
+click==8.5.1
+    # via runtime lock
+iniconfig==2.3.1
+    # via pytest
+numpy==2.4.6
+    # via runtime lock
+packaging==26.3
+    # via pytest
+pluggy==1.7.0
+    # via pytest
+pygments==2.21.0
+    # via pytest
+pytest==9.0.3
+    # direct development dependency
+ruff==0.17.4
+    # direct development dependency
+sherpa-onnx==2.0.1
+    # via runtime lock
+sherpa-onnx-core==2.0.1
+    # via sherpa-onnx
+wyoming==1.10.2
+    # via runtime lock

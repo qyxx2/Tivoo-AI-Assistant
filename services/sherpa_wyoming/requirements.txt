@@ -1,0 +1,7 @@
+# Python 3.11 CPU runtime lock generated with uv on ARM64.
+click==8.5.1
+numpy==2.4.6
+sherpa-onnx==2.0.1
+sherpa-onnx-core==2.0.1
+    # via sherpa-onnx
+wyoming==1.10.2
