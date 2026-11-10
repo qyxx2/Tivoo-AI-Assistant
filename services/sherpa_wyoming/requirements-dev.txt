@@ -9,12 +9,16 @@ packaging==26.3
     # via pytest
 pluggy==1.7.0
     # via pytest
+pypinyin==0.55.0
+    # via runtime lock
 pygments==2.21.0
     # via pytest
 pytest==9.0.3
     # direct development dependency
 ruff==0.17.4
     # direct development dependency
+sentencepiece==0.2.3
+    # via runtime lock
 sherpa-onnx==2.0.1
     # via runtime lock
 sherpa-onnx-core==2.0.1

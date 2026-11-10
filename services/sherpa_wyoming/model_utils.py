@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 KWS_MODEL = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
+WAKE_WORD_ID = "tivoo-wake"
 STT_MODEL = "sherpa-onnx-paraformer-zh-small-2024-03-09"
 TTS_MODEL = "matcha-icefall-zh-baker"
 DEFAULT_MANIFEST_PATH = Path(__file__).with_name("MODEL_SHA256SUMS")
@@ -156,3 +159,67 @@ def verify_model_files(
         verified[relative_path] = path
 
     return verified
+
+
+def generate_kws_keywords(models_dir: Path, phrase: str) -> Path:
+    """Generate the one configured wake keyword with Sherpa's pinned CLI."""
+
+    phrase = phrase.strip()
+    if not phrase:
+        raise ValueError("WAKE_WORD_PHRASE cannot be blank")
+    if any(char in phrase for char in "\r\n@:#"):
+        raise ValueError("WAKE_WORD_PHRASE contains text2token-reserved characters")
+
+    paths = get_model_paths(models_dir)
+    paths.kws_dir.mkdir(parents=True, exist_ok=True)
+    cli_path = shutil.which("sherpa-onnx-cli")
+    if cli_path is None:
+        raise ModelAssetError("sherpa-onnx-cli is required to generate KWS keywords")
+
+    label = "_".join(phrase.split())
+    raw_path = paths.kws_dir / "keywords.raw.txt"
+    temporary_path = paths.kws_keywords.with_name("keywords.txt.tmp")
+    raw_path.write_text(f"{phrase} @{label}\n", encoding="utf-8")
+
+    command = [
+        cli_path,
+        "text2token",
+        "--tokens",
+        str(paths.kws_tokens),
+        "--tokens-type",
+        "phone+ppinyin",
+        "--lexicon",
+        str(paths.kws_lexicon),
+        str(raw_path),
+        str(temporary_path),
+    ]
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True)
+        lines = [
+            line.strip()
+            for line in temporary_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if len(lines) != 1 or "@" not in lines[0]:
+            cli_output = f"{completed.stdout}\n{completed.stderr}".lower()
+            if "not in lexicon" in cli_output:
+                raise ModelAssetError(
+                    "text2token skipped an English token missing from en.phone; "
+                    "add its pronunciation to the KWS lexicon"
+                )
+            raise ModelAssetError("text2token did not produce exactly one keyword")
+        encoded, generated_label = lines[0].rsplit("@", maxsplit=1)
+        if not encoded.strip() or generated_label != label:
+            raise ModelAssetError(
+                "text2token output does not match the configured wake phrase"
+            )
+        temporary_path.replace(paths.kws_keywords)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        raise ModelAssetError(
+            f"failed to generate KWS keywords with text2token: {detail}"
+        ) from exc
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+    return paths.kws_keywords
