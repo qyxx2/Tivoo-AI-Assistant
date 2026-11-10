@@ -87,9 +87,9 @@ The sole bootstrap job runs on GitHub-hosted `ubuntu-24.04`, asserts `x86_64` an
 | uv dependency compatibility check | PASS — 5 packages, no conflicts |
 | GitHub Actions workflow lint | PASS — actionlint 1.7.12, no findings |
 | Existing HA/P3/P4 regression suite | PASS — 205 passed, 74 warnings, 16.49 s (Python 3.14 environment) |
-| Existing STT and Matcha/Vocos asset SHA-256 checks | PASS — all 5 entries in the two existing manifests match |
+| Existing STT and Matcha/Vocos asset SHA-256 checks | PASS — all 7 entries in the two existing manifests match (STT 2, TTS 5) |
 | `.venv-sherpa/` ignore rule | PASS — `git check-ignore` resolves `.gitignore` rule |
-| GitHub Actions amd64 Buildx job | PASS — [run 42762539673](https://github.com/qyxx2/Tivoo-AI-Assistant/actions/runs/42762539673), job 129651412307; current P7A branch commit `f665264`; `ubuntu-24.04` architecture and `linux/amd64` builder checks passed with action v4.4.1 (12 s) |
+| GitHub Actions amd64 Buildx job | PASS — [run 42762539673](https://github.com/qyxx2/Tivoo-AI-Assistant/actions/runs/42762539673), job 129651412307; CI ran on `f665264` (the later commit only corrected this report); `ubuntu-24.04` architecture and `linux/amd64` builder checks passed with action v4.4.1 (12 s) |
 | ARM Docker build / NAS deployment | NOT RUN — explicitly outside this batch |
 
 ## 7. P7Ab0 outcome
