@@ -19,7 +19,7 @@
 2. 正式 `WAKE_WORD_PHRASE=大肥鱼` 已配置；关键词生成成功，真实 HA Wyoming Wake Word Provider 正样本返回 Detection、官方负样本返回 NotDetected。
 3. 生产 NAS HA 已持久化唯一 Wyoming Config Entry，host/port 为 `172.23.0.2:10400`；同一 Entry 下 KWS、STT、TTS 三个实体已注册且未禁用。生产 HA Core 的实际 STT/TTS Provider 代码路径也已连接 NAS 服务并通过官方样本及普通/流式合成。
 
-C01–C39 的 MUST 项全部 PASS。C40–C43 仍 DEFERRED，C44 仍 N/A/禁止新增；P3 回归使用本地模拟 SSE，不调用生产 AstrBot。P7A 完成不代表真实 Tivoo 麦克风、ESP32 音频传输或设备播报已验收。
+C01–C39 的 MUST 项全部 PASS。C40–C43 仍 DEFERRED，C44 仍 N/A/禁止新增。原有 C38 Pipeline 自动化阶段门使用本地 Mock SSE；2026-11-10 又补充完成生产 HA Assist Pipeline → 真实 AstrBot SSE → Sherpa TTS → HA TTS Proxy 的两轮 WAV 端到端验证，详见[补充报告](2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)。P7A 完成不代表真实 Tivoo 麦克风、ESP32 音频传输或设备扬声器播放已验收。
 
 ## 2. 部署与环境
 
@@ -88,6 +88,14 @@ HA 使用 host 网络、当前没有 HA bridge。Sherpa 使用独立 internal-on
 - 观测流式 PCM 约 122,334 bytes，队列峰值 93,234 bytes（小于 128 KiB 上限），HA 接收端以流式完成事件正常结束。
 - 服务日志记录首块时间 0.566 s、队列峰值 93,234 bytes、流式音频 122,334 bytes；服务单测另覆盖 4 KiB chunk 上限、PCM 帧对齐、兼容 Synthesize 去重、AudioStart 单次输出、SynthesizeStopped、错误/取消和无迟到 PCM。
 
+### 3.5 生产 HA Assist Pipeline → AstrBot → TTS Proxy 两轮端到端
+
+- 使用 HA WebSocket `assist_pipeline/run` 驱动生产 HA Core 2026.11.0，临时 Pipeline 绑定 `stt.sherpa_onnx_paraformer`、`conversation.astrbot`、`tts.sherpa_onnx_matcha_baker`；真实 AstrBot HTTP/SSE 后端，无 Mock。
+- 两轮 16 kHz/mono/PCM16 WAV 均获得最终 Paraformer Transcript，进入 AstrBot 并返回可见回复，再由 HA 调用 Matcha TTS；HA TTS Proxy 两轮均输出可下载 `audio/mpeg`。
+- 两个 MP3 分别为 22,050 Hz mono，248,726 bytes / 22.970 s 与 193,039 bytes / 19.603 s，FFmpeg 全量解码均通过；HTTP 首块时间分别约 2.215 s、0.200 s（仅从发起 Proxy GET 后计时，不代表全链路首音延迟）。
+- 第二轮复用第一轮 HA `conversation_id`；AstrBot 第二轮回复引用第一轮主题，HA 持久化 session 的 `last_activity_at` 被刷新。
+- 测试 Pipeline 已删除，原有 preferred Pipeline 未改动。测试从 STT stage 开始，不包含本轮 KWS；真实麦克风、Satellite 和物理扬声器播放仍留在后续硬件验收。详细 transcript、会话和格式记录见[补充报告](2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)。
+
 ## 4. NAS 同进程组合资源数据
 
 以下数据全部来自 NAS 同一个容器、同一个进程加载 KWS + STT + TTS 后的实际 HA/Provider 请求，不使用多个单模型 RSS 推算组合内存。
@@ -151,11 +159,11 @@ HA 使用 host 网络、当前没有 HA bridge。Sherpa 使用独立 internal-on
 | C35 | PASS | NAS 同进程加载、RSS/CPU、KWS lag、STT RTF、TTS 首块和队列数据见第 4 节。 |
 | C36 | PASS（用户接受的边界） | 独立 internal-only、不可 attach bridge；无 host port mapping；仅 Sherpa 容器接入；Docker isolation rules 阻断其它转发网络。接受 NAS host 进程可访问这一剩余风险。 |
 | C37 | PASS | 服务日志未记录 PCM、完整 transcript/TTS 正文、token 或短时 URL 凭据；只记录耗时、字节数、错误类别。 |
-| C38 | PASS（模拟 P3 后端） | 真实 HA Pipeline hit 的最终 STT 文本进入既有 P3 Conversation Agent；使用本地 SSE 模拟端点，miss 请求数为 0。 |
+| C38 | PASS（Mock 阶段门 + 生产 E2E） | 既有 KWS hit/miss 自动化阶段门使用 Mock SSE；另有生产 HA Pipeline 从 STT 起始，经 Paraformer、真实 `conversation.astrbot` HTTP/SSE、Matcha TTS 和 HA TTS Proxy 完成两轮连续对话，音频全量解码通过，详见 §3.5 和补充报告。 |
 | C39 | PASS | C01–C38 MUST 均有 PASS 证据；生产 HA 已保存唯一 Wyoming Entry 并注册同 Entry 下 KWS/STT/TTS 三实体；P7A 服务可作为 P5/P6 的稳定语音依赖。 |
 | C40 | DEFERRED | 实际 INMP441 安装位置、噪声、误唤醒/漏唤醒和距离由 P7 验收。 |
 | C41 | DEFERRED | ESP32 I2S RX、AFE/VAD、TCP 7778 和 Satellite 音频会话由 P6/P7 验收。 |
-| C42 | DEFERRED | HA TTS Proxy、HTTP 获取、WAV 解码、DAC/AUX 播放由 P6/P8 验收。 |
+| C42 | DEFERRED | §3.5 已验证生产 HA TTS Proxy URL HTTP GET 返回 MP3 且 FFmpeg 全量解码通过；ESP32 侧获取/解码、PCM 缓冲、I2S DAC/AUX 和 TTS_STATE 仍由 P6/P8 验收。 |
 | C43 | DEFERRED | 屏幕、SPP、ESP32 双向通信及硬件并发由 P5/P6/P10 验收。 |
 | C44 | N/A（禁止新增） | P7A 不直连 AstrBot、不持有 session_id、不提供 OpenAI API。 |
 
@@ -202,7 +210,7 @@ NAS 实际 `DOCKER-ISOLATION-STAGE-1` 规则会 DROP 从非 `172.23.0.0/24` 来�
 
 本次在生产 HA 容器中调用 HA Core 2026.11.0 的实际 `WyomingSttProvider` 和 `WyomingTtsProvider` 类，连接同一 NAS `172.23.0.2:10400`：官方中文和中英样本均返回成功 Transcript；普通 TTS 返回有效 22.05 kHz/16-bit/mono WAV；流式 TTS 产生 44-byte WAV stream header、首块 PCM 约 0.643 s 到达并正常结束。详细测试记录见 §11。
 
-P3 对话端点仍使用本地 mock SSE 验证，不调用生产 AstrBot 凭据；这与 C38 的既有 Pipeline/P3 Agent 自动化证据一致，不声称执行了真实生产对话。
+C38 原有自动化阶段门仍使用本地 Mock SSE，以隔离验证 KWS hit/miss 对 P3 Agent 的触发条件；随后已补做真实生产 E2E：HA Assist Pipeline 的最终 STT 文本经生产 P3 Conversation Agent 进入 AstrBot，真实 SSE 回复再经 Sherpa TTS 和 HA TTS Proxy 输出，详见 §3.5 / [补充报告](2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)。
 
 ### 7.4 明确不属于 P7Ab8 / P7A 完成的内容
 

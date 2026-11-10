@@ -486,11 +486,11 @@ HA Core 2026.11.0 的 Wyoming TTS Provider 在流式请求中依次发送：
 | P7A-C35 | 服务 → 运维 | 性能和资源证据 | 记录三个模型加载耗时、组合 RSS、KWS 实时处理滞后、STT RTF、TTS 首块/队列指标 | MUST |
 | P7A-C36 | P7A → 网络 | 访问边界 | 使用独立 internal-only、不可 attach 的 Docker bridge；不发布 host/LAN/WAN 端口、不接共享/不可信容器网络、不接 ESP32、不启用 FastAPI 10500；接受 NAS host 进程可访问 Wyoming | MUST |
 | P7A-C37 | P7A → 日志 | 敏感数据 | 不记录 PCM、完整识别/回答正文、token 或短时 URL 凭据 | MUST |
-| P7A-C38 | HA Pipeline → P3 Agent | 文字链路回归 | 使用测试音频验证命中后最终 Transcript 进入现有 P3 Conversation Agent；未命中不得触发 Agent | MUST |
+| P7A-C38 | HA Pipeline → P3 Agent | 语音对话链路回归 | 使用测试音频验证最终 Transcript 进入现有 P3 Conversation Agent，真实 AstrBot SSE 回复继续进入 HA TTS；KWS 未命中不得触发 Agent | MUST |
 | P7A-C39 | P7A → P5/P6 | 阶段依赖 | P7A 服务和 HA Provider 验收完成后，P5/P6 才以其作为稳定语音服务依赖 | MUST |
 | P7A-C40 | Tivoo 实际麦克风 → KWS | 真实声学验收 | INMP441 位置、噪声、误唤醒率、漏唤醒率、距离和回声 | DEFERRED：P7 |
 | P7A-C41 | ESP32 → HA | 物理音频传输 | I2S RX、AFE VAD、TCP 7778 MIC_PCM、Satellite 音频会话 | DEFERRED：P6/P7 |
-| P7A-C42 | HA TTS Proxy → ESP32 | 设备音频播放 | HTTP GET、WAV 解码、PCM 缓冲、I2S DAC/AUX、TTS_STATE | DEFERRED：P6/P8 |
+| P7A-C42 | HA TTS Proxy → ESP32 | 设备音频播放 | HA Proxy URL 获取及 MP3 全量解码已有 C38 生产 E2E 证据；ESP32 获取/解码、PCM 缓冲、I2S DAC/AUX、TTS_STATE | DEFERRED：P6/P8 |
 | P7A-C43 | ESP32 ↔ Tivoo | 屏幕/SPP 和硬件并发 | TCP 7777、SPP、显示控制、设备回执 | DEFERRED：P5/P6/P10 |
 | P7A-C44 | P7A 容器 → AstrBot | 直接模型调用 | P7A 不直接连接 AstrBot、不持有 session_id、不调用 TTS 模型的 OpenAI API | N/A：禁止新增 |
 

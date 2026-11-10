@@ -108,3 +108,16 @@ README 中的项目整体阶段状态保持不变：P3 的主文字交互已现�
 - **本地验证：** ./scripts/test-ha.sh -q → **92 passed, 63 warnings**；Ruff check、Ruff format check（13 files）、Python compileall、pip check、git diff --check 均通过。
 - **部署：** 仅更新 /volume1/docker/homeassistant/config/custom_components/astrbot/sse.py。远端 SHA-256 与本地一致：8c97e19805e92da233379457dc4223b62df54ce6827bc34eb0d009b0c1875505。仅重启 homeassistant 容器；只读状态检查确认 running=true，镜像仍为 HA Core 2026.11.0。
 - **NAS 测试边界：** 助手未在 NAS 上运行任何测试、配置检查、Assist 对话、AstrBot API 请求或日志扫描；用户的现场操作由用户本人在 HA UI 完成。未修改其他 Config Entry/session 或其他服务。当前现场已确认正常 Web 文字对话；24h、HA Core 重启、取消/Stop owner 和生产 API Key 轮换仍保持 BLOCKED，README 的 P3 完成状态不变。
+## 8. 2026-11-10 生产 HA Assist Pipeline 真实 STT/AstrBot/TTS 补充验证
+
+P3b6 报告完成后，P7A 分支补做了生产 HA Core 2026.11.0 的真实语音管线联调，结果见 [HA Assist / AstrBot / Sherpa STT-TTS 端到端补充验收报告](2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)。
+
+- 通过 HA WebSocket 的 `assist_pipeline/run` 从 STT 阶段送入两段仓库 16 kHz/mono/PCM16 测试 WAV；实际调用生产 `stt.sherpa_onnx_paraformer`，两轮均返回有效最终 Transcript。
+- 两轮文本均经生产 `conversation.astrbot` 进入真实 AstrBot HTTP/SSE；没有使用 Mock。第二轮回答引用第一轮讨论的全球金融动荡主题，确认上下文连续。
+- HA Pipeline 实际调用 Sherpa Matcha TTS；TTS Proxy 返回两份 `audio/mpeg` MP3，22.05 kHz mono，FFmpeg 全量解码均通过。
+- 两轮共用 HA `conversation_id`；AstrBot 持久化 session 记录保留原创建时间并刷新 `last_activity_at`。
+- 为保护用户原有设置，测试使用临时 Pipeline，完成后删除；生产 preferred Pipeline 和 Config Entry 未更改。
+
+**边界：** 本次从 STT 阶段开始，不覆盖本轮 KWS；此前 P7A 报告已单独验证 KWS hit/miss。没有测试 INMP441、ESP32 Assist Satellite、Tivoo AUX/DAC 或扬声器实际播放。另发现生产 preferred `Astrbot` Pipeline 当前的 STT/TTS/KWS 选择仍为空；临时测试 Pipeline 的成功不等于该 preferred Pipeline 已完成语音配置。
+
+本次补充验证提高了 P3 正常语音输入/输出集成的运行时证据，但 **P3 整体仍保持 BLOCKED**：HA Core 重启恢复、24 小时会话轮换、真实取消/Stop owner 校验及生产 API Key 轮换仍未验收。

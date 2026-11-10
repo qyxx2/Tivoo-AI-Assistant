@@ -6,11 +6,13 @@
 
 ESP32 与 HA 双向通信契约：[通信层规格书](docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md)（待审阅）。
 
-P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md)（接口已定稿，待实现与验收）。
+P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md)（实现已部署；HA 文字对话及生产 STT → AstrBot SSE → TTS Proxy 两轮端到端验证通过；24h 轮换、HA 重启、取消/Stop owner 和 API Key 轮换仍待验收）。
 
-语音识别与合成端到端处理：[STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)（待实现与验收）。
+语音识别与合成端到端处理：[STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)（HA Assist Pipeline → Sherpa STT → 生产 AstrBot SSE → Sherpa TTS → HA TTS Proxy 的两轮 WAV 测试已通过；真实麦克风、Satellite 和设备播放留待硬件阶段）。
 
-P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（NAS 已部署；C01–C39 PASS；作为 P5/P6 的稳定语音服务依赖；C40–C43 留待硬件阶段验收）。
+P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（NAS 已部署；C01–C39 PASS；生产 HA → AstrBot → TTS Proxy 两轮端到端验证通过，详见[补充报告](docs/superpowers/reports/2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)；作为 P5/P6 的稳定语音服务依赖；C40–C43 留待硬件阶段验收）。
+
+当前生产 HA 首选 `Astrbot` Pipeline 仍未绑定 KWS/STT/TTS。此次端到端验证使用临时 Pipeline 并在结束后删除；真正接入 Web Assist / Assist Satellite 前，需要为首选 Pipeline 绑定相应的 Sherpa Provider。
 
 ## 1. 项目目标
 
