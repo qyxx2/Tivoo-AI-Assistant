@@ -1,0 +1,51 @@
+name: Sherpa Wyoming image CI
+
+on:
+  push:
+    branches:
+      - feature/p7a-sherpa-wyoming-service
+    paths:
+      - .github/workflows/sherpa-wyoming-image.yml
+      - services/sherpa_wyoming/**
+      - deploy/nas/compose/sherpa-wyoming.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/sherpa-wyoming-image.yml
+      - services/sherpa_wyoming/**
+      - deploy/nas/compose/sherpa-wyoming.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-amd64-builder:
+    name: Verify GitHub-hosted amd64 Buildx
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          test "$(uname -m)" = "x86_64"
+          test "$(dpkg --print-architecture)" = "amd64"
+          echo "GitHub-hosted runner architecture: $(uname -m) / $(dpkg --print-architecture)"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64
+
+      - name: Verify linux/amd64 builder
+        shell: bash
+        run: |
+          builder="$(docker buildx inspect --bootstrap)"
+          printf '%s\n' "$builder"
+          grep -Eq '^Platforms:.*linux/amd64' <<< "$builder"
+
+      - name: Record image destination
+        shell: bash
+        run: |
+          echo 'Reserved GHCR image: `ghcr.io/qyxx2/tivoo-sherpa-wyoming`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This bootstrap job validates the runner and builder only. Dockerfile checks, image builds, image smoke tests, Compose validation and publishing are enabled in their planned later batches.' >> "$GITHUB_STEP_SUMMARY"
