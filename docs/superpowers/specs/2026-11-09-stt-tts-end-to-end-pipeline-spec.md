@@ -2,17 +2,17 @@
 
 > 状态：架构规格，待实现与端到端验收  
 > 适用范围：NAS 语音服务、Home Assistant Assist Pipeline、AstrBot Conversation Agent，以及 ESP32/Tivoo 语音输入输出链路。  
-> 本文定义语音处理服务的职责和端到端行为。已有的设备通信字段、HA 事件字段、模型实测数值和底层协议不在此重复，均引用项目现有文档。
+> 本文定义 STT/TTS 处理服务的职责和端到端行为。P7A 对 KWS、单容器三 Provider、模型部署与 Wyoming 事件的完整合同见 [P7A Sherpa Wyoming 合同矩阵](2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)。已有的设备通信字段、HA 事件字段、模型实测数值和底层协议不在此重复，均引用项目现有文档。
 
 ## 1. 设计目标与边界
 
-本项目采用 **HA 管理语音会话、AstrBot 管理对话、独立 Wyoming 服务执行本地 STT/TTS、ESP32 管理物理音频 I/O** 的分层方式。
+本项目采用 **HA 管理语音会话、AstrBot 管理对话、独立 Wyoming 服务提供 KWS/STT/TTS、ESP32 管理物理音频 I/O** 的分层方式。三个 Provider 的部署和事件合同见 P7A 矩阵；本文继续定义 STT/TTS 的端到端处理行为。
 
 目标链路：
 
 - 上行：Tivoo 麦克风 → ESP32 采集与本地 VAD 门控 → HA Assist Satellite → HA Wyoming STT → Paraformer 最终转写 → AstrBot。
 - 下行：AstrBot SSE 增量文本 → HA Conversation Agent → HA Assist Pipeline/TTS Proxy → Wyoming TTS → 分句合成及 PCM 分块 → ESP32 HTTP 流式接收 → 解码与 I²S DAC → Tivoo AUX。
-- STT/TTS 模型和推理依赖运行在独立容器中，不装入 HA Core，也不装入 ESP32 固件。
+- KWS/STT/TTS 模型和推理依赖运行在独立 Sherpa Wyoming 容器中，不装入 HA Core，也不装入 ESP32 固件。
 - 普通语音回复由 HA Pipeline 完成 TTS 调度；AstrBot 不直接调用 TTS 模型，也不直接向 ESP32 发送音频。
 - 首期不实现 Token 级在线 TTS。通过句子缓冲将 OfflineTts 的完整文本输入限制在单句/短语范围，并利用生成回调输出音频块。
 
@@ -24,6 +24,7 @@
 |---|---|
 | 全项目总体架构、职责边界、语音会话流程 | [项目主文档 §2–§4](../../../README.md) |
 | P3 AstrBot Conversation Agent 的 HTTP OpenAPI、单用户 session_id、SSE、ChatLog 和取消合同 | [P3 接口合同矩阵](2026-11-09-p3-astrbot-conversation-contract-matrix.md) |
+| P7A KWS/STT/TTS 单容器部署、三个 Provider 的 Wyoming 事件、模型和健康检查合同 | [P7A Sherpa Wyoming 合同矩阵](2026-11-10-p7a-sherpa-wyoming-contract-matrix.md) |
 | 已核实的 HA 2026.11.0 Wyoming/Provider 能力、协议兼容细节及流式事件条件 | [项目主文档 §11.4](../../../README.md#114-ha-wyoming--provider-接入与流式回馈判断) |
 | STT/TTS 模型测试数据、设备环境、RTF、内存和样本 | [项目主文档 §11](../../../README.md#11-stt--tts-实测结果) 与 [benchmarks/voice](../../../benchmarks/voice/) |
 | ESP32 麦克风 PCM 上行、TTS URL 通知、HTTP 拉流、播放状态和 Satellite 结束条件 | [ESP32 ↔ HA 双向通信规格 §6–§8、§12](2026-11-09-esp32-ha-bidirectional-communication-design.md) |
@@ -36,13 +37,14 @@
 
 ### 3.1 独立 Sherpa Wyoming 服务
 
-在 NAS 部署一个语音服务容器，首期由同一服务进程提供 Wyoming STT 和 TTS 两种能力：
+在 NAS 部署一个语音服务容器，由同一服务进程和一个 Wyoming TCP 端口提供 KWS、STT、TTS 三种能力。三个 Provider 的完整合同见 P7A 矩阵；本文只概述其 STT/TTS 职责：
 
+- KWS Provider：独立的 Wyoming Wake Word Provider，使用 Sherpa KeywordSpotter 接收 HA WAKE_WORD 阶段音频；不属于 STT 内部处理。
 - STT Provider：接收 HA 转发的音频流，完成端点结束后的 Paraformer 离线识别，并返回最终文本。
 - TTS Provider：接收 HA 转发的文本流，进行句子缓冲，逐句调用 sherpa-onnx OfflineTts，并将生成的 PCM 分块交回 HA。
 - 模型常驻内存，避免每轮对话重新加载。
-- STT 与 TTS 任务使用相互独立的会话状态和有界队列，不能因一个方向的阻塞污染另一个方向。
-- 首期不拆成两个容器。只有实测表明模型推理互相争抢 CPU/内存并影响首段播放或识别时，才考虑拆分。
+- KWS、STT、TTS 任务使用相互独立的模型状态/请求状态和有界执行队列；不得因一个 Provider 的阻塞污染其他 Provider。
+- 首期不拆成多个容器或进程。只有实测表明同一进程的模型推理互相争抢 CPU/内存并影响唤醒处理、识别或首段播放时，才评估拆分。
 
 服务以 Wyoming 暴露给 HA，不提供 ESP32 直连入口，也不负责管理 Assist Pipeline、AstrBot 会话或 Tivoo 播放状态。
 
@@ -50,13 +52,13 @@
 
 HA 负责：
 
-- 通过原生 Wyoming 集成连接语音服务，向 Assist Pipeline 提供 STT/TTS Provider。
+- 通过一个原生 Wyoming Config Entry 连接 P7A 服务，从同一个 Info 中发现 Wake Word、STT、TTS 三类 Provider，并向 Assist Pipeline 分别提供能力。
 - 接收 Assist Satellite 的音频会话，并把音频交给 Pipeline。
 - 通过 Conversation Agent 将 STT 文本交给 AstrBot，并将 AstrBot 增量文本转成 HA 可消费的流式对话响应。
 - 决定 TTS 何时开始、维护 TTS Proxy URL/访问凭据，并将音频资源入口通知 ESP32。
 - 根据 ESP32 最终播放状态结束 Satellite 播报生命周期。
 
-HA 不加载 sherpa-onnx 模型，不在自定义 Tivoo 集成中实现第二套 STT/TTS 推理框架。
+HA 不加载 sherpa-onnx 模型，不在自定义 Tivoo 集成中实现第二套 KWS/STT/TTS 推理框架。
 
 ### 3.3 AstrBot Conversation Agent
 
@@ -86,7 +88,7 @@ ESP32 只负责物理音频与设备侧实时任务：
 
 1. ESP32 在空闲状态持续本地采样，VAD 只负责判断是否启动上传；保留短时预录数据，避免丢失语音开头。
 2. VAD 触发后，ESP32 建立本轮麦克风会话，先上传预录音频，再持续上传实时 PCM。
-3. HA Assist Satellite 将音频流交给 Assist Pipeline。HA 服务端唤醒词 Provider 判断是否命中唤醒词；未命中时按 Pipeline 既定规则结束本轮。
+3. HA Assist Satellite 将音频流交给 Assist Pipeline。HA 服务端通过 P7A Sherpa Wyoming Wake Word Provider 判断是否命中唤醒词；未命中时 HA Pipeline 终止本轮，不进入 STT。
 4. 唤醒词命中后，Pipeline 将音频交给 Wyoming STT Provider。Provider 将收到的音频块按顺序交给当前识别会话。
 5. 当 HA 结束本轮音频输入并关闭 Wyoming 音频会话时，STT 服务调用 Paraformer OfflineRecognizer 完成整段识别。
 6. Wyoming 服务返回最终 Transcript；HA Pipeline 将文本交给 Conversation Agent。
@@ -100,7 +102,7 @@ ESP32 只负责物理音频与设备侧实时任务：
 - 音频采样规格和 HA/Wyoming 事件转换沿用项目主文档及通信规格，不在此另设格式。
 - 单个识别会话按顺序接收音频；会话关闭后清理缓存并返回最终结果，不跨轮复用上一轮音频。
 - 对空音频、异常结束、解码失败和超时返回明确的 Provider 错误，不将空字符串伪装成有效识别结果。
-- 不在 STT 服务中自行做第二套 VAD 或唤醒词检测；端点与唤醒职责由 ESP32 门控和 HA Pipeline 分层承担。
+- STT Provider 内部不实现第二套 VAD 或唤醒词检测。唤醒词由同一 Wyoming 服务进程中的独立 KWS Provider 在 HA WAKE_WORD 阶段完成；ESP32 VAD 只负责空闲上传门控，HA Pipeline 负责 wake timeout 与 STT endpoint。
 
 ### 4.3 STT 当前能力边界
 
@@ -246,4 +248,6 @@ AISHELL3 可保留为 NAS 多音色备选，但 8 kHz 输出的听感需要单�
 - [Home Assistant Core 2026.11.0 Wyoming STT](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/stt.py)
 - [Home Assistant Core 2026.11.0 Wyoming TTS](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/tts.py)
 - [Home Assistant Core 2026.11.0 Assist Pipeline](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/assist_pipeline/pipeline.py)
+- [sherpa-onnx 2.0.1 KWS Python example](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/python-api-examples/keyword-spotter-from-microphone.py)
+- [sherpa-onnx 2.0.1 text2token.py](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/scripts/text2token.py)
 - [sherpa-onnx 2.0.1 Offline TTS callback](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/sherpa-onnx/python/csrc/offline-tts.cc)

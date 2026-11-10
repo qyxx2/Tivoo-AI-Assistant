@@ -10,6 +10,8 @@ P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](d
 
 语音识别与合成端到端处理：[STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)（待实现与验收）。
 
+P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（合同已定义，待实现与验收）。
+
 ## 1. 项目目标
 
 保留 Divoom Tivoo 原有的外观、扬声器、麦克风、AUX 输入、16×16 像素屏幕和按键，使用一块 ESP32-WROVER-E 作为专用硬件主控，将 Tivoo 接入 Home Assistant，并由 AstrBot 提供统一的 AI 对话能力。
@@ -72,7 +74,7 @@ P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](d
 | AstrBot | NAS | 唯一 AI 主体、云端模型、人格、记忆、MCP、主动任务 |
 | 必要 Linux 脚本 | NAS | 容器部署、备份、健康检查、日志维护 |
 | Tivoo 自定义集成 | HA 内部 | ESP32 音频接入、Assist Satellite、Tivoo 实体/服务、LLM Tools |
-| 中文 Wake Word Provider | NAS 服务（待选型） | 通过 Wyoming 或 HA 自定义集成向 Pipeline 提供中文唤醒词识别 |
+| Sherpa Wyoming 语音服务（P7A） | NAS 独立容器 | 一个 Wyoming TCP 入口同时向 HA 提供中英文 KWS、Paraformer STT 和 Matcha TTS |
 | AstrBot Tivoo Bridge | AstrBot 插件 | 主动任务通知、HA 接口调用及交互桥接 |
 | ESP32 固件 | Tivoo 专用开发板 | 本地 VAD、音频收发与播放、SPP 协议桥接及屏幕控制 |
 
@@ -112,7 +114,7 @@ HA 作为语音和设备中枢，负责：
 
 - Assist Pipeline：HA 唤醒词检测、STT、Conversation Agent 调度和 TTS。
 - Tivoo Assist Satellite：接收设备音频流、启动和维护 Pipeline、处理 Pipeline 事件及播报/主动对话生命周期。
-- Wake Word Provider：提供 HA 服务端唤醒词识别；中文引擎需要单独接入，当前尚未完成。
+- Wake Word Provider：通过 P7A Sherpa Wyoming 服务提供中英文 KWS；与同一服务中的 STT/TTS Provider 保持独立的协议处理和请求状态。HA Pipeline 在 WAKE_WORD 阶段先检测唤醒词，命中后才进入 STT；Provider 接入与真实收音验收分别按 P7A/P7 阶段完成。
 - Tivoo 自定义设备集成：屏幕模式、音频状态和内置工具。
 - 家庭设备实体、Timer Helper、脚本和自动化。
 - 向 AstrBot 提供 MCP 工具。
@@ -245,13 +247,13 @@ AUX 路线可以消除 A2DP 音频流及其 SBC 编解码负担，但**不会消
 - HA 从 `PipelineStage.WAKE_WORD` 开始，使用配置的 `wake_word` Provider 检测唤醒词。识别成功后自动进入 STT；未在超时窗口内识别到唤醒词则结束 Pipeline，ESP32 恢复本地 VAD 空闲监听。
 - 首选输入格式为 16 kHz、16-bit signed、单声道 PCM，与 HA Assist Satellite 的要求一致。ESP32 本地预录缓冲用于保留 VAD 触发前的语音开头；HA Pipeline 的唤醒词检测缓冲属于另一层，不应混为同一功能。
 
-**中文唤醒词的 Provider 缺口：**
+**中文 Wake Word Provider 选型已由 P7A 冻结：**
 
-- Home Assistant 需要一个 `wake_word` Provider 实体，Assist Pipeline 本身只负责调用 Provider，并不内置任意中文唤醒词模型。
-- Home Assistant 官方 openWakeWord 接入目前面向英文唤醒词，不适合作为中文唤醒词的默认方案。
-- `sherpa-onnx` 提供中英关键词检测模型（例如 `sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20`），但模型/运行库本身不是 HA Provider。需要将它封装为 Wyoming Wake Word 服务，或实现 HA 自定义 `wake_word` 集成；优先评估 Wyoming 适配，尚未确认可直接部署的现成中文服务。
+- HA 仍需要一个原生 `wake_word` Provider 实体；Assist Pipeline 本身只负责调用 Provider，不内置任意中文唤醒词模型。
+- P7A 采用 Sherpa-ONNX `sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20`，通过 Wyoming Wake Word Provider 暴露给 HA。它与 Paraformer STT 是不同 Provider，虽然在同一个 Sherpa Wyoming 进程和 TCP 端口中运行。
+- 不使用 openWakeWord 作为本项目中文唤醒词实现。模型、关键词文件、Wyoming Detect/Detection/NotDetected 事件和 HA Provider 发现合同以 [P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md) 为准。
 
-因此当前需要单独验证中文关键词、误唤醒率和真实 Tivoo 收音效果。若以后改回设备本地唤醒词，ESP32 可在本地识别后从 `PipelineStage.STT` 启动，并传入 `wake_word_phrase`；这属于备用模式，不与当前 HA 服务端唤醒词流程同时启用。
+当前仍需在 P7 使用真实 Tivoo 麦克风单独验证中文关键词、误唤醒率、漏唤醒率和识别距离。若以后改回设备本地唤醒词，ESP32 可在本地识别后从 `PipelineStage.STT` 启动，并传入 `wake_word_phrase`；这属于备用模式，不与当前 HA 服务端唤醒词流程同时启用。
 
 参考：
 - [ESP-SR AFE / VAD](https://docs.espressif.com/projects/esp-sr/en/latest/esp32/audio_front_end/README.html)
@@ -374,7 +376,8 @@ NAS 运行 Home Assistant、AstrBot 和必要的 Linux 服务。具体 Docker Co
 - `deploy/nas/compose/`：HA、AstrBot 和辅助服务的 Compose 文件。
 - `deploy/nas/scripts/`：安装、更新、备份、恢复、健康检查等脚本。
 - `deploy/nas/config/`：示例配置和环境变量模板，不存放真实密钥。
-- `services/tivoo_gateway/`：Python 图像处理、文件传输及其他必要的 Tivoo 辅助服务；语音 Pipeline 由 HA Assist 原生管理，不另设通用音频 Gateway。
+- `services/tivoo_gateway/`：Python 图像处理、文件传输及其他必要的 Tivoo 辅助服务。
+- `services/sherpa_wyoming/`：P7A 独立 Sherpa Wyoming 服务，单进程提供 KWS/STT/TTS；HA Assist Pipeline 仍由 HA 原生管理。
 - `services/audio/`：音频格式转换、测试和诊断工具。
 
 密钥、API Token、Wi-Fi 密码和真实 NAS 路径不提交到版本库。使用独立的本地环境文件，并提供不含秘密的示例模板。
@@ -406,7 +409,8 @@ Tivoo-AI-Assistant/
 │   │   └── components/           # 蓝牙、音频、AFE VAD、网络等组件
 │   └── tests/                    # 硬件与协议测试
 ├── services/
-│   ├── tivoo_gateway/            # Ubuntu/NAS 侧 Tivoo 服务
+│   ├── tivoo_gateway/            # Ubuntu/NAS 侧 Tivoo 辅助服务
+│   ├── sherpa_wyoming/           # P7A：KWS / STT / TTS Wyoming 服务
 │   └── audio/                    # 音频测试和处理
 ├── benchmarks/
 │   └── voice/
@@ -439,9 +443,10 @@ python3 -m venv .venv
 | P2 | AstrBot 云端模型、人格和会话 | 文本对话正常，统一使用指定人格 |
 | P3 | HA AstrBot Conversation Agent（HTTP OpenAPI、单用户会话映射、SSE → ChatLog） | HA Assist 接收 STT 文本后调用 AstrBot；24 小时活动会话可跨 HA 重启复用；逐段写入 ChatLog 并返回标准 ConversationResult |
 | P4 | HA MCP Server 暴露 Tivoo/设备工具，AstrBot 调用 | AI 能通过 MCP 控制 HA 设备 |
+| P7A | 独立 Sherpa Wyoming 容器：一个 TCP 入口提供 KWS、STT、TTS 三个 Provider | HA 用一个 Wyoming Config Entry 发现三类 Provider；完成模型、KWS、STT、非流式/流式 TTS 和容器验收 |
 | P5 | ESP32 最小固件与 Tivoo SPP | 能通过 HA 控制 Tivoo 屏幕 |
 | P6 | ESP32 ↔ HA 双向通信层（TCP 7777/7778 + HTTP 资源请求） | HA 可通过 7777 控制屏幕并接收 SPP 返回数据；通过 7778 获取设备状态、接收麦克风 PCM、发送 TTS URL；ESP32 再通过 HTTP GET 获取 TTS/其他指定音频资源 |
-| P7 | I2S 麦克风采集、ESP-SR AFE VAD、HA 中文 Wake Word Provider、STT 与 AstrBot Conversation Agent | 空闲时不上传音频；人声触发后由 HA 识别唤醒词，命中后完成识别并进入 AstrBot |
+| P7 | I2S 麦克风采集、ESP-SR AFE VAD、HA Assist Satellite 与 P7A KWS/STT、AstrBot Conversation Agent 联调 | 空闲时不上传音频；人声触发后由 HA WAKE_WORD 阶段检测唤醒词，命中后完成 STT 并进入 AstrBot；真实麦克风声学验收在本阶段完成 |
 | P8 | I2S TX + 外部 DAC → AUX TTS 输出；完成 ESP32 端到端并发联调 | AI 回复通过 Tivoo AUX 播放；验证 ESP32 获取/解码、I²S 输出与 SPP 控制并行运行稳定；Tivoo 端 AUX + SPP 已实测通过；内置 DAC 仅作对照测试 |
 | P9 | AstrBot 表情工具与主动对话 | AI 能根据情绪显示表情，并主动播报 |
 | P10 | I2S RX、I2S TX/DAC、SPP 与 Wi-Fi 并发测试；另测备用 A2DP | 连续运行稳定、无明显音频断流，SPP 控制及时响应 |
@@ -532,7 +537,7 @@ NAS 的 AISHELL3、Kokoro、ZipVoice 和 Vocos 24 kHz 权重已完整归档。NA
 
 ### 11.4 HA Wyoming / Provider 接入与流式回馈判断
 
-端到端组件职责、STT/TTS 处理时序、分句策略、实施顺序和验收条件见独立的 [STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)。本节保留 HA 2026.11.0 与 Wyoming 的源码核对结论，避免重复展开。
+端到端组件职责、STT/TTS 处理时序、分句策略和验收条件见独立的 [STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)；P7A 单容器三 Provider 的部署、KWS 事件、模型和流式 TTS 合同见 [P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)。本节保留 HA 2026.11.0 与 Wyoming 的源码核对结论，避免重复展开。
 
 **STT：现有 Paraformer 可以直接适配。** HA Core 2026.11.0 的 Wyoming STT Provider 按 16 kHz、16-bit、mono PCM 接收 AudioStart/AudioChunk，并在 AudioStop 后取得 Transcript；这与当前 ESP32 音频格式一致。现有 sherpa-onnx Paraformer zh-small INT8 是 OfflineRecognizer，适配层只需接收/缓存音频块，在语句结束后执行 decode_stream 并返回最终文本。它不会在语音尚未结束时持续输出增量转写，这符合当前 VAD/端点检测后再识别的规划。直接实现 HA SpeechToTextEntity 也可行，输入同样是异步音频块。
 
@@ -540,17 +545,20 @@ NAS 的 AISHELL3、Kokoro、ZipVoice 和 Vocos 24 kHz 权重已完整归档。NA
 
 当前 Matcha Baker、MeloTTS 使用 sherpa-onnx OfflineTts。generate(text, callback=...) 的 text 参数仍然要求一段完整文本；callback 可以在该段文本的音频生成过程中逐块提供 PCM。因此它们不具备任意 token 级的在线文本输入能力，但可以采用句子/分句缓冲适配：持续接收 AstrBot 文本，遇到完整句子边界后调用 generate()，随后立即输出该句的音频块，同时继续接收后续文本。这样能够让 TTS 与 LLM 后续文本生成重叠，不必等整段回答结束。分句边界、首段延迟及播放缓冲欠载仍需实测。
 
-**可复用实现：** [ptbsare/sherpa-onnx-tts-stt](https://github.com/ptbsare/sherpa-onnx-tts-stt) 已支持本项目使用的 Paraformer zh-small 2024-03-09 和 Matcha Baker，并提供 Wyoming 服务。其现有 STT 采用整段离线识别，适合直接复用；但其 TTS 当前只处理完整 Synthesize 请求，且未声明 supports_synthesize_streaming，生成完整音频后才分块发送。因此它是可复用的基础，不是已经具备流式输入的成品。建议以它为基础扩展 Wyoming TTS 流式事件处理，并固定 sherpa-onnx 版本为本项目已测的 2.0.1，避免构建时自动升级造成行为变化。
+**可复用实现：** [ptbsare/sherpa-onnx-tts-stt](https://github.com/ptbsare/sherpa-onnx-tts-stt) 已支持本项目使用的 Paraformer zh-small 2024-03-09 和 Matcha Baker，并提供 Wyoming 服务。其现有 STT 采用整段离线识别，适合复用；但上游当前没有 KWS Provider，TTS 只处理完整 Synthesize 请求，且未声明 supports_synthesize_streaming，生成完整音频后才分块发送。因此它是可复用的服务骨架，不是已经满足 P7A 的成品。P7A 在同一 Wyoming Server/端口中增加 Sherpa KeywordSpotter Wake Provider，并扩展 TTS 流式事件处理；Matcha 必须沿用本项目已实测的 Vocos 22.05 kHz 配置，而不是直接照搬上游 loader 的 HiFi-GAN vocoder。Sherpa 固定为已测的 2.0.1，Wyoming 固定为 HA Core 2026.11.0 使用的 1.10.2。具体合同以 P7A 矩阵为准。
 
 流式适配有两个协议细节必须处理：HA Core 2026.11.0 会发送 `SynthesizeStart`、多个 `SynthesizeChunk`，结束时又额外发送一条完整文本 `Synthesize`（向旧服务兼容），最后发送 `SynthesizeStop`。新服务必须识别当前连接已处于流式会话，不能把兼容用的完整文本再合成一次；流式音频输出在 `AudioStart`/`AudioChunk` 后必须发送 `SynthesizeStopped` 结束响应，不能只发送普通 `AudioStop`，因为 HA 的流式接收器等待的是 `SynthesizeStopped`。
 
 **HA 端的必要条件：** 仅让 TTS 服务支持流式还不够。AstrBot Conversation Agent 必须把 SSE 文本增量写入 HA ChatLog，并声明 supports_streaming；TTS Provider 也必须真实支持 streaming input。两端均满足时，HA 2026.11.0 的 run-start 会提供 TTS URL 与 stream_response=true；回答达到内部启动阈值后，intent-progress 会发出 tts_start_streaming。Tivoo Satellite 应在该事件发生时使用 run-start 保存的 URL 提前通知 ESP32 下载；短回答或非流式情况则在 tts-end 后通知。HA 的 TTS Proxy 会逐块写出 HTTP 响应，设备可边下载边播放。tts-end 不是播放完成事件，最终仍以 ESP32 的 TTS_STATE 和 tts_response_finished() 完成播报生命周期。
 
-**本项目选择：** 首期使用 Wyoming，而不是在 Tivoo HA 集成内再实现一套模型 Provider。Paraformer 复用现有整段识别；Matcha Baker 作为 NAS 首选 TTS，并为其 Wyoming 服务增加分句输入和音频块输出。ARM Ubuntu 的 Matcha RTF 0.109、NAS 的 Matcha RTF 0.598 说明有继续验证实时播放的价值，但都不是首段延迟或完整流式联调结果。当前尚未完成流式适配和 Tivoo 实机端到端验收。
+**本项目选择：** 首期使用一个独立 Sherpa Wyoming 服务，不在 Tivoo HA 集成内另写模型 Provider。P7A 已确定一个进程/一个 Wyoming TCP 端口同时发布 KWS、STT、TTS 三种独立 Provider：KWS 使用 Sherpa KeywordSpotter，STT 复用 Paraformer 整段离线识别，TTS 使用 Matcha Baker 分句输入和 callback PCM 输出。Paraformer 和 Matcha 基准 RTF 说明有继续验证实时处理的价值，但不代表 KWS 实时性、TTS 首段延迟或完整流式联调已经通过。具体部署、模型配置、事件和验收合同见 P7A 矩阵；Tivoo 实际收音和完整设备链路仍待 P7/P8 验收。
 
 实现参考：
+- [HA Core 2026.11.0：Wyoming Wake Word](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/wake_word.py)
 - [HA Core 2026.11.0：Wyoming STT](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/stt.py)
 - [HA Core 2026.11.0：Wyoming TTS](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/tts.py)
+- [HA Core 2026.11.0：Wyoming 多 Provider 发现](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/data.py)
+- [Sherpa-ONNX 中文/英文 KWS 模型](https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/)
 - [HA Core 2026.11.0：Assist Pipeline](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/assist_pipeline/pipeline.py)
 - [HA Core 2026.11.0：TTS 流与 HTTP Proxy](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/tts/__init__.py)
 - [sherpa-onnx 2.0.1：OfflineTts Python callback](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/sherpa-onnx/python/csrc/offline-tts.cc)
@@ -577,7 +585,7 @@ NAS 的 AISHELL3、Kokoro、ZipVoice 和 Vocos 24 kHz 权重已完整归档。NA
 - Tivoo AUX 播放期间的设备端 SPP 控制并发：已于 2026-11-08 实测通过（AUX 播放外部音频、保持 `Tivoo-light` BLE 连接，并通过 SPP 正常发送指令显示图形）；该 BLE 连接不是固件必需控制通道。尚未验证的是 ESP32 固件在 Wi-Fi/I²S/SPP 同时工作时的稳定性。
 - I2S 采集与 DAC 播放并发时，音频缓冲是否欠载或溢出；若启用备用 A2DP，再验证 A2DP 与 Wi-Fi/SPP 的并发稳定性。
 - INMP441 的 I2S 接线、时钟关系、PCM 格式，以及安装到 Tivoo 机内后的实际采音质量。
-- 中文 Wake Word Provider 的 Wyoming/自定义集成适配，以及真实 Tivoo 收音条件下的唤醒词误触发率和识别距离。
+- P7A 已确定通过同一 Sherpa Wyoming 服务提供中文/英文 KWS Provider；真实 Tivoo 收音条件下的唤醒词误触发率、漏唤醒率和识别距离仍需在 P7 实测。
 - Tivoo 内置倒计时是否有可读取的剩余时间或完成事件。
 - 屏幕命令是否有设备端确认，以及动画数据的实际最大传输速度。
 - HA Tivoo 集成仍需实现 ESP32 到 HA 的设备音频传输层（连接认证、音频分帧、会话结束和断线处理）；`AssistSatelliteEntity` 负责接管 Pipeline 生命周期，但不会自动提供 ESP32 的网络传输协议。
