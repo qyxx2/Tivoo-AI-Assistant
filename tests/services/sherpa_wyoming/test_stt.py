@@ -107,6 +107,7 @@ def test_transcribes_once_after_audio_stop_and_normalizes_pcm() -> None:
     assert result.text == "final transcript"
     assert result.language == "zh-CN"
     assert recognizer.decode_calls == [recognizer.streams[0]]
+    assert session.decode_seconds >= 0
     assert session.stream is None
     assert session.audio_bytes == 0
     assert session.handle_event(AudioStop()) is None

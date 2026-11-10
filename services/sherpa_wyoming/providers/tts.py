@@ -20,6 +20,7 @@ from wyoming.tts import (
 )
 
 from ..config import ServiceConfig
+from ..execution import BoundedExecutor, ExecutionQueueFull
 
 _SAMPLE_RATE = 22_050
 _SAMPLE_WIDTH = 2
@@ -38,10 +39,12 @@ class TTSProvider:
         self.config = config
         self.tts_engine = tts_engine
 
-    def create_stream_session(self) -> TTSStreamSession:
+    def create_stream_session(
+        self, *, execution: BoundedExecutor | None = None
+    ) -> TTSStreamSession:
         """Create isolated state and a bounded PCM queue for one request."""
 
-        return TTSStreamSession(self.config, self.tts_engine)
+        return TTSStreamSession(self.config, self.tts_engine, execution=execution)
 
     def synthesize(self, request: Synthesize) -> list[Eventable] | Error:
         """Synthesize plain text using the only configured voice (speaker 0)."""
@@ -166,9 +169,16 @@ class TTSProvider:
 class TTSStreamSession:
     """Request-local streaming text and bounded callback PCM output."""
 
-    def __init__(self, config: ServiceConfig, tts_engine: Any) -> None:
+    def __init__(
+        self,
+        config: ServiceConfig,
+        tts_engine: Any,
+        *,
+        execution: BoundedExecutor | None = None,
+    ) -> None:
         self.config = config
         self.tts_engine = tts_engine
+        self.execution = execution
 
         self._chunk_bytes = min(config.tts_chunk_bytes, config.tts_queue_bytes)
         self._chunk_bytes -= self._chunk_bytes % _SAMPLE_WIDTH
@@ -200,6 +210,10 @@ class TTSStreamSession:
         self._input_task: asyncio.Task[None] | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._used = False
+
+    @property
+    def text_char_count(self) -> int:
+        return len(self._all_text)
 
     async def stream(
         self,
@@ -440,10 +454,15 @@ class TTSStreamSession:
                 if sentence is _SENTENCE_END:
                     break
                 if isinstance(sentence, str) and sentence.strip():
-                    await asyncio.to_thread(self._generate_sentence, sentence)
+                    if self.execution is None:
+                        await asyncio.to_thread(self._generate_sentence, sentence)
+                    else:
+                        await self.execution.run(self._generate_sentence, sentence)
         except asyncio.CancelledError:
             self._cancelled.set()
             raise
+        except ExecutionQueueFull:
+            self._fail("TTS model execution capacity is full", "server_busy")
         except TimeoutError:
             self._fail("TTS generation timed out", "timeout")
         except ValueError as exc:

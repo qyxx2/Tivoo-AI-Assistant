@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +14,8 @@ from .model_utils import (
     get_model_paths,
     verify_model_files,
 )
+
+_LOGGER = logging.getLogger("tivoo.sherpa_wyoming.models")
 
 
 class ModelLoadError(RuntimeError):
@@ -112,10 +116,22 @@ def load_models(config: ServiceConfig) -> ModelBundle:
     )
     loaded: dict[str, Any] = {}
     for name, loader in loaders:
+        started = time.perf_counter()
         try:
             loaded[name] = loader(config, paths)
         except Exception as exc:
+            _LOGGER.error(
+                "model_load_failed model=%s duration_seconds=%.3f error_type=%s",
+                name.lower(),
+                time.perf_counter() - started,
+                type(exc).__name__,
+            )
             raise ModelLoadError(f"Failed to initialize {name} model: {exc}") from exc
+        _LOGGER.info(
+            "model_loaded model=%s duration_seconds=%.3f provider=cpu",
+            name.lower(),
+            time.perf_counter() - started,
+        )
 
     return ModelBundle(
         keyword_spotter=loaded["KWS"],

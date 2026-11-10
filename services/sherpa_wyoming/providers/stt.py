@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import numpy as np
@@ -49,6 +50,7 @@ class STTSession:
         self._audio_started = False
         self._terminal = False
         self._audio_bytes = 0
+        self._decode_seconds = 0.0
         self.language: str | None = None
 
     @property
@@ -58,6 +60,10 @@ class STTSession:
     @property
     def audio_bytes(self) -> int:
         return self._audio_bytes
+
+    @property
+    def decode_seconds(self) -> float:
+        return self._decode_seconds
 
     def handle_event(self, event: Event) -> Event | None:
         """Handle one Wyoming event; return a response only when terminal."""
@@ -174,6 +180,7 @@ class STTSession:
             return self._fail("STT audio input is empty", "empty_audio")
 
         stream = self._stream
+        decode_started = time.perf_counter()
         try:
             self._recognizer.decode_stream(stream)
             text = stream.result.text
@@ -184,6 +191,8 @@ class STTSession:
         # Normalize Sherpa/NumPy failures at the Wyoming protocol boundary.
         except Exception as exc:  # noqa: BLE001
             return self._fail(f"STT decoding failed: {exc}", "model_error")
+        finally:
+            self._decode_seconds = time.perf_counter() - decode_started
 
         self._terminal = True
         self._release_request()
