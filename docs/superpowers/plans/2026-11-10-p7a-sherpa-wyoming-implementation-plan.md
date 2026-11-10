@@ -1,6 +1,6 @@
 # P7A Sherpa Wyoming 语音服务实施计划
 
-> 状态：P7Ab0–P7Ab8 服务实现与 NAS 部署已完成；生产 HA 到 Wyoming 的 Describe/Info 和 KWS 正负样本请求已验证。当前仅待生产 HA Config Flow 持久化添加单一 Wyoming Entry（C03/C39）。
+> 状态：P7Ab0–P7Ab8 服务实现、NAS 部署和生产 HA 集成验收均已完成；C01–C39 全部 PASS，P7A 阶段门通过并允许进入 P5/P6；C40–C43 留待硬件阶段，C44 N/A/禁止新增。
 > 工作分支：`feature/p7a-sherpa-wyoming-service`
 > 计划基线：`aeef5183fef17e53bafbdda0e55f7de2300a8fdd`
 > 合同依据：[P7A Sherpa Wyoming 合同矩阵](../specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)
@@ -349,19 +349,19 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: C01–C39 MUST 的逐项证据和 P7A 阶段结论；C40–C43 继续标记 DEFERRED，C44 保持禁止新增。
 
 **Tasks:**
-- [ ] 在 ARM Ubuntu 开发机运行服务全套 Python 3.11 tests、真实模型 smoke、HA/P3 回归、Ruff 和 compileall；代码级测试不得移到 GitHub runner 或 NAS。Dockerfile/buildx/镜像 smoke/Compose config 结果从 GitHub Actions run 读取，不在 ARM 上重跑。
-- [ ] 在 NAS 仅执行必要的模型准备、登录 GHCR、`docker compose pull`、Compose 启动和运行时冒烟；Compose 只 pull GitHub CI 已发布的 linux/amd64 image，严禁在 NAS 执行 build/buildx。沿用已存在的 HA Docker 私有网络，不修改无关容器、网络和配置。
-- [ ] 在 HA 只添加一个 Wyoming host:10400 Config Entry；验证 wake_word、stt、tts 三个平台同时发现，模型、语言和 voice 信息正确。
-- [ ] 用正/负测试音频验证 KWS hit/miss；miss 时不触发 STT/P3 Agent；hit 时进入 STT，并验证最终 Transcript 到达现有 P3 Conversation Agent。不得连接真实 AstrBot 做非必要对话或泄露内容。
-- [ ] 使用既有 Paraformer 官方 WAV 检查中英文识别输出、空结果/错误区分和多请求隔离。
-- [ ] 在 HA 中分别验证非流式 TTS 与流式 TTS；流式验证首句在后续文本发送完成前开始输出、兼容 Synthesize 不重复合成、单 AudioStart、SynthesizeStopped 结束。
-- [ ] 在 NAS 同一个服务进程/容器内记录三模型总加载耗时、常驻/峰值 RSS、CPU、KWS 处理 lag、STT RTF、TTS 首块延迟和队列水位；不得用单模型 RSS 推算组合资源占用。
-- [ ] 验证模型缺失/哈希错误时启动失败；容器重启后模型不重复下载、三个 Provider 恢复；健康检查确认全部 installed。
-- [ ] 记录 HA Config Entry、端口、Docker 网络、模型版本/哈希和验收数据；日志检查不得包含 PCM、完整转写/TTS 正文或凭据。
-- [ ] 逐项更新 P7A-C01–C39 的 PASS/BLOCKED 及证据链接；P7A 只有所有 MUST 均有通过证据才可标记完成。C40–C43 不因 P7A 完成而提前验收，C44 不实现。
-- [ ] 只有 C01–C39 全部通过，才更新 README 将 P7A 状态记为完成并放行 P5/P6；若存在 BLOCKED，保留阶段状态并在报告列明，不得提前放行。
-- [ ] 在 ARM Ubuntu 运行全套 Python 3.11 服务测试、HA/P3 回归、Ruff、compileall、pip check、Markdown/link 检查和 `git diff --check`。
-- [ ] 从 GitHub Actions run 核对 Dockerfile buildx check、linux/amd64 image build/smoke、Compose config 和 GHCR 发布结果；不在 ARM 或 NAS 执行 Dockerfile/buildx/Compose CLI 容器测试。
+- [x] 在 ARM Ubuntu 开发机运行服务全套 Python 3.11 tests、真实模型 smoke、HA/P3 回归、Ruff 和 compileall；代码级测试不得移到 GitHub runner 或 NAS。Dockerfile/buildx/镜像 smoke/Compose config 结果从 GitHub Actions run 读取，不在 ARM 上重跑。
+- [x] 在 NAS 仅执行必要的模型准备、登录 GHCR、`docker compose pull`、Compose 启动和运行时冒烟；Compose 只 pull GitHub CI 已发布的 linux/amd64 image，严禁在 NAS 执行 build/buildx。沿用已存在的 HA Docker 私有网络，不修改无关容器、网络和配置。
+- [x] 在 HA 只添加一个 Wyoming host:10400 Config Entry；验证 wake_word、stt、tts 三个平台同时发现，模型、语言和 voice 信息正确。
+- [x] 用正/负测试音频验证 KWS hit/miss；miss 时不触发 STT/P3 Agent；hit 时进入 STT，并验证最终 Transcript 到达现有 P3 Conversation Agent。不得连接真实 AstrBot 做非必要对话或泄露内容。
+- [x] 使用既有 Paraformer 官方 WAV 检查中英文识别输出、空结果/错误区分和多请求隔离。
+- [x] 在 HA 中分别验证非流式 TTS 与流式 TTS；流式验证首句在后续文本发送完成前开始输出、兼容 Synthesize 不重复合成、单 AudioStart、SynthesizeStopped 结束。
+- [x] 在 NAS 同一个服务进程/容器内记录三模型总加载耗时、常驻/峰值 RSS、CPU、KWS 处理 lag、STT RTF、TTS 首块延迟和队列水位；不得用单模型 RSS 推算组合资源占用。
+- [x] 验证模型缺失/哈希错误时启动失败；容器重启后模型不重复下载、三个 Provider 恢复；健康检查确认全部 installed。
+- [x] 记录 HA Config Entry、端口、Docker 网络、模型版本/哈希和验收数据；日志检查不得包含 PCM、完整转写/TTS 正文或凭据。
+- [x] 逐项更新 P7A-C01–C39 的 PASS 状态及证据链接；确认所有 MUST 均有通过证据。C40–C43 不因 P7A 完成而提前验收，C44 不实现。
+- [x] C01–C39 全部通过后，更新 README 将 P7A 状态记为完成并放行 P5/P6；P7A 完成不代表 P7 真实麦克风/设备播报完成。
+- [x] 在 ARM Ubuntu 运行全套 Python 3.11 服务测试、HA/P3 回归、Ruff、compileall、pip check、Markdown/link 检查和 `git diff --check`。
+- [x] 从 GitHub Actions run 核对 Dockerfile buildx check、linux/amd64 image build/smoke、Compose config 和 GHCR 发布结果；不在 ARM 或 NAS 执行 Dockerfile/buildx/Compose CLI 容器测试。
 
 **Exit gate:** 单个 HA Config Entry 可获得三类 Provider；服务与现有 P3 对话文本链路连接正确；所有 C01–C39 MUST 有证据；组合资源数据来自 NAS 上同进程实测；报告明确保留物理麦克风和 ESP32 后续职责。
 

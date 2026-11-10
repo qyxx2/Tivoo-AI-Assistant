@@ -2,7 +2,7 @@
 
 > 基于 Divoom Tivoo、ESP32、Home Assistant 和 AstrBot 的个人 AI 语音终端。
 >
-> 当前阶段：**架构与项目目录已建立，尚未开始实现固件和服务代码。**
+> 当前阶段：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署，P7A 阶段门 PASS，允许进入 P5/P6；真实麦克风和设备音频链路继续按 P7/P6/P8 验收。**
 
 ESP32 与 HA 双向通信契约：[通信层规格书](docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md)（待审阅）。
 
@@ -10,7 +10,7 @@ P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](d
 
 语音识别与合成端到端处理：[STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)（待实现与验收）。
 
-P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（合同已定义，待实现与验收）。
+P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（NAS 已部署；C01–C39 PASS；作为 P5/P6 的稳定语音服务依赖；C40–C43 留待硬件阶段验收）。
 
 ## 1. 项目目标
 

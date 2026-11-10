@@ -1,6 +1,6 @@
 # P7A Sherpa Wyoming 语音服务合同矩阵
 
-> 状态：**服务已实现在 NAS 部署，三 Provider 和生产 HA KWS 请求链已验证；生产 HA Wyoming Config Entry 尚未持久化添加，C03/C39 待完成。C40–C43 继续 DEFERRED。**
+> 状态：**P7A 已在 NAS 部署并完成验收；C01–C39 MUST 全部 PASS，P7A 阶段门通过并允许进入 P5/P6；C40–C43 继续 DEFERRED，C44 N/A/禁止新增。**
 > 日期：2026-11-10
 > 基线：Tivoo-AI-Assistant main，commit f9aedf1a2ac0ad2541fc1f47cae8b229e9d0a18b
 > 适用版本：Home Assistant Core 2026.11.0；Sherpa-ONNX 2.0.1；Wyoming Python package 1.10.2；NAS Synology DS920（Intel Celeron 1005M，2 logical CPUs，约 3.89 GiB RAM）
@@ -445,7 +445,7 @@ HA Core 2026.11.0 的 Wyoming TTS Provider 在流式请求中依次发送：
 
 ## 12. 合同矩阵与验收追踪
 
-状态定义：MUST = P7A 必须实现；DEFERRED = 明确由 P7/P5/P6 承担；N/A = 不属于本服务。所有 MUST 当前状态均为 **待实现/待验收**，本文冻结的是接口和验收要求，不代表功能已经存在。
+状态定义：MUST = P7A 必须满足的合同优先级；DEFERRED = 明确由 P7/P5/P6 承担；N/A = 不属于本服务。当前验收结果：C01–C39 的 MUST 全部 PASS；C40–C43 保持 DEFERRED；C44 为 N/A/禁止新增。下表定义合同内容，逐项 PASS 证据见 [P7A 验收报告](../reports/2026-11-10-p7a-acceptance-report.md)。
 
 | ID | 提供方 → 消费方 | 合同 | 要求/验收证据 | 优先级 |
 |---|---|---|---|---|
@@ -548,8 +548,8 @@ P7A 完成后必须能得到一个清晰结果：**NAS 上一个可独立运行�
 - Sherpa KWS 官方中英双语模型提供 chunk-16 与 chunk-8 变体；本矩阵选 chunk-16 作为准确度优先的初始配置，之后是否换 chunk-8 必须用相同负/正样本对照。
 - 现有 KWS 模型基准资料不是 Tivoo 机内麦克风样本；P7 阶段必须补录实际噪声环境和安装位置音频。
 - Paraformer 既有测试无人工逐字真值和 CER/WER；不能把 RTF 或官方样例结果描述成真实识别准确率。
-- Matcha NAS 基准证明整段生成快于实时，不等于 callback 流式首块延迟已经通过；PCM callback 与 HA 流式事件仍须专门验收。
-- 三模型组合常驻的 NAS 内存峰值尚未测量；不得沿用分开模型测试的 RSS 当组合值。
+- HA Core 2026.11.0 Wyoming TTS Provider 的非流式 WAV 与流式 PCM 首块已通过 P7A 验收；这不代表 Tivoo AUX/DAC 真实端到端播报完成，设备音频输出仍按 C42 所属后续阶段验收。
+- 三模型组合常驻的 NAS RSS/CPU 已在 [P7A 验收报告第 4 节](../reports/2026-11-10-p7a-acceptance-report.md) 实测；实际持续负载仍需在后续运行中观察并保留资源余量。
 - Wyoming 没有本项目的认证层；必须通过 Docker/NAS 私网限制访问，不能对公网开放。
 
 ## 15. 实现阶段与文档关系
