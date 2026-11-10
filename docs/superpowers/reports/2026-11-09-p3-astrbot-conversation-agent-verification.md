@@ -118,6 +118,6 @@ P3b6 报告完成后，P7A 分支补做了生产 HA Core 2026.11.0 的真实语�
 - 两轮共用 HA `conversation_id`；AstrBot 持久化 session 记录保留原创建时间并刷新 `last_activity_at`。
 - 为保护用户原有设置，测试使用临时 Pipeline，完成后删除；生产 preferred Pipeline 和 Config Entry 未更改。
 
-**边界：** 本次从 STT 阶段开始，不覆盖本轮 KWS；此前 P7A 报告已单独验证 KWS hit/miss。没有测试 INMP441、ESP32 Assist Satellite、Tivoo AUX/DAC 或扬声器实际播放。另发现生产 preferred `Astrbot` Pipeline 当前的 STT/TTS/KWS 选择仍为空；临时测试 Pipeline 的成功不等于该 preferred Pipeline 已完成语音配置。
+**边界：** 本次从 STT 阶段开始，不覆盖本轮 KWS；此前 P7A 报告已单独验证 KWS hit/miss。没有测试 INMP441、ESP32 Assist Satellite、Tivoo AUX/DAC 或扬声器实际播放。随后发现并补齐了生产 preferred `Astrbot` Pipeline 的 STT/TTS/KWS 选择：现已持久化绑定 Sherpa Paraformer、Matcha Baker 和 Wake Word（tivoo-wake），并通过原 preferred Pipeline ID 完成真实 STT → AstrBot → TTS Proxy 调用；配置及运行证据见 P7A 验收报告 §12。
 
 本次补充验证提高了 P3 正常语音输入/输出集成的运行时证据，但 **P3 整体仍保持 BLOCKED**：HA Core 重启恢复、24 小时会话轮换、真实取消/Stop owner 校验及生产 API Key 轮换仍未验收。

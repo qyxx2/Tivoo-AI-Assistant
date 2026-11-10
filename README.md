@@ -12,7 +12,7 @@ P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](d
 
 P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（NAS 已部署；C01–C39 PASS；生产 HA → AstrBot → TTS Proxy 两轮端到端验证通过，详见[补充报告](docs/superpowers/reports/2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)；作为 P5/P6 的稳定语音服务依赖；C40–C43 留待硬件阶段验收）。
 
-当前生产 HA 首选 `Astrbot` Pipeline 仍未绑定 KWS/STT/TTS。此次端到端验证使用临时 Pipeline 并在结束后删除；真正接入 Web Assist / Assist Satellite 前，需要为首选 Pipeline 绑定相应的 Sherpa Provider。
+生产 HA 首选 `Astrbot` Pipeline 已正式绑定 KWS `wake_word.sherpa_onnx_wake_word`（`tivoo-wake`）、STT `stt.sherpa_onnx_paraformer`（`zh-CN`）和 TTS `tts.sherpa_onnx_matcha_baker`（`zh-CN`，voice `0`）。配置已持久化，首选 Pipeline ID 未改变，并已用该 Pipeline 完成一次真实 STT → AstrBot → TTS Proxy 语音调用验证。
 
 ## 1. 项目目标
 

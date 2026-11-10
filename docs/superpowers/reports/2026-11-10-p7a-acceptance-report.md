@@ -355,3 +355,27 @@ ARM64 Ubuntu 开发机，代码未改动：
 Sherpa 的单条 warning 是上游 Wyoming 对 Python audioop 的弃用提示；P3 测试的 63 条为现有 Home Assistant/aiohttp/backoff deprecation/compatibility warnings。本次未修改 Sherpa 服务代码、P3 代码或运行时依赖。
 
 本节验收用的临时 Python 脚本及两个 WAV 已从开发机和生产 HA 容器临时目录删除。生产 Sherpa 容器、模型、网络、active .env 和 HA Config Entry 均未修改。
+## 12. 生产首选 Astrbot Pipeline 正式绑定与复测
+
+首轮端到端验证后复核发现，生产 HA 的 preferred Pipeline `Astrbot` 虽然已有真实 Conversation Agent，但 STT/TTS/KWS 字段均为空。该缺口已在本次收尾中直接修复，没有再保留为后续待办。
+
+使用 HA Core 2026.11.0 正式 WebSocket 管理 API `assist_pipeline/pipeline/update` 更新原 Pipeline（未新建替代项、未更改 preferred ID），并再次读取 HA Pipeline 存储确认持久化：
+
+| 字段 | 已保存值 |
+|---|---|
+| Pipeline ID / preferred | `01m6zwpb0h8ze3jn3606s3d22m`（保持原值） |
+| Conversation Engine | `conversation.astrbot` |
+| Conversation Language / Pipeline Language | `*` / `zh`（保持原值） |
+| STT Engine / Language | `stt.sherpa_onnx_paraformer` / `zh-CN` |
+| TTS Engine / Language / Voice | `tts.sherpa_onnx_matcha_baker` / `zh-CN` / `0` |
+| Wake Word Entity / ID | `wake_word.sherpa_onnx_wake_word` / `tivoo-wake` |
+
+随后以**同一个 preferred Pipeline ID** 再次执行真实 HA Assist Pipeline，从 STT stage 送入仓库 `0.wav`：
+
+- Paraformer Transcript：`对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢`。
+- 真实 `conversation.astrbot` 返回 107 字符回复。
+- Sherpa Matcha TTS 经 HA TTS Proxy 返回 `audio/mpeg`，209,518 bytes；FFprobe 确认为 MP3、22,050 Hz、mono、21.561 s；FFmpeg 全量解码通过。
+- 运行 Pipeline ID 与 preferred ID 一致；运行后再次检查 HA 持久化 `assist_pipeline.pipelines`，上述字段全部保留。
+- KWS entity 和模型 ID 已绑定；其 Provider 正负样本及实际 HA Wake Word Provider 测试证据见 §3.2/§7.2。本次首选 Pipeline 复测从 STT stage 开始，因此没有重复执行 KWS acoustics。
+
+本次修改只更新 HA 的原 preferred Pipeline；没有改动 Conversation Agent、Wyoming Config Entry、实体、容器或 AstrBot 配置。HA、AstrBot、Sherpa 容器均保持运行。临时 Token 副本、脚本和音频测试文件已清理。

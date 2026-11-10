@@ -58,8 +58,8 @@ HTTP 首块时间从收到 HA `tts_output` 后开始下载 TTS Proxy URL 计时�
 ## 5. 清理与未覆盖范围
 
 - 通过 HA WebSocket 临时创建 `P7A E2E Temporary` Pipeline；两轮结束后已成功删除。
-- 清理后重新读取 Pipeline 列表：只剩原有 `Home Assistant` 和 `Astrbot` 两项；原 preferred Pipeline 仍为 `Astrbot`，未被更改。
-- 生产 HA Config Entry、Wyoming 实体、AstrBot Config Entry、生产 Pipeline 存储和服务容器均未修改。
+- 临时 Pipeline 删除后重新读取列表，只剩原有 `Home Assistant` 和 `Astrbot` 两项；原 preferred Pipeline ID 仍为 `01m6zwpb0h8ze3jn3606s3d22m`。
+- 本报告首轮测试结束时未修改原 Pipeline；随后在 P7A 收尾中正式更新了原 preferred `Astrbot` Pipeline，并通过该 Pipeline ID 复测。生产 HA Config Entry、Wyoming 实体、AstrBot Config Entry 和服务容器均未修改；配置与复测见 P7A 验收报告 §12。
 - 本次从 STT stage 开始，没有执行 KWS；KWS 独立验证证据仍见 P7A 验收报告 §3.2/§7.2。
 - 没有使用 INMP441、ESP32 Assist Satellite、Tivoo AUX/DAC 或实体扬声器；本次验证到 HA TTS Proxy 的真实音频资源并完成离线解码，不代表物理播放验收。
-- **现有 preferred `Astrbot` Pipeline 仍配置为 `stt_engine=null`、`tts_engine=null`、`wake_word_entity=null`。** 本次为了保护原配置，使用临时 Pipeline 完成验证并删除。若要让 HA Web Assist / 后续 Satellite 直接使用该 preferred Pipeline 进行语音交互，还需要在 HA Voice assistants 中给原 Pipeline 绑定 Sherpa STT、TTS（以及需要服务端唤醒时绑定 KWS）。这项配置没有在本次测试中擅自持久化更改。
+- 本报告最初使用临时 Pipeline 完成端到端测试，以避免当时擅自修改用户首选配置。随后已通过 HA 正式 Pipeline Update API 将原 preferred `Astrbot` Pipeline 持久化绑定 Sherpa KWS/STT/TTS；并通过该原 Pipeline ID 再次完成真实 STT → AstrBot → TTS Proxy 调用，验证详情见 P7A 验收报告 §12。
