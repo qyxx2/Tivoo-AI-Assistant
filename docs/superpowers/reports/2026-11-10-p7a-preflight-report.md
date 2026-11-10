@@ -60,7 +60,7 @@ Repository: `qyxx2/Tivoo-AI-Assistant` (default branch `main`). GitHub Actions a
 - pull requests targeting `main` with the same path filter;
 - manual `workflow_dispatch`.
 
-The sole bootstrap job runs on GitHub-hosted `ubuntu-24.04`, asserts `x86_64` and `amd64`, initializes Buildx with `linux/amd64`, then inspects the builder and asserts that `linux/amd64` is advertised. Workflow permissions are only `contents: read`. It does not need a PAT, NAS secret or other repository secret. The reserved image destination is `ghcr.io/qyxx2/tivoo-sherpa-wyoming`.
+The sole bootstrap job runs on GitHub-hosted `ubuntu-24.04`, asserts `x86_64` and `amd64`, initializes Buildx with `linux/amd64` using `docker/setup-buildx-action@v4.4.1` (Node 24 runtime), then inspects the builder and asserts that `linux/amd64` is advertised. Workflow permissions are only `contents: read`. It does not need a PAT, NAS secret or other repository secret. The reserved image destination is `ghcr.io/qyxx2/tivoo-sherpa-wyoming`.
 
 **This batch intentionally does not build an image.** P7Ab0 has no service Dockerfile yet. Dockerfile/buildx check, linux/amd64 image build, image dependency/entrypoint smoke, Compose validation and `packages:write` publishing are enabled in their later planned batch (P7Ab1/P7Ab7 as specified). The GitHub workflow run result is recorded below after the feature-branch push.
 
