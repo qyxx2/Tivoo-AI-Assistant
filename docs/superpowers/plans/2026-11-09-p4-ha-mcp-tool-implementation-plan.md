@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools 实施计划
 
-> 状态：P4b0–P4b6 的本地实现、自动化验证和合同追踪已执行；P4b5/P4b6 的 AstrBot WebUI、目标 Persona 授权/调用及实际重连故障注入仍因目标运行时不可用而 BLOCKED。P4 整体保持 PARTIAL，详见 P4b5/P4b6 验收报告。
+> 状态：P4b0–P4b6 的本地实现、自动化验证和合同追踪已执行。2026-11-10 目标运行时补充验收已通过 HA/Tivoo 部署、AstrBot 4.29.4 MCP 连接/工具发现，以及一次 Persona `StopCountdown` 调用和预期 Adapter unavailable 错误返回；七个 Tool 的全量 Persona 授权、StartCountdown/SetVolume Persona 调用和实际断线/响应丢失故障注入仍待验证。P4 整体保持 PARTIAL，详见 `2026-11-10-p4-runtime-acceptance-report.md`。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 代码基线：`main` / `c40c40046b257a37c632a9738bf04ec2abc0ef76`
 > 计划基线：P4 合同矩阵提交 `982966a`

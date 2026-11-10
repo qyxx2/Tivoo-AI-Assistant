@@ -6,9 +6,9 @@
 
 ## 1. 结论
 
-**P4b6 本地合同验收、P3 回归、静态检查和证据追踪已完成。P4 整体状态为 PARTIAL：真实 AstrBot 4.29.4 MCP 运行时、目标 Persona 授权/调用及连接中断故障注入仍需人工目标环境验收。**
+**P4b6 本地合同验收、P3 回归、静态检查和证据追踪已完成。2026-11-10 的目标环境补充验收已通过 HA 部署/加载、AstrBot 4.29.4 Streamable HTTP 连接、七个 Tivoo Tool 发现，以及 Persona 对 StopCountdown 的一次真实调用和预期 Adapter unavailable 错误返回。P4 整体仍为 PARTIAL：全部七个 Tool 的 Persona 授权、StartCountdown/SetVolume 的 Persona 调用及连接中断/响应丢失故障注入仍待验证。详见 `2026-11-10-p4-runtime-acceptance-report.md`。
 
-本批没有把 MCP SDK 测试客户端当作 AstrBot 运行时证据，也没有把内存 Adapter 的成功当作 Tivoo 设备动作成功。开发机上没有运行中的 HA/AstrBot 服务或 WebUI，也没有目标实例凭据；没有连接 NAS、读取凭据或改动生产配置。
+2026-11-09 的 P4b6 本地批次没有把 MCP SDK 测试客户端当作 AstrBot 运行时证据，也没有把内存 Adapter 的成功当作 Tivoo 设备动作成功；当时开发机没有运行中的 HA/AstrBot 服务或 WebUI。2026-11-10 随后的独立目标环境验收连接了 NAS 并部署当前 P4 提交，过程及证据见补充运行时报告；没有读取或记录任何 Token 明文。
 
 P4 当前生产 Adapter 仍按设计明确返回 unavailable，直到 P6 设备传输层接入。C14 的真实 Tivoo 硬件动作属于 P5/P6，不是 P4 的退出条件。
 
@@ -44,18 +44,18 @@ warnings 主要来自 HA/aiohttp 的 NotAppKeyWarning、HA/backoff 的依赖弃�
 
 ## 4. P4-C01–C15 合同追踪
 
-状态含义：PASS = 本地合同证据齐全；PARTIAL = 本地证据具备、目标运行时环节未验证；BLOCKED = 当前环境无法执行；DEFERRED = 合同明确归属后续阶段。
+状态含义：PASS = 该合同已有足够的自动化或目标运行时证据；PARTIAL = 已验证部分关键路径，但仍有合同子项未验证；BLOCKED = 当前环境无法执行；DEFERRED = 合同明确归属后续阶段。
 
 | 合同 | 状态 | 本次证据与未完成项 |
 |---|---|---|
 | P4-C01 MCP 路由 | PASS | `test_tivoo_p4b5_mcp_http.py` 通过 HA Core 2026.11.0 实际 `/api/mcp/assist` 路由 initialize/list/call。 |
-| P4-C02 Streamable HTTP | PARTIAL | MCP SDK Streamable HTTP 客户端通过真实 HA 路由完成 initialize；AstrBot 4.29.4 自身的 WebUI 配置和 initialize 仍待目标实例验证。 |
-| P4-C03 七个 Tool 发现 | PARTIAL | 普通 HA 用户的 MCP `tools/list` 已发现七个 Tivoo MVP Tool；目标 AstrBot Persona 的工具授权、Persona 内发现和调用未验证。 |
+| P4-C02 Streamable HTTP | PASS | 开发机 MCP SDK 测试与 2026-11-10 目标运行时证据相互补充：AstrBot 4.29.4 已配置 `streamable_http`，实际连接 `/api/mcp/assist` 并显示工具列表；目标客户端 initialize/list 已通过。 |
+| P4-C03 七个 Tool 发现 | PARTIAL | AstrBot 4.29.4 的可用工具列表已显示全部七个 `tivoo__*` Tool；用户随后从当前 Persona 实际调用 `StopCountdown` 并收到预期 Adapter 错误。截图证明 MCP 工具发现，单次调用证明至少该 Tool 对当前 Persona 可用；尚未逐项证明七个 Tool 全部获该 Persona 授权并可调用。 |
 | P4-C04 权限边界 | PASS | 测试内普通 HA 用户有效 Bearer Token 可用，无效 Token 返回 HTTP 401；没有使用管理员 Token 调用 Assist endpoint。 |
 | P4-C05 实体暴露范围 | PASS | P4b6 新增真实 MCP 调用测试：conversation 已暴露实体的名称/状态进入 GetLiveContext，隐藏实体不进入；Tivoo 工具只提供七项显式动作，不接受 entity_id 任意目标，Assist API 不暴露管理用 `homeassistant__call_action`。 |
 | P4-C06 Tool 注册过滤 | PASS | 既有测试验证 Tivoo LLM 平台仅对 `LLM_API_ASSIST` 注册工具；七项 Tool 列表与集成标识均已检查。 |
 | P4-C07 服务复用 | PASS | 七个 Tool 均经 MCP tools/call → HA LLM Tool → 对应 HA Service → 内存 Adapter；SetBrightness 通过独立 HA Service 验证，没有重复 Tool。 |
-| P4-C08 失败传播 | PASS | 参数 Schema、服务缺失/不可用、Adapter 异常、媒体文件错误均有错误测试；MCP 失败返回 is_error，不伪装成功。 |
+| P4-C08 失败传播 | PASS | 参数 Schema、服务缺失/不可用、Adapter 异常、媒体文件错误均有自动化错误测试；2026-11-10 的真实 Persona `StopCountdown` 调用也返回“命令适配器尚未配置设备传输通道”的预期错误，没有伪称硬件执行成功。 |
 | P4-C09 参数范围 | PASS | 倒计时严格 MM:SS，StopCountdown 无参数；Volume/Brightness 整数 0–100，覆盖 0/100 和越界；preset、文字样式及字体参数有边界测试。 |
 | P4-C10 媒体边界 | PASS | PNG/JPEG/GIF、多帧时长保留与覆盖、相对 media_directory、绝对路径/URL/路径穿越/symlink 逃逸/目录/缺失/损坏文件拒绝均有测试。 |
 | P4-C11 P3 回归 | PASS | P3 AstrBot 集成 92 passed；最终 HA 全量测试 205 passed。Chat API、session、SSE、ChatLog 和取消相关原有 P3 测试均在全量回归中执行。 |
@@ -74,20 +74,17 @@ warnings 主要来自 HA/aiohttp 的 NotAppKeyWarning、HA/backoff 的依赖弃�
 | StopCountdown | `{}` | `stop_countdown` / 空 data |
 | SetVolume | `{"volume":0}`、`{"volume":100}` | `set_volume` / 分别保留 0 和 100 |
 
-这些请求由本地 MCP SDK 客户端发起，不是 AstrBot Persona 发起；真实 AstrBot 链路状态仍为 PARTIAL/BLOCKED。
+上表三项仍是本地 MCP SDK 客户端发起的 Adapter 路径自动化证据，不是 AstrBot Persona 发起。另有一项独立运行时证据：2026-11-10 当前 AstrBot Persona 发起 `StopCountdown`，HA 返回 Adapter 未配置设备传输通道的预期错误；这证明调用和错误返回链路，不证明硬件动作成功。
 
 ## 5. 必须人工验收的项目
 
 ### 5.1 目标 HA / AstrBot 运行时（P4 尚未通过的部分）
 
-在实际 HA Core 2026.11.0 与 AstrBot 4.29.4 运行环境中完成：
+2026-11-10 已完成的目标运行时步骤见 `2026-11-10-p4-runtime-acceptance-report.md`。剩余人工验收：
 
-1. 在 HA 配置并启用原生 MCP Server 的 Assist API；使用普通 HA 用户的 Long-Lived Access Token，确认不需要管理员权限、不将管理 API 暴露给 AstrBot。
-2. 在 AstrBot WebUI 建立 MCP Server：Transport 为 `streamable_http`，URL 指向 `/api/mcp/assist`，Authorization 使用该普通用户的 Bearer Token。
-3. 确认 AstrBot 连接成功并完成 initialize；`tools/list` 能发现七个 `tivoo__*` MVP Tool。
-4. 将七个 Tool 授权给目标 Persona；从该 Persona 实际触发工具发现，确认没有遗漏或误授权。
-5. 在 AstrBot 运行时验证 StartCountdown `01:30`、StopCountdown 无参数、SetVolume 0/100 的请求参数与 HA 侧服务事件一致。当前生产 Adapter 在 P6 前会明确返回 unavailable，所以此处先验证调用到 HA Service 的错误/可用性行为；要确认设备执行成功，须等 P6 Adapter 接通后再做。
-6. 对 AstrBot MCP 连接执行断开/恢复与响应丢失测试，重点观察 StartCountdown、SetExpression、PlayAnimation 等非幂等动作是否可能重复执行。不要在真实设备上用会造成风险的动作做无保护故障注入。
+1. 在当前目标 Persona 中逐项确认七个 Tivoo Tool 的授权状态；目前已确认列表包含全部七项，且至少 `StopCountdown` 可由该 Persona 实际调用。
+2. 从同一 Persona 验证 StartCountdown `01:30`、SetVolume 0/100 的参数与 HA Service 入参一致；当前生产 Adapter 在 P6 前会明确返回 unavailable，因此本项只验证调用到 HA Service 的错误/可用性行为，不要求设备执行成功。StopCountdown 无参数调用已完成一次。
+3. 对 AstrBot MCP 连接执行受控断开/恢复与响应丢失测试，重点观察 StartCountdown、SetExpression、PlayAnimation 等非幂等动作是否可能重复执行。不要在真实设备上用会造成风险的动作做无保护故障注入。
 
 ### 5.2 媒体文件交接
 
@@ -110,13 +107,14 @@ warnings 主要来自 HA/aiohttp 的 NotAppKeyWarning、HA/backoff 的依赖弃�
 
 - 仅新增 P4b6 验收测试及更新 P4 计划/验收文档；无生产业务代码变更。
 - 未修改 P3 实现、AstrBot 插件、ESP32、NAS 部署、Token 或生产配置。
-- 没有连接 NAS 或 Tivoo 实机。
+- P4b6 本地批次本身没有连接 NAS 或 Tivoo 实机；2026-11-10 的后续 HA/AstrBot 运行时部署和受控调用记录见补充报告。没有连接 Tivoo 实机或验证真实屏幕/音频动作。
 - 按 SuperPower 流程完成作者自审；当前工具环境没有独立 reviewer/subagent 调度能力，因此本报告不声称独立审查通过。
-- P4b6 的本地验收和报告收尾完成；AstrBot Persona/重连运行时验证保留为人工后续项。整体 P4 在这些项完成前保持 PARTIAL。
+- P4b6 本地验收与后续目标运行时补充验收均有报告。HA/AstrBot 连接、七个 Tool 发现和一次 StopCountdown Persona 调用已通过；七个 Tool 的完整 Persona 授权、StartCountdown/SetVolume Persona 调用及重连/响应丢失注入仍待人工验收。整体 P4 保持 PARTIAL。
 - 本批只本地提交，不 push、不 merge。
 
 ## 7. 本批证据文件
 
+- `docs/superpowers/reports/2026-11-10-p4-runtime-acceptance-report.md`（目标 HA/AstrBot 运行时补充验收）
 - `tests/homeassistant/custom_components/tivoo/test_tivoo_p4b6_acceptance.py`
 - `.superpowers/sdd/2026-11-09-p4-ha-mcp-tool/p4b6-full-suite-final.log`
 - `.superpowers/sdd/2026-11-09-p4-ha-mcp-tool/p4b6-tivoo-focused-final.log`

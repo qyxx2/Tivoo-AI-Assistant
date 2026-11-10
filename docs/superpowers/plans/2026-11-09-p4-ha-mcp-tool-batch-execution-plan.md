@@ -1,6 +1,6 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
-> 状态：P4b0–P4b6 的本地实现、自动化验收与收尾报告已执行；P4b5/P4b6 的 AstrBot 4.29.4 Persona 运行时、断线故障注入仍待人工目标环境验收。
+> 状态：P4b0–P4b6 的本地实现与自动化验收已完成。2026-11-10 目标环境验收已通过 HA/Tivoo 部署加载、AstrBot 4.29.4 Streamable HTTP 连接、七个 Tivoo Tool 发现及一次 Persona `StopCountdown` 调用/预期 Adapter 错误返回；全部七个 Tool 的 Persona 授权与断线/响应丢失故障注入仍待验收。P4 整体保持 PARTIAL，详见 `docs/superpowers/reports/2026-11-10-p4-runtime-acceptance-report.md`。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)
 > 合同权威来源：[P4 Tool Contract Matrix](../specs/2026-11-09-p4-ha-mcp-tool-contract-matrix.md)
@@ -231,45 +231,46 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 **Tasks:**
 
-- [ ] **BLOCKED（目标环境不可用）**：在 AstrBot WebUI 添加 HA MCP Server。凭据仍只能由用户在现有安全配置入口录入，不写入 Git、计划、截图、日志或测试 fixture。
-- [x] 在开发机使用 MCP 2.3.0 Streamable HTTP 客户端对 HA 原生 `/api/mcp/assist` 完成 initialize 和 `tools/list`；普通用户下发现七个 Tivoo MVP Tool。**AstrBot 4.29.4 实例内的 initialize/list 仍 BLOCKED**，不能用客户端 SDK 测试替代。
-- [ ] **BLOCKED（目标环境不可用）**：将七个 MVP Tool 授权给实际 Tivoo Agent Persona，并确认 Persona 的可调用工具集。不得根据配置推测授权已生效。
+- [x] 2026-11-10 在 NAS 实际 AstrBot 4.29.4 WebUI 添加并启用 HA MCP Server；`mcp_server.json` 实际配置为 `streamable_http` 和 `/api/mcp/assist`，Bearer header 已配置。Token 明文不读取、不记录。
+- [x] 开发机 MCP 2.3.0 测试通过；目标 AstrBot 4.29.4 实例也已完成连接/initialize 和工具列表发现，用户截图显示七个 `tivoo__*` MVP Tool。
+- [ ] **PARTIAL**：目标 Persona 已实际调用 `StopCountdown`；但尚未逐项证明七个 MVP Tool 全部授权给该 Persona 并可调用。不得把 MCP 全局工具列表等同于全部 Persona 授权。
 - [x] 本地协议测试对完整列表按 `tivoo__` 前缀筛选，只核对七个项目 Tool；不假设 HA Assist 总工具数等于七。
 - [x] 在开发机本地 HA 测试应用中通过真实 Streamable HTTP 请求调用七个工具，验证 MCP `tools/call` → HA LLM Tool → HA Service → 内存语义 Adapter；图片/GIF 使用临时 `media_directory` 测试文件。该证据不是 AstrBot Persona 运行时证据。
 - [x] 通过 HA Service 验证 `tivoo.set_brightness` 接受 0 和 100，101 由 HA Schema 拒绝；未新增 `SetBrightness` MCP Tool。
 - [x] 本地 MCP HTTP 测试验证 StartCountdown、无参 StopCountdown、SetVolume 0/100 的参数到达内存适配器；另验证 Service/Adapter 异常映射为 MCP `is_error=true`。
 - [x] 使用测试内临时创建的普通 HA 用户 LLAT 验证 Assist MCP 访问；无效 Bearer Token 返回 401。Token 不进入 fixture 文件、日志或报告；普通用户不是管理员。
-- [ ] **BLOCKED（AstrBot 运行时不可用）**：无法对 4.29.4 做真实断线/响应丢失故障注入。已按固定提交源码核对：`ClosedResourceError` 会触发重连后重发工具调用；Tenacity `stop_after_attempt(2)` 表示最多两次总尝试（初次加一次重试）。对非幂等动作存在响应丢失后重复执行风险；本批没有叠加自定义重试层，也未触发真实设备动作。
-- [x] 目标 AstrBot/HA 运行时不可访问且没有可用凭据；已完成本地协议/接口验证，并将实际 AstrBot/Persona/重连运行时项标为 BLOCKED。未访问 NAS、未搜集 Token、未用静态配置推测连接状态。
+- [ ] **PARTIAL（尚未执行故障注入）**：目标 AstrBot 4.29.4 运行时现在可访问，但尚未对实际连接做断线/响应丢失故障注入。已按固定提交源码核对：`ClosedResourceError` 会触发重连后重发工具调用；Tenacity `stop_after_attempt(2)` 表示最多两次总尝试（初次加一次重试）。对非幂等动作存在响应丢失后重复执行风险；本次没有叠加自定义重试层，也未触发真实设备动作。
+- [x] 2026-11-09 本地批次期间目标 AstrBot/HA 运行时不可访问，因此当时只完成本地协议/接口验证；该历史状态已由 2026-11-10 的真实部署验收补充更新（见运行时报告）。未读取或记录 Token 明文。
 
 **Exit gate:**
 
-- [ ] **BLOCKED**：AstrBot 4.29.4 实例内的 HA initialize 和工具发现未能实测；本地 HA MCP endpoint 由 MCP SDK 客户端完成 initialize/list。
-- [ ] **BLOCKED（Persona 授权）**；本地 HA MCP → LLM Tool → Service → 内存 Adapter 的七项调用 PASS，但未通过实际 Persona 发起。
+- [x] AstrBot 4.29.4 实例内的 HA Streamable HTTP 连接/initialize 和工具列表发现已实测，七个 `tivoo__*` Tool 全部出现。
+- [ ] **PARTIAL（Persona 授权）**：当前 Persona 的 `StopCountdown` 实际调用已通过链路验收；其余六个 Tool 的逐项 Persona 授权/调用尚未验证。
 - [x] 亮度 HA Service 的 0、100 成功与 101 Schema 错误有自动化测试证据。
 - [x] 普通用户 LLAT、无效 Token 401、服务异常 MCP tool error 均有自动化证据。
-- [ ] **PARTIAL / BLOCKED**：固定版本源码已确认重连与一次重试实现及非幂等重放风险；响应丢失故障注入因 AstrBot 运行时不可用未能复现。没有添加额外重试层。
+- [ ] **PARTIAL**：固定版本源码已确认重连与一次重试实现及非幂等重放风险；目标 AstrBot 运行时现已可用，但尚未进行受控响应丢失故障注入。没有添加额外重试层。
 - [x] Token 仅在测试进程内短暂生成；未写入仓库文件、测试日志或验收报告。
 
 **Commit:** `test(p4): verify HA Assist MCP access to Tivoo tools`
 
 ## 10. P4b6 — 合同矩阵验收与收尾
 
-**Purpose:** 验收全部明确列入 MVP 的功能实现，并重点证明倒计时启动、倒计时停止和音量调整的完整 AstrBot→MCP→HA→Service→Adapter 调用链。其他未声明 Tivoo 服务仍作为可选扩展，不纳入本次验收范围。
+**Purpose:** 验收全部明确列入 MVP 的功能实现，并重点证明倒计时启动、倒计时停止和音量调整的完整 AstrBot→MCP→HA→Service→Adapter 调用链。2026-11-10 已补充目标 HA/AstrBot 运行时证据；尚未验证的 Persona 项与断线故障注入继续列为未完成。其他未声明 Tivoo 服务仍作为可选扩展，不纳入本次验收范围。
 
 **Tasks:**
 
 - [x] 对照 P4-C01 至 P4-C15 建立合同追踪表；每项链接到具体测试、命令输出或受控运行证据。
 - [x] 在本地 HA Core 2026.11.0 测试应用验证 MCP Assist 路由、Streamable HTTP、七个 Tool 发现、普通用户认证和 Assist API 权限。
-- [ ] 在真实 AstrBot 4.29.4 WebUI 建立 MCP Server、完成 initialize，并为目标 Persona 授权七个 Tool：**BLOCKED**，开发机没有目标 AstrBot 实例/WebUI 与凭据。
+- [x] 在真实 AstrBot 4.29.4 WebUI 建立 MCP Server 并完成连接/initialize；用户提供的 AstrBot 工具列表截图显示七个 `tivoo__*` Tool。目标运行时配置和部署证据见 `2026-11-10-p4-runtime-acceptance-report.md`。七个 Tool 的 Persona 全量授权仍未整体验收。
 - [x] 验证 SetExpression、ShowText、ShowImage、PlayAnimation 四个显示/媒体 Tool 的参数 Schema、服务委派、正常执行路径和失败传播。
 - [x] 验证 SetBrightness Service 的 0–100 参数边界和调用路径；它是 HA Service，没有另建 SetBrightness MCP Tool。
 - [x] 通过本地 MCP SDK Streamable HTTP 客户端验证 StartCountdown、StopCountdown、SetVolume：分别发送 `MM:SS`、无参、音量 0/100，并逐层核对 MCP `tools/call`、HA LLM Tool、HA Service 和内存语义 Adapter。
-- [ ] 从真实 AstrBot Persona 执行上述三项并确认目标实例链路：**BLOCKED**，本地 MCP 客户端结果不冒充 AstrBot 运行时证据。
+- [x] 从真实 AstrBot Persona 调用 `StopCountdown` 一次；HA/Tivoo 返回 Adapter 未配置设备传输通道的预期错误，证明真实调用及错误返回路径已到达。
+- [ ] 从真实 AstrBot Persona 验证 `StartCountdown(01:30)` 和 `SetVolume(0/100)` 的请求参数及 HA Service 入参；这两项尚无目标运行时证据。
 - [x] 通过错误输入测试确认倒计时格式、音量边界、媒体路径越界和文字/preset 非法输入会明确失败，不产生伪成功。
 - [x] 媒体验收覆盖相对 media_directory、PNG/JPG/GIF、GIF timing、路径穿越/逃逸 symlink/缺失文件拒绝。
 - [x] 验证 StopCountdown 无参数语义：HA Service 与语义 Adapter 收到空 data；P4 不实现字节级编码器，wire payload 留给 P6 传输 Adapter 验证。
-- [ ] 在 AstrBot 4.29.4 运行时验证断线恢复/重试和响应丢失：**BLOCKED**；已基于固定源码审查重连与两次总尝试行为，并记录非幂等动作重复执行风险。
+- [ ] 在 AstrBot 4.29.4 运行时验证断线恢复/重试和响应丢失：**尚未验收**；已基于固定源码审查重连与两次总尝试行为，并记录非幂等动作重复执行风险。
 - [x] 运行 P3 全套 HA 测试，确认 Chat API、session、SSE、ChatLog、取消与 P4 无回归。
 - [x] 运行开发机完整测试与静态检查：`./scripts/test-ha.sh -q`、Ruff check、排除未修改基线文件后的 Ruff format check、Python compileall、`pip check`、`git diff --check`。
 - [x] 检查变更范围只涉及 P4b6 验收测试和 P4 文档；没有改动 P3 实现、AstrBot 插件、ESP32、TCP 7777/7778 或 NAS 部署文件。
@@ -280,9 +281,9 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 - [x] P4-C01–C13、C15 的 MVP 适用项均有 PASS/PARTIAL/BLOCKED 结论及证据；没有把未声明服务列成遗漏。
 - [x] 表情、文字、亮度 Service、图片/GIF、倒计时启停和音量调整的实现与参数合同均有本地自动化测试证据。
-- [ ] AstrBot 实际 Persona 能发现、获准并调用七个 MVP Tool：**BLOCKED**，待目标运行时人工验收。
-- [x] 本地 MCP HTTP → HA LLM Tool → HA Service → 语义 Adapter 链路通过；失败路径不会伪成功。
-- [ ] AstrBot Persona 发起的 StartCountdown、StopCountdown、SetVolume 完整链路：**BLOCKED**，不能以 MCP SDK 测试代替。
+- [ ] **PARTIAL**：AstrBot 实际工具列表已发现七个 MVP Tool，当前 Persona 已实际调用 `StopCountdown`；其余六个工具的 Persona 授权/调用尚未逐项验收。
+- [x] 本地 MCP HTTP → HA LLM Tool → HA Service → 语义 Adapter 自动化链路通过；另有目标 Persona `StopCountdown` 运行时调用到达不可用 Adapter，并收到预期错误，不伪装成功。
+- [ ] **PARTIAL**：AstrBot Persona 发起的 `StopCountdown` 已验证；`StartCountdown`、`SetVolume` 的真实 Persona 调用尚未验证，不能以 MCP SDK 测试代替。
 - [x] P3 回归、静态检查与 diff 检查通过。
 - [x] C14 实机动作不作为 P4 关闭前提；真实硬件回执转交 P5/P6。
 - [x] 最终变更审查完成并准备本地提交；不 push、不 merge。
