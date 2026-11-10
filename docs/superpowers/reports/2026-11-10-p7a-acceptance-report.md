@@ -220,7 +220,7 @@ NAS 实际 `DOCKER-ISOLATION-STAGE-1` 规则会 DROP 从非 `172.23.0.0/24` 来�
 
 ## 9. 最终阶段结论
 
-**P7Ab8 批次验收报告完成；随后按用户接受的网络边界完成真实 NAS 部署。当前 C01–C38 有 PASS 证据，C39 仍 BLOCKED（生产 HA Config Entry 尚未持久化添加）；C40–C43 DEFERRED；C44 N/A/禁止新增。暂不更新 README 为 P7A 完成，不放行 P5/P6。**
+**P7Ab8 批次验收报告完成；随后按用户接受的网络边界完成真实 NAS 部署。当前 C01–C02、C04–C38 有 PASS 证据；C03/C39 BLOCKED（生产 HA Config Entry 尚未持久化添加）；C40–C43 DEFERRED；C44 N/A/禁止新增。暂不更新 README 为 P7A 完成，不放行 P5/P6。**
 
 生产 NAS 容器已运行且 HA Core 实际能发现三类 Provider Info、通过 KWS 正负样本检测。剩余 C39 工作聚焦于 HA UI 中添加唯一 Wyoming Config Entry，并验证该 Entry 持久化后实体注册。
 
@@ -252,16 +252,16 @@ NAS 实际 `DOCKER-ISOLATION-STAGE-1` 规则会 DROP 从非 `172.23.0.0/24` 来�
 | 项目 | 生产验收值 |
 |---|---|
 | Container | `compose_sherpa-wyoming_1` |
-| Image | `ghcr.io/qyxx2/tivoo-sherpa-wyoming:sha-80e5888a1cad0a08811c034a630292274c808603` |
-| Digest | `sha256:dd31586274e7055f8e08549309221b406127acc8481de17e5327e202529cfef4` |
+| Image | `ghcr.io/qyxx2/tivoo-sherpa-wyoming:sha-315df317d3934383fd5105686de6fa749866c4ad` |
+| Digest | `sha256:d08e61250aa08594dc813bbe5dac9ac32c76c524578e2cfda9ea56257c5a4a31` |
 | Network | `tivoo-sherpa-ha-private` / `172.23.0.0/24` / `internal=true` / `attachable=false` |
 | Container IP | `172.23.0.2` |
 | Host port mapping | none (`NetworkSettings.Ports={}`；`docker port` 无输出) |
 | Restart policy | `unless-stopped` |
 | Health | `healthy`；wake/asr/tts installed |
-| Start model load | KWS 1.951 s + STT 2.976 s + TTS 5.736 s = 13.787 s |
+| Current image restart model load | KWS 1.969 s + STT 2.971 s + TTS 5.082 s = 13.144 s |
 
-容器使用 GHCR 已发布镜像；NAS 只执行模型准备、Compose pull/up 和运行时测试，没有构建镜像。原先 P7Ab7 镜像 digest 保持一致。
+容器使用 GitHub Actions 已发布的 immutable SHA 镜像；NAS 只执行模型准备、Compose pull/up 和运行时测试，没有构建镜像。
 
 ### 10.4 生产 HA Core 2026.11.0 实际 Provider 请求
 
@@ -290,3 +290,12 @@ NAS 实际 `DOCKER-ISOLATION-STAGE-1` 规则会 DROP 从非 `172.23.0.0/24` 来�
 HA 添加方式：Settings → Devices & Services → Add Integration → Wyoming；Host `172.23.0.2`，Port `10400`。只添加一个条目。保存后检查三个平台实体存在；无需新建自定义 Provider 集成。
 
 生产 AstrBot 未被调用或重新配置；P3 的模拟 SSE 回归仍只证明测试文本路径，不声称生产 Assist 对话已完成。
+
+### 10.6 最新 CI 发布和容器更新
+
+- Follow-up commit：`315df317d3934383fd5105686de6fa749866c4ad`。
+- GitHub Actions run [42801034360 — success](https://github.com/qyxx2/Tivoo-AI-Assistant/actions/runs/42801034360)：Dockerfile check、linux/amd64 runtime build、CI smoke image、dependency/API/entrypoint smoke、Compose config、GHCR immutable SHA tag 发布均 success。
+- NAS 已拉取最新 tag `sha-315df317d3934383fd5105686de6fa749866c4ad` 并通过 Compose recreate 容器。新镜像 RepoDigest 为 `sha256:d08e61250aa08594dc813bbe5dac9ac32c76c524578e2cfda9ea56257c5a4a31`，amd64/linux。
+- 新容器重新加载 KWS 1.969 s、STT 2.971 s、TTS 5.082 s，总计 13.144 s；health 恢复 healthy，restart policy 仍为 unless-stopped；容器地址仍是 `172.23.0.2`，ports 仍是 `{}`。
+- 14 项模型 SHA-256 在新容器重建后全部 OK；模型没有重新下载；active `.env` 仍为 mode 600，`IMAGE_TAG` 更新为 `sha-315df317...`，`WAKE_WORD_PHRASE=大肥鱼` 未变。
+- 新容器启动后再次从生产 HA Core 2026.11.0 执行 Describe/Info：wake_word/stt/tts 均 installed；Wake phrase 仍为“大肥鱼”；STT zh-CN/en-US；TTS streaming true、voice 0。
