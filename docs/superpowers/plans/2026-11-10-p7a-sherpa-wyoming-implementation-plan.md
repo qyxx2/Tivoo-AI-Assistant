@@ -12,14 +12,15 @@
 
 **Architecture:** 复用固定上游 `ptbsare/sherpa-onnx-tts-stt@c307e6835a079157e71df28545f17d76bca1cbc2` 的 Wyoming 服务端骨架、STT/TTS 模型加载路径和可复用事件处理代码。保留一个 `AsyncTcpServer`；在其连接级 Handler 内根据 Wyoming 事件分派到独立的 Wake、STT、TTS Provider。配置、模型对象和推理执行器由服务级对象持有；音频流、句子缓冲、PCM 队列和取消状态始终属于单个请求。移除上游无关的 FastAPI、10500 端口、GPU 自动探测、浮动依赖和与本项目不一致的 HiFi-GAN 默认加载。
 
-**Tech Stack:** Python 3.11 series、Sherpa-ONNX 2.0.1、Wyoming 1.10.2、NumPy、asyncio、Docker Compose、Home Assistant Core 2026.11.0；CPU Provider。
+**Tech Stack:** ARM64 Ubuntu 原生 Python 3.11 开发/代码测试；Sherpa-ONNX 2.0.1、Wyoming 1.10.2、NumPy、asyncio；GitHub Actions ubuntu-24.04 amd64 runner 执行 Dockerfile 检查和 linux/amd64 镜像构建；Docker Compose 仅在 NAS 部署时使用。
 
 **Spec:** [P7A 合同矩阵](../specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)；STT/TTS 行为补充依据为 [STT/TTS 端到端链路规格](../specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)。
 
 ## 1. 全局约束
 
 - 方案 B 已冻结：一个容器、一个 Python 服务进程、一个 Wyoming TCP 监听端口 10400，同时发布 wake、asr、tts 三类 installed Provider。
-- 服务运行时使用 Python 3.11 系列；当前开发机 HA 测试环境的 Python 3.14 不作为 Sherpa runtime。服务单元测试和模型测试在 Python 3.11 环境运行；HA Core 测试沿用项目现有 Python 3.14 环境。当前 RDM 开发机是 aarch64；Docker CLI、Compose 和 Buildx CLI v0.38.1 已安装，但 Docker daemon socket 当前拒绝该账号访问，无法检查或使用 builder；未检测到 QEMU，也没有可用的 uv/Podman/Buildah。P7Ab0 必须先解决授权的 Python 3.11 测试环境和 amd64 构建路径，不能默认本机 Docker build 可用。
+- 所有服务代码开发、pytest、Ruff、compileall、模型 API smoke 和代码级调试均在当前 ARM64 Ubuntu 开发机完成；不在 GitHub Actions 或 NAS 执行应用层 pytest。服务开发/测试使用独立 Python 3.11 aarch64 venv（例如 `.venv-sherpa`），不污染项目现有 Python 3.14 HA 测试环境。Sherpa-ONNX 2.0.1 提供 CPython 3.11 manylinux aarch64 wheel，可原生安装，不需要 Docker 运行服务单测。
+- GitHub Actions 是唯一 Docker 构建/测试环境：使用 GitHub-hosted `ubuntu-24.04` amd64 runner，执行 Dockerfile/buildx 校验、linux/amd64 镜像构建、镜像内依赖/入口 smoke、Compose 配置检查和 GHCR 推送。ARM 开发机和 NAS 都不执行 docker build/buildx，也不做 Dockerfile 测试。
 - 固定 Sherpa-ONNX 2.0.1、Wyoming 1.10.2；生产依赖及其解析后的传递依赖都必须锁定。不得在构建时安装 Wyoming git HEAD 或浮动版本。
 - 只使用 CPU Execution Provider；不得自动探测 NVIDIA、自动切换 CUDA 或引入 GPU 依赖。
 - 只监听 TCP 10400。不得启动/映射 FastAPI、OpenAI 兼容 API、10500 或其他服务端口；ESP32 不直接连接本容器。
@@ -53,9 +54,11 @@
 | `services/sherpa_wyoming/providers/tts.py` | Matcha 非流式与流式请求、分句、callback、PCM 队列与结束语义 |
 | `services/sherpa_wyoming/UPSTREAM.md` | 固定上游仓库、commit、直接复用/改动/删除的模块和许可材料现状 |
 | `services/sherpa_wyoming/MODEL_SOURCES.md`、`MODEL_SHA256SUMS` | 模型来源、版本、实际加载文件清单和校验值 |
-| `services/sherpa_wyoming/requirements.txt`、`Dockerfile` | Python 3.11 runtime、精确锁定依赖和 CPU-only 服务镜像 |
+| `services/sherpa_wyoming/requirements.txt`、`requirements-dev.txt`、`Dockerfile` | 服务 runtime 和 ARM64 本地测试依赖；Dockerfile 由 GitHub CI 构建/检查 |
+| `.github/workflows/sherpa-wyoming-image.yml` | 唯一容器 CI：amd64 Dockerfile check/build/smoke、Compose config 和 GHCR image 发布 |
+| `.python-version`、`.venv-sherpa/` | 固定 ARM 开发测试 Python 3.11；独立虚拟环境，不提交环境目录 |
 | `tests/services/sherpa_wyoming/` | 配置、模型、Provider 事件、请求隔离、运行时、健康检查测试 |
-| `scripts/test-sherpa-wyoming.sh` | 使用 Docker Python 3.11 环境运行服务测试；不污染现有 HA .venv |
+| `scripts/test-sherpa-wyoming.sh` | 在 ARM Ubuntu 的本地 Python 3.11 venv 运行服务代码测试；不使用 Docker，不污染 HA .venv |
 | `deploy/nas/compose/sherpa-wyoming.yml` | 单容器 Compose，接入 HA 私有网络，仅内部暴露 10400 |
 | `deploy/nas/config/sherpa-wyoming/` | 环境变量和关键词源文件模板，不含密钥或模型权重 |
 | `deploy/nas/scripts/prepare-sherpa-wyoming-models.sh` | 模型首次准备、文件完整性检查和 SHA-256 校验 |
@@ -128,30 +131,41 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 
 ### Task 0 — P7Ab0：复用前置和运行环境确认
 
+**Purpose:** 复核上游复用并建立两条基础路径：ARM64 Ubuntu 的原生 Python 3.11 开发/代码测试环境，以及 GitHub Actions 的 amd64 Docker 构建基础设施。此批不实现服务逻辑。
+
 **Files:**
 - Create: `services/sherpa_wyoming/UPSTREAM.md`
 - Create: `docs/superpowers/reports/2026-11-10-p7a-preflight-report.md`
-- Create/update: `.superpowers/sdd/2026-11-10-p7a-sherpa-wyoming/progress.md`
+- Create: `.github/workflows/sherpa-wyoming-image.yml`（CI foundation；实际 Dockerfile 构建从 P7Ab1 启用）
+- Create: `.python-version`（3.11）
+- Modify: `.gitignore`（忽略 `.venv-sherpa/`）
+- Update: `.superpowers/sdd/2026-11-10-p7a-sherpa-wyoming/progress.md`
 
 **Tasks:**
-- [ ] 确认当前分支、基线 SHA、干净工作树和项目中的既有模型/测试资产。
-- [ ] 按固定上游 commit 核对 `run.py`、`model_utils.py`、Paraformer loader、Matcha loader、Dockerfile；逐项标记直接保留、复制后修改、移除的内容。
-- [ ] 明确保留 Wyoming AsyncTcpServer/AsyncEventHandler、事件类型、现有 STT/TTS loader 的可复用部分；移除 FastAPI/uvicorn/API、GPU 自动切换、浮动依赖和错误 vocoder 默认。
-- [ ] 核对开发机架构、Docker daemon/socket 权限、Buildx/跨架构能力和可用 Python 3.11 运行环境。当前已知开发机为 aarch64，Docker socket 为 root:docker 且当前登录账号不在 docker 组；本批不自动更改用户组或 socket 权限。
-- [ ] 通过用户授权的 Docker 访问或已有独立运行器建立 Python 3.11 测试环境；目标镜像需要 linux/amd64。开发机若继续为 aarch64，必须确认可访问的远程 linux/amd64 Buildx builder，或经授权配置 QEMU/binfmt 仿真，或使用其他获准的 amd64 构建机；不把 NAS 当成日常测试/构建机。
-- [ ] 在选定的 Python 3.11 环境验证 Sherpa-ONNX 2.0.1、Wyoming 1.10.2、CPU wheel 和 `sherpa-onnx-cli text2token` 可用；不改动现有 HA Python 3.14 环境。
-- [ ] 在 UPSTREAM.md 记录上游固定 commit、复用文件及修改范围。上游未声明许可/未发现 LICENSE 的材料事实如实记录，不标注 MIT/Apache，不把它作为拒绝复用所有代码的理由。
-- [ ] 生成前置核查报告，列出 Python 3.11 Docker 测试入口、模型资产现状、缺失 SHA 和实际下载来源。
+- [ ] 确认当前分支、基线 SHA、工作树和模型资产；核对 README、STT/TTS spec、ESP32/HA spec 的引用关系。
+- [ ] 按固定上游 commit 核对 `run.py`、`model_utils.py`、Paraformer loader、Matcha loader、Dockerfile；记录直接复用、复制后修改和移除的部分。
+- [ ] 明确保留 Wyoming AsyncTcpServer/AsyncEventHandler、事件类型、现有 STT/TTS loader 的可复用部分；移除 FastAPI/uvicorn/API/10500、GPU 自动切换、浮动依赖、动态 eval、错误的 101 voices、HiFi-GAN 默认和全局共享音频 buffer。
+- [ ] 将服务代码开发与 Docker 构建职责分离：ARM64 Ubuntu 只负责 Python 代码开发/代码级测试；GitHub Actions 负责所有 Dockerfile 检查、容器构建和镜像 smoke；NAS 只 pull/run CI 已构建的镜像。
+- [ ] 在 ARM64 Ubuntu 安装/准备 Python 3.11 原生解释器；优先使用 uv 管理该版本（`uv python install 3.11`），创建独立 `.venv-sherpa`。不复用 Python 3.14 的 HA .venv，也不为 Python 3.11 安装而启用 Docker。
+- [ ] 在 ARM64 Python 3.11 环境验证 Sherpa-ONNX 2.0.1、Wyoming 1.10.2、CPU wheel 和 `sherpa-onnx-cli text2token` 可用；记录平台/解释器/包版本。Sherpa-ONNX 2.0.1 的 CPython 3.11 manylinux aarch64 wheel 已在 PyPI 发布。
+- [ ] 创建 GitHub Actions workflow foundation：使用 GitHub-hosted `ubuntu-24.04` runner；workflow 断言 runner 为 x86_64/amd64，初始化 Buildx 并验证 linux/amd64 builder。Dockerfile 尚未建立时此批只验收 runner/Buildx，不构建服务镜像。
+- [ ] workflow 触发条件覆盖 P7A feature branch 的 push、相关路径的 pull_request 和 workflow_dispatch；paths 至少包括 workflow、`services/sherpa_wyoming/**`、NAS Compose。默认只读 contents 权限；CI 不需要 NAS 凭据或个人 token。
+- [ ] 明确 GHCR 包名 `ghcr.io/qyxx2/tivoo-sherpa-wyoming`。正式发布 job 在 P7Ab7 配置，仅使用 GitHub 自动提供的 GITHUB_TOKEN 和 packages:write；不把 PAT 或 NAS 凭据写入仓库。
+- [ ] 在 UPSTREAM.md 记录固定上游 commit、复用文件及许可材料现状；列出模型资产缺口、已知 SHA 和来源。
 
-**Exit gate:** 上游 commit/复用边界、Python 3.11 + 固定依赖的可行性、测试入口和模型资产缺口都有可复核记录；必须明确一个实际可用的 Python 3.11 测试运行器和 linux/amd64 构建路径。若 Docker 权限/运行器尚未解决，P7Ab0 保持 BLOCKED，不开始 P7Ab1；不修改开发机权限、不将重型测试搬到 NAS。没有创建服务实现代码。
+**Exit gate:**
+- [ ] 上游复用边界和模型资产缺口有可复核记录。
+- [ ] ARM64 Ubuntu 已有独立 Python 3.11 venv，Sherpa-ONNX 2.0.1/Wyoming 1.10.2 可原生安装。
+- [ ] GitHub Actions workflow foundation 已在远端 feature branch 触发成功；ubuntu-24.04 runner 确认原生 linux/amd64 Buildx builder 可用。
+- [ ] 开发机 Docker socket 权限不再是前置条件；P7Ab0 不执行 Docker build，也不修改开发机 Docker 权限。
 
-**Commit:** `docs(p7a): record Sherpa implementation preflight`
+**Commit:** docs(p7a): record Sherpa implementation preflight
 
 ### Task 1 — P7Ab1：配置、模型资产和加载骨架
 
 **Files:**
-- Create: `services/sherpa_wyoming/config.py`、`model_utils.py`、`models.py`、`requirements.txt`、`MODEL_SOURCES.md`、`MODEL_SHA256SUMS`
-- Create: `services/sherpa_wyoming/__init__.py`、`providers/__init__.py`、Python 3.11 Docker test/runtime scaffold
+- Create: `services/sherpa_wyoming/config.py`、`model_utils.py`、`models.py`、`requirements.txt`、`requirements-dev.txt`、`MODEL_SOURCES.md`、`MODEL_SHA256SUMS`
+- Create: `services/sherpa_wyoming/__init__.py`、`providers/__init__.py`、`Dockerfile` runtime/ci-smoke stages
 - Create: `tests/services/sherpa_wyoming/test_config.py`、`test_models.py`、`conftest.py`
 
 **Interfaces:**
@@ -165,10 +179,11 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - [ ] 建立 `ModelBundle`，固定包含 KeywordSpotter、OfflineRecognizer、OfflineTts；模型对象仅初始化一次。
 - [ ] 计算并记录 STT 已知模型 hash；补齐 Matcha tokens、phone/date/number FST hash；记录 Vocos hash；对 KWS 同 release 资产登记文件名和待取得 hash 的准备步骤。
 - [ ] 分离模型准备与运行时加载：下载/解包在准备工具执行，启动阶段只做存在性和校验后加载；不得使用动态 eval 加载配置代码。
-- [ ] 锁定 Python 3.11 runtime 直接与传递依赖；在干净 Docker build 中确认依赖安装成功，未影响根目录 HA 测试依赖。
-- [ ] GREEN：执行配置、哈希校验、加载成功/失败测试；使用 fake 模型验证失败不会产出半成品对象。
+- [ ] 锁定 Python 3.11 runtime 依赖及 ARM 本地开发测试依赖；在 `.venv-sherpa` 中通过 ARM64 wheel 安装 Sherpa-ONNX 2.0.1、Wyoming 1.10.2 和测试工具；不改变根目录 HA Python 3.14 环境。
+- [ ] GREEN：执行配置、哈希校验、加载成功/失败测试；使用 fake 模型验证失败不会产出半成品对象。所有 pytest/Ruff/compileall 在 ARM Ubuntu 本地执行。
+- [ ] 为 Dockerfile 建立 runtime 与 ci-smoke stage；更新 GitHub Actions，使 P7Ab1 起对 Dockerfile 执行 `docker buildx build --check`、linux/amd64 ci-smoke build 和镜像依赖导入 smoke。GitHub CI 不执行应用 pytest。
 
-**Exit gate:** 配置边界有测试；模型路径/哈希清单完整到当前已取得的资产；ModelBundle 只能完整成功或整体失败；服务尚未开放监听端口。
+**Exit gate:** 配置边界和模型加载测试在 ARM64 Ubuntu 通过；本地 Python 3.11 环境可重复建立；GitHub CI 已实际完成 Dockerfile check、linux/amd64 ci-smoke image build 和依赖导入 smoke；服务尚未开放监听端口。
 
 **Commit:** `feat(p7a): add runtime config and model loading`
 
@@ -297,27 +312,28 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 
 **Files:**
 - Modify: `services/sherpa_wyoming/Dockerfile`、`requirements.txt`
-- Create: `deploy/nas/compose/sherpa-wyoming.yml`
+- Create: `deploy/nas/compose/sherpa-wyoming.yml`（只引用 GHCR image；不含 build:）
 - Create: `deploy/nas/config/sherpa-wyoming/.env.example`、`keywords.raw.txt.example`
 - Create: `deploy/nas/scripts/prepare-sherpa-wyoming-models.sh`、服务健康检查脚本/模块
-- Create: `tests/services/sherpa_wyoming/test_healthcheck.py`、`test_compose.py`
+- Create: `tests/services/sherpa_wyoming/test_healthcheck.py`、`test_compose.py`（YAML/Compose 语义测试在 ARM 本地运行；Docker Compose CLI 校验由 GitHub CI 执行）
 
 **Interfaces:**
 - Consumes: P7Ab6 可启动单进程服务；`/models/{kws,stt,tts}` 目录合同。
 - Produces: 单服务 Compose 部署、持久化模型准备、Describe/Info 健康检查。
 
 **Tasks:**
-- [ ] RED：Compose 只包含一个 sherpa-wyoming service；不映射 host/public ports、不暴露 10500；只在 HA 私有网络内部 expose 10400。
+- [ ] RED：Compose 只包含一个 sherpa-wyoming service；使用 GHCR image tag，不包含本地 build:；不映射 host/public ports、不暴露 10500；只在 HA 私有网络内部 expose 10400。
 - [ ] RED：模型目录持久化挂载；容器重建不重新下载模型；配置示例不含生产唤醒短语以外的秘密值/Token。
 - [ ] RED：healthcheck 必须对 localhost:10400 发送 Wyoming Describe 并检查 wake/asr/tts 三个 installed Provider；仅 TCP connect 不能返回 healthy。
 - [ ] 构建 Python 3.11 CPU-only 镜像；固定直接和传递依赖；不包含 FastAPI/uvicorn/OpenAI API；镜像入口只运行 run.py。
 - [ ] 增加模型准备脚本：只下载缺少文件，按来源/版本解包；逐项校验 MODEL_SHA256SUMS，失败时以非零退出，不覆盖有效模型。
 - [ ] KWS 关键词源文件从 `WAKE_WORD_PHRASE` 生成；生成文件与 Info phrase 必须一致；不要把实际 `.env` 或用户私有唤醒短语提交。
 - [ ] Compose 使用外部 HA 网络变量（例如 `HA_DOCKER_NETWORK`）；具体 network 名在实际 NAS 执行时读取已有 HA 容器连接，不猜测或创建重复网络。
-- [ ] GREEN：在已授权且能构建 linux/amd64 的构建机 build/run Compose；优先使用具备 Docker 权限的开发机构建器或独立 amd64 builder。当前 aarch64 开发机只有在 Docker socket 权限解决且 Buildx 选择的 builder 能实际构建 linux/amd64（或经授权启用仿真）后才可承担该任务。用 fake/已准备模型完成三 Provider healthcheck；检查容器进程数、监听端口、挂载路径和网络范围。
+- [ ] GREEN：将最终 Dockerfile/buildx/容器 smoke/Compose config 全部交给 GitHub Actions 的 ubuntu-24.04 amd64 runner。CI 完成 `buildx --check`、`linux/amd64` 完整镜像 build、无模型条件下的依赖/入口 smoke、Compose config 校验；通过后使用 GITHUB_TOKEN 发布 `sha-<commit>` tag 到 GHCR。CI 失败不得发布 tag。
+- [ ] workflow 在 pull_request 上只 build/test、不发布；feature branch push 在 Docker smoke 通过后发布 SHA tag，供 P7Ab8 测试；不发布 latest。无需自定义 GitHub Actions secret。
 - [ ] 不在本批将服务部署到生产 NAS；最终部署与 NAS 资源验收由 P7Ab8 执行。
 
-**Exit gate:** C07、C33、C34、C36 的镜像/Compose/健康测试通过；仅有一个服务进程和内部 10400；模型可跨容器重建持久化。
+**Exit gate:** C07、C33、C34、C36 的镜像/Compose/健康测试通过；GitHub CI 产出可按 commit SHA 拉取的 linux/amd64 GHCR image；Compose 没有本地 build；模型可跨容器重建持久化。
 
 **Commit:** `feat(p7a): package Sherpa Wyoming container for NAS`
 
@@ -333,8 +349,8 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: C01–C39 MUST 的逐项证据和 P7A 阶段结论；C40–C43 继续标记 DEFERRED，C44 保持禁止新增。
 
 **Tasks:**
-- [ ] 在开发机运行服务全套 Python 3.11 tests、HA/P3 回归和 Docker Compose tests；不要在 NAS 运行完整 pytest、镜像构建或源码编译。
-- [ ] 在 NAS 仅执行必要的模型准备、Compose 启动和运行时冒烟；沿用已存在的 HA Docker 私有网络，不修改无关容器、网络和配置。
+- [ ] 在 ARM Ubuntu 开发机运行服务全套 Python 3.11 tests、真实模型 smoke、HA/P3 回归、Ruff 和 compileall；代码级测试不得移到 GitHub runner 或 NAS。Dockerfile/buildx/镜像 smoke/Compose config 结果从 GitHub Actions run 读取，不在 ARM 上重跑。
+- [ ] 在 NAS 仅执行必要的模型准备、登录 GHCR、`docker compose pull`、Compose 启动和运行时冒烟；Compose 只 pull GitHub CI 已发布的 linux/amd64 image，严禁在 NAS 执行 build/buildx。沿用已存在的 HA Docker 私有网络，不修改无关容器、网络和配置。
 - [ ] 在 HA 只添加一个 Wyoming host:10400 Config Entry；验证 wake_word、stt、tts 三个平台同时发现，模型、语言和 voice 信息正确。
 - [ ] 用正/负测试音频验证 KWS hit/miss；miss 时不触发 STT/P3 Agent；hit 时进入 STT，并验证最终 Transcript 到达现有 P3 Conversation Agent。不得连接真实 AstrBot 做非必要对话或泄露内容。
 - [ ] 使用既有 Paraformer 官方 WAV 检查中英文识别输出、空结果/错误区分和多请求隔离。
@@ -344,7 +360,8 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - [ ] 记录 HA Config Entry、端口、Docker 网络、模型版本/哈希和验收数据；日志检查不得包含 PCM、完整转写/TTS 正文或凭据。
 - [ ] 逐项更新 P7A-C01–C39 的 PASS/BLOCKED 及证据链接；P7A 只有所有 MUST 均有通过证据才可标记完成。C40–C43 不因 P7A 完成而提前验收，C44 不实现。
 - [ ] 只有 C01–C39 全部通过，才更新 README 将 P7A 状态记为完成并放行 P5/P6；若存在 BLOCKED，保留阶段状态并在报告列明，不得提前放行。
-- [ ] 最终运行全套 Python 3.11 服务测试、HA/P3 回归、Ruff、compileall、依赖检查、Compose config、Markdown/link 检查和 `git diff --check`；按事实报告实测结果。
+- [ ] 在 ARM Ubuntu 运行全套 Python 3.11 服务测试、HA/P3 回归、Ruff、compileall、pip check、Markdown/link 检查和 `git diff --check`。
+- [ ] 从 GitHub Actions run 核对 Dockerfile buildx check、linux/amd64 image build/smoke、Compose config 和 GHCR 发布结果；不在 ARM 或 NAS 执行 Dockerfile/buildx/Compose CLI 容器测试。
 
 **Exit gate:** 单个 HA Config Entry 可获得三类 Provider；服务与现有 P3 对话文本链路连接正确；所有 C01–C39 MUST 有证据；组合资源数据来自 NAS 上同进程实测；报告明确保留物理麦克风和 ESP32 后续职责。
 
@@ -365,13 +382,14 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - 一个 Batch 一个执行任务、一个本地 commit；批次完成前不得提前修改下游批次功能。
 - 每个新行为使用 TDD：先写测试、运行确认 RED，再实现最小变更、运行 GREEN；不能只在事后补通过测试。
 - 优先复制/改造上游现有代码及本项目 benchmark loader；只有在其行为与矩阵冲突时才重构对应小模块。
-- 服务测试在 Python 3.11 Docker test target 中执行；HA Core/P3 测试沿用现有 Python 3.14 环境，不能为了 Sherpa runtime 升降项目根目录测试依赖。
+- 所有 P7A 代码开发、代码级 pytest/Ruff/compileall 和模型 API smoke 在 ARM64 Ubuntu 的 Python 3.11 `.venv-sherpa` 执行；HA Core/P3 测试沿用现有 Python 3.14 环境。不得把服务代码级测试放进 Docker/GitHub Actions，也不能为 Sherpa runtime 改动 HA 测试依赖。
+- 所有 Dockerfile check、docker build/buildx、容器 smoke、Compose CLI config 和 GHCR 镜像发布只在 GitHub Actions `ubuntu-24.04` amd64 runner 执行；ARM 开发机与 NAS 均不构建容器。
 - 每批至少执行聚焦测试、Ruff、compileall 和 `git diff --check`；改动 Provider 协议或服务入口的批次还要运行全部 P7A 服务测试。
 - P7Ab6 之后每批运行 P3 回归，至少覆盖 Chat API、SSE、session 和 ChatLog 现有测试；不修改 P3 合同。
-- NAS 只进行必要下载/部署/真实组合资源测量；不在 NAS 跑耗时 pytest、镜像 build 或代码编译。
+- NAS 只进行必要模型准备、GHCR pull、部署和真实组合资源测量；不在 NAS 跑 pytest、镜像 build/buildx、Dockerfile 测试或代码编译。
 - 每批记录基线 SHA、改动文件、RED/GREEN 结果、命令输出、模型文件来源/hash、提交 SHA、未解决事项。
 - 发现矩阵与 HA Core/Wyoming/Sherpa 实际行为冲突时，先停止受影响批次并核实源码，必要时更新矩阵和计划后再继续，不用猜测绕过。
-- 未经用户明确要求，不 push、不 merge、不改 main、不顺手部署其它服务、不执行 P5/P6/P7/P8 工作。
+- 为触发 GitHub CI，每批本地提交后将当前 P7A feature branch push 到 origin；不 push main、不 merge、不改 main。若远端分支/Actions 权限异常，记录 CI BLOCKED，不用 ARM/NAS Docker build 代替。未经用户明确要求，不部署其它服务、不执行 P5/P6/P7/P8 工作。
 - 若本轮没有独立 reviewer/subagent 能力，按实际情况做独立自审并记录限制；不得伪称外部 reviewer 已审查。
 
 ## 8. 合同覆盖与阶段边界
