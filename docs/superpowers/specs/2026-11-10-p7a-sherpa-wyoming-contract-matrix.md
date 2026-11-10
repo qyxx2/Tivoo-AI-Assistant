@@ -1,6 +1,6 @@
 # P7A Sherpa Wyoming 语音服务合同矩阵
 
-> 状态：**合同矩阵已定义，待按矩阵实施与验收；P7A 尚未实现。**
+> 状态：**服务已实现在 NAS 部署，三 Provider 和生产 HA KWS 请求链已验证；生产 HA Wyoming Config Entry 尚未持久化添加，C03/C39 待完成。C40–C43 继续 DEFERRED。**
 > 日期：2026-11-10
 > 基线：Tivoo-AI-Assistant main，commit f9aedf1a2ac0ad2541fc1f47cae8b229e9d0a18b
 > 适用版本：Home Assistant Core 2026.11.0；Sherpa-ONNX 2.0.1；Wyoming Python package 1.10.2；NAS Synology DS920（Intel Celeron 1005M，2 logical CPUs，约 3.89 GiB RAM）
@@ -162,9 +162,11 @@ P7A 实现阶段按以下目录归档，不把语音模型服务塞入 Tivoo Gat
 | 10400 | TCP | Wyoming Describe/Info、Wake、STT、TTS | 唯一对 HA 暴露的服务端口 |
 | 10500 | TCP | 上游项目的 FastAPI/OpenAI 格式接口 | 本项目不启用、不映射、不作为备用入口 |
 
-- 仅允许 HA 所在 NAS/Docker 私有网络访问 10400；不发布到公网，不在路由器做 WAN 端口转发。
-- Wyoming 服务端不新增自有 HTTP API、WebSocket、MQTT 或 ESP32 直连入口。
-- Wyoming 协议本身不提供本项目所需的应用层 Bearer 鉴权；网络隔离由 NAS/Docker 私有网络承担。
+- 仅通过独立 Docker `internal=true`、`attachable=false` bridge 提供 10400；Compose 不配置 `ports`，不把端口发布到 NAS host/LAN，不在路由器做 WAN 端口转发。
+- 当前 NAS 的 Home Assistant 使用 `network_mode: host`，没有 HA 专属 bridge。为避免修改 HA 或其它服务的网络模式，Sherpa 使用独立 bridge，HA 通过 NAS host 路由访问其容器 IP（本次为 `172.23.0.2:10400`）。
+- **已接受的边界放宽：** Docker host namespace 中的本机进程也能够访问这个容器 IP；不再要求进行进程级 HA 身份隔离。不得将其它容器、共享应用网络或 ESP32 接入该 bridge。Docker 的 bridge isolation 规则负责阻断来自其它网络/外部转发来源的访问；部署验收必须检查网络仍为 internal、不可 attach、没有 host port mapping。
+- Wyoming 服务端不新增自有 HTTP API、WebSocket、MQTT 或 ESP32 直连入口；10500/FastAPI 永不启动。
+- Wyoming 协议本身不提供本项目所需的应用层 Bearer 鉴权；NAS host 被视为可信运维边界。若以后在 NAS 上运行不可信容器/插件或让非信任用户执行本机代码，需要重新评估此网络决策。
 - 日志不得记录未来可能使用的 HTTP 音频 Token、访问凭据、原始 PCM 或完整转写文本。
 
 ### 4.4 模型持久化和启动
@@ -482,7 +484,7 @@ HA Core 2026.11.0 的 Wyoming TTS Provider 在流式请求中依次发送：
 | P7A-C33 | 容器 → 模型目录 | 持久化 | 容器重建后模型无需重复下载；模型版本和校验清单可追踪 | MUST |
 | P7A-C34 | 容器 → 运维 | 启动失败与健康 | 任一模型不可用时启动失败；Describe/Info 健康检查确认三类 Provider installed | MUST |
 | P7A-C35 | 服务 → 运维 | 性能和资源证据 | 记录三个模型加载耗时、组合 RSS、KWS 实时处理滞后、STT RTF、TTS 首块/队列指标 | MUST |
-| P7A-C36 | P7A → 网络 | 访问边界 | 只允许 HA 私网访问 Wyoming；不发布公网、不接 ESP32、不暴露 FastAPI 10500 | MUST |
+| P7A-C36 | P7A → 网络 | 访问边界 | 使用独立 internal-only、不可 attach 的 Docker bridge；不发布 host/LAN/WAN 端口、不接共享/不可信容器网络、不接 ESP32、不启用 FastAPI 10500；接受 NAS host 进程可访问 Wyoming | MUST |
 | P7A-C37 | P7A → 日志 | 敏感数据 | 不记录 PCM、完整识别/回答正文、token 或短时 URL 凭据 | MUST |
 | P7A-C38 | HA Pipeline → P3 Agent | 文字链路回归 | 使用测试音频验证命中后最终 Transcript 进入现有 P3 Conversation Agent；未命中不得触发 Agent | MUST |
 | P7A-C39 | P7A → P5/P6 | 阶段依赖 | P7A 服务和 HA Provider 验收完成后，P5/P6 才以其作为稳定语音服务依赖 | MUST |

@@ -15,9 +15,9 @@
 
 阻止 P7A 标记完成的事项：
 
-1. NAS 现有 Home Assistant 使用 Docker `host` 网络模式，当前 Docker 环境没有 HA 专属 bridge。为隔离测试创建的 internal-only bridge 虽然无 LAN 端口发布，但 NAS host namespace 中的其他进程也能访问该网段，无法证明只有 HA 进程可访问，故 C36 BLOCKED。
-2. 尚未获得用户确认的正式 `WAKE_WORD_PHRASE`。验收临时使用官方 KWS 样本短语“周望军”验证模型和协议；临时 `.env` 和生成的关键词文件已删除，不能将样本短语作为正式部署配置。
-3. Config Flow/实体发现和 Assist Pipeline→P3 验证使用 HA Core 2026.11.0 临时测试实例；生产 NAS HA 的配置存储没有新增持久化 Wyoming Config Entry。P3 使用本地模拟 SSE 端点，没有调用生产 AstrBot。
+1. 用户明确接受放宽 C36：NAS host namespace 作为可信边界；Sherpa 使用独立 `internal=true`、`attachable=false` bridge，不发布 host/LAN/WAN 端口，不接共享网络或其它容器。NAS 本机进程仍可访问 Wyoming，这是已接受的剩余风险，不再阻塞容器部署。
+2. 用户已确定正式 `WAKE_WORD_PHRASE=大肥鱼`。模型词典生成成功；真实 HA Wyoming Wake Word Provider 正样本返回 Detection、官方负样本返回 NotDetected。
+3. 生产 NAS HA 的 Config Entry 尚未持久化添加。HA 生产容器到 `172.23.0.2:10400` 的 Describe/Info 和 KWS Provider 正负样本请求已实际验证；还需在 HA UI 添加一个 Wyoming Config Entry，使三个实体注册并持久化。P3 端到端测试继续使用本地模拟 SSE，不调用生产 AstrBot。
 
 因此 C39 阶段放行条件尚不满足。未更新 README 将 P7A 标记为完成，也未将阶段状态更改为 PASS。
 
@@ -116,14 +116,14 @@ HA 使用 host 网络、当前没有 HA bridge。隔离验收时没有将 Sherpa
 |---|---|---|
 | C01 | PASS | NAS Compose 只有一个 Sherpa service/进程，单一 Wyoming TCP 入口 10400。 |
 | C02 | PASS | HA Core Config Flow 对 NAS 服务执行 Describe，收到完整 Info。 |
-| C03 | PASS（临时 HA） | 一个 Config Entry 注册 wake_word、stt、tts 三平台；未将该 Entry 持久化到生产 NAS HA。 |
-| C04 | PASS（临时短语） | Wake Info installed、ID tivoo-wake、语言与临时测试短语一致；正式短语未配置。 |
+| C03 | BLOCKED（生产 HA Config Entry） | HA Production Core 已成功 Describe/Info 且 Provider 可用；但尚未通过 HA Config Flow 持久化添加唯一 Wyoming Config Entry，因此三个实体尚未在生产 HA 注册。 |
+| C04 | PASS（生产 Info） | 生产 HA Core 收到 Wake Info：installed=true、ID tivoo-wake、phrase=大肥鱼、zh-CN/en-US；实际 Provider 正负样本通过。 |
 | C05 | PASS | ASR Info 为 Paraformer zh-small、zh-CN/en-US、requires_external_vad=true，不声明 transcript streaming。 |
 | C06 | PASS | Matcha/Vocos、单 voice 0 / zh-CN，且真实 HA 流式 TTS 消费通过。 |
 | C07 | PASS | 仅容器内部 expose 10400，无 host port mapping、无 10500/API 端口。 |
 | C08 | PASS | Python 3.11、Sherpa-ONNX 2.0.1、Wyoming 1.10.2、CPU provider、固定依赖。 |
 | C09 | PASS | 官方 zh-en Zipformer 3M 2025-12-20 chunk16/left64 权重和哈希清单通过。 |
-| C10 | PASS（临时短语） | text2token 生成的关键词与临时“周望军”一致；生产短语缺失，需用户配置。 |
+| C10 | PASS | 正式配置“大肥鱼”经 text2token 生成 `d à f éi y ú @大肥鱼`；NAS 容器启动后 Info phrase 与实际配置一致，HA Wake Word Provider 正负样本均通过。 |
 | C11 | PASS | Detect(tivoo-wake) 真实 HA Provider 路径及不支持模型 ID 的服务测试通过。 |
 | C12 | PASS | 16 kHz/16-bit/mono PCM、分块顺序和 timestamp 保留的 provider/HA 测试通过。 |
 | C13 | PASS | 正样本返回 Detection(name=tivoo-wake)，无 Transcript 伪造。 |
@@ -149,10 +149,10 @@ HA 使用 host 网络、当前没有 HA bridge。隔离验收时没有将 Sherpa
 | C33 | PASS | NAS 模型 bind mounts 持久化；容器重启后 14/14 SHA-256 再次通过。 |
 | C34 | PASS | 完整模型加载后 Describe/Info healthcheck 检查三 Provider installed；容器重启后 healthy。 |
 | C35 | PASS | NAS 同进程加载、RSS/CPU、KWS lag、STT RTF、TTS 首块和队列数据见第 4 节。 |
-| C36 | BLOCKED | 临时 internal bridge 无 LAN port，但 NAS host network namespace 可访问它，无法证明只有 HA 进程可访问；须完成 HA-only 网络设计。 |
+| C36 | PASS（用户接受的边界） | 独立 internal-only、不可 attach bridge；无 host port mapping；仅 Sherpa 容器接入；Docker isolation rules 阻断其它转发网络。接受 NAS host 进程可访问这一剩余风险。 |
 | C37 | PASS | 服务日志未记录 PCM、完整 transcript/TTS 正文、token 或短时 URL 凭据；只记录耗时、字节数、错误类别。 |
 | C38 | PASS（模拟 P3 后端） | 真实 HA Pipeline hit 的最终 STT 文本进入既有 P3 Conversation Agent；使用本地 SSE 模拟端点，miss 请求数为 0。 |
-| C39 | BLOCKED | 因 C36 和正式唤醒短语/生产 HA Config Entry 尚未完成，P7A 尚未满足放行 P5/P6 的整体阶段门。 |
+| C39 | BLOCKED | C36 已按用户接受的范围通过，正式唤醒词已配置；生产 HA Config Entry 尚未持久化添加，尚未形成单 Entry 三实体的生产配置证据。完成 HA UI 添加后再复核阶段门。 |
 | C40 | DEFERRED | 实际 INMP441 安装位置、噪声、误唤醒/漏唤醒和距离由 P7 验收。 |
 | C41 | DEFERRED | ESP32 I2S RX、AFE/VAD、TCP 7778 和 Satellite 音频会话由 P6/P7 验收。 |
 | C42 | DEFERRED | HA TTS Proxy、HTTP 获取、WAV 解码、DAC/AUX 播放由 P6/P8 验收。 |
@@ -184,23 +184,23 @@ HA 使用 host 网络、当前没有 HA bridge。隔离验收时没有将 Sherpa
 
 ## 7. 阶段阻塞、裁定和后续边界
 
-### 7.1 裁定：NAS HA host 网络没有 HA 专属 Docker bridge
+### 7.1 裁定：接受 HA host 网络下的 NAS host 信任边界
 
-现有 HA 容器为 host 网络模式，Docker network list 中没有 HA 容器加入的 bridge。没有把 Sherpa 暴露到 LAN，也没有接入共享 bridge/其他业务容器网络；仅创建了 `internal=true` 的隔离 bridge 用于验收。NAS host 可访问 Docker bridge route，因此该做法不是 HA 进程身份隔离。C36 保持 BLOCKED，不将“internal network”误记为“仅 HA 可访问”。
+HA 现有容器使用 host 网络，没有 HA 专属 Docker bridge。按用户明确接受的范围，Sherpa 使用独立 `internal=true`、`attachable=false` bridge；只有 Sherpa 容器接入，Compose 无 `ports`，`docker inspect .NetworkSettings.Ports` 为 `{}`，`docker port` 无输出。没有连接共享 bridge、其它业务容器、ESP32 或 LAN/WAN 入口。
 
-**错误代价：** 如果把 internal bridge 当成 HA-only 网络，就会错误地允许同一 NAS 上其他 host 进程访问没有认证层的 Wyoming 端口。生产部署前需要确定 HA 可达且其他 host 进程不可达的网络边界；当前报告不代替这个设计决定。
+NAS 实际 `DOCKER-ISOLATION-STAGE-1` 规则会 DROP 从非 `172.23.0.0/24` 来源转发进入此 bridge 的流量；HA host 通过 NAS host namespace 路由访问 `172.23.0.2:10400`。NAS host 上其它本机进程同样可以访问容器 IP，这是用户接受的剩余风险。按修订后的合同范围，C36 标记 PASS，不声称进程级 HA 身份隔离。
 
-### 7.2 裁定：不推测生产唤醒词
+**错误代价：** 若 NAS host 上出现不可信本机代码/用户，Wyoming 端口没有应用层鉴权，可能被其直接访问；此时应重新评估 host 信任边界，或增加隔离/认证，而不是把当前 internal bridge 当成进程级 ACL。
 
-用户没有在部署配置中提供 `WAKE_WORD_PHRASE`。本次仅用 Sherpa 官方正样本短语“周望军”验证模型和事件流程，临时配置随验收清理。没有将该短语写入 Git 或留作 NAS active `.env`。
+### 7.2 正式唤醒词配置和模型验证
 
-**错误代价：** 生产容器在正式短语设置前不能启动。这比把测试语料误部署为用户的唤醒词更符合当前合同。
+用户已正式确定 `WAKE_WORD_PHRASE=大肥鱼`。NAS active `.env` 使用该短语（文件权限 600，不进入 Git）；启动时自动经 `sherpa-onnx-cli text2token --tokens-type phone+ppinyin` 生成关键词。生成文件为 `d à f éi y ú @大肥鱼`。使用 Matcha 生成短语语音并追加 1 秒静音后，KWS 正样本在实际 HA Core Wake Word Provider 路径返回 `Detection(tivoo-wake, 大肥鱼)`；官方负样本 `zh_3.wav` 返回 `NotDetected`。这不是 Tivoo 实际麦克风的误唤醒率/距离验收，仍留在 P7。
 
-### 7.3 裁定：生产 HA 配置不做未授权改动
+### 7.3 生产 HA Config Entry 尚未持久化添加
 
-HA Config Flow/实体创建在临时 HA Core 测试实例中实际执行；Assist Pipeline 也通过实际 HA Core 代码运行，P3 使用本地 mock SSE endpoint。生产 NAS HA Config Entry 存储未修改，没有读取/使用生产 AstrBot API 凭据，也没有发起真实聊天。
+生产 HA Core（2026.11.0）容器已实际执行 `WyomingService.create("172.23.0.2", 10400)`，成功完成 Describe/Info；随后真实 `WyomingWakeWordProvider` 使用同一服务地址分别处理 KWS 正样本和负样本，返回 Detection 与 NotDetected。该结果证明网络、服务和 HA Provider 请求路径已连通，但直接创建 Python Provider 实例不会写入 HA Config Entry 存储，也不会在 HA UI 注册三个实体。
 
-**错误代价：** 如果把临时 HA Core 的 entry discovery 结果等同于生产 HA 持久化配置，就会错误地声称生产 HA 已接入。本报告将 C03 标注为临时 HA PASS，同时在阶段结论中保留生产 entry 尚未添加的缺口。
+生产 HA 尚需通过 Settings → Devices & Services → Add Integration → Wyoming 添加一个条目，Host=`172.23.0.2`、Port=`10400`。Config Flow 应为该唯一条目创建 wake_word、stt、tts 三个平台。完成前 C03/C39 保持 BLOCKED。P3 对话端点继续用本地 mock SSE 验证，未使用生产 AstrBot 凭据。
 
 ### 7.4 明确不属于 P7Ab8 / P7A 完成的内容
 
@@ -210,20 +210,83 @@ HA Config Flow/实体创建在临时 HA Core 测试实例中实际执行；Assis
 
 ## 8. 清理与当前部署状态
 
-- NAS Sherpa Compose 容器已停止并移除；当前没有 P7A 运行中的容器。
-- 临时 `.env`、临时唤醒关键词 raw/encoded 文件、测试 WAV 副本和 NAS 临时统计文件已删除。
-- KWS/STT/TTS/Vocos 模型权重保留在持久化目录；重启后 SHA-256 再次全量通过。
-- GHCR 镜像仍保留在 NAS Docker image cache；本批没有删除镜像。
-- `tivoo-sherpa-ha-private` 网络保留为空网络（internal=true，0 个容器），可在后续网络决定后复用；没有接入其他容器。
-- 开发机临时 HA 音频文件、tar 包、临时 smoke 脚本和 SSH 10401 隧道已清理。
-- 生产 NAS HA 未添加 Wyoming Config Entry；没有更改 NAS 现有容器、现有网络或现有 HA/AstrBot 配置。
+- NAS Sherpa Compose 容器当前持续运行：`compose_sherpa-wyoming_1`，`restart=unless-stopped`，health=`healthy`。
+- active `.env` 位于 NAS 部署目录，权限 600；`WAKE_WORD_PHRASE=大肥鱼`。该文件不在 Git 中。
+- 模型权重保留在 NAS 持久化目录；本次准备脚本确认 14/14 文件 SHA-256 匹配；容器启动时没有重复下载模型。
+- GHCR 镜像仍保留在 NAS Docker image cache，部署使用 CI SHA tag，不在 NAS 构建镜像。
+- `tivoo-sherpa-ha-private` 网络目前 internal=true、attachable=false，仅 Sherpa 容器接入；NAS host 通过 `172.23.0.2:10400` 可达。`docker port` 为空，没有 host port mapping。
+- 开发机和 HA 容器的临时测试 WAV/Python 脚本已清理；临时 SSH 隧道已关闭。
+- 生产 HA Config Entry 尚未通过 HA UI 持久化添加。此前 HA Core 生产容器已直接使用该地址完成 Describe/Info 与 Wake Word Provider 正负样本，但该连接不会自动创建 HA 集成配置。
 
 ## 9. 最终阶段结论
 
-**P7Ab8 批次验收报告完成；P7A 总体状态 BLOCKED。** C01–C35、C37–C38 有 PASS 证据；C36 和 C39 BLOCKED；C40–C43 DEFERRED；C44 N/A/禁止新增。由于仍有 MUST 未通过，不更新 README 为 P7A 完成，也不放行 P5/P6。
+**P7Ab8 批次验收报告完成；随后按用户接受的网络边界完成真实 NAS 部署。当前 C01–C38 有 PASS 证据，C39 仍 BLOCKED（生产 HA Config Entry 尚未持久化添加）；C40–C43 DEFERRED；C44 N/A/禁止新增。暂不更新 README 为 P7A 完成，不放行 P5/P6。**
 
-该结果不否认服务、模型和 Assist/P3 测试已取得的通过证据；它明确区分了“Wyoming 服务能力通过测试”和“生产网络隔离与真实部署已满足 HA-only 要求”。
+生产 NAS 容器已运行且 HA Core 实际能发现三类 Provider Info、通过 KWS 正负样本检测。剩余 C39 工作聚焦于 HA UI 中添加唯一 Wyoming Config Entry，并验证该 Entry 持久化后实体注册。
 
 ### Review
 
 按 P7Ab8 合同、最终阶段门及实施计划 Review Focus 自审。本次没有可用的独立 reviewer/subagent 调度工具，因此这是作者自审，不声称已完成独立审查。
+
+## 10. 2026-11-10 生产部署后续记录（按用户决定修订 C36）
+
+用户明确接受 NAS host 进程可访问 Wyoming 的剩余边界，并指定正式唤醒词为“大肥鱼”。本节是对前序 P7Ab8 验收结果的增量更新，取代第 1、5、7、8、9 节中关于“容器已移除、没有正式唤醒词、C36 BLOCKED”的旧状态描述。
+
+### 10.1 C36 风险裁定
+
+- HA 当前使用 Docker host network，不能与 Sherpa 同时加入 bridge。为避免改变现有 HA/AstrBot 容器，继续采用独立的 `tivoo-sherpa-ha-private` bridge：`internal=true`、`attachable=false`、CIDR `172.23.0.0/24`。
+- 仅 `compose_sherpa-wyoming_1` 接入该网络；`docker inspect` 看到 `ports={}`，`docker port` 无输出，没有 TCP 10400 host port mapping。
+- NAS host 路由 `172.23.0.2` 到 Docker bridge 网卡，HA host network 通过该地址访问 Wyoming。
+- NAS 当前 iptables `DOCKER-ISOLATION-STAGE-1` 包含两条隔离规则：非 `172.23.0.0/24` 来源发往 `docker-6dec10ab` 的转发流量被 DROP；来自 `docker-6dec10ab`、目的地不属于该 subnet 的转发流量被 DROP。该 bridge 未接入共享业务网络。
+- 已接受的剩余风险：NAS 本机 host namespace 的其它进程可以访问 `172.23.0.2:10400`。Wyoming 本身无应用层鉴权，因此 NAS host 必须继续视为可信管理边界；不可信容器不得被接入该 bridge。
+- 按用户批准的修订范围，C36 标记 PASS；这不是“HA 进程级唯一访问”保证。若 NAS 后续运行不可信本机代码/用户，需重新评估网络边界。
+
+### 10.2 正式唤醒词与模型
+
+- NAS active `.env`（权限 600，未进入 Git）：`WAKE_WORD_PHRASE=大肥鱼`。
+- `sherpa-onnx-cli text2token` 使用模型 `tokens.txt`、`phone+ppinyin`、`en.phone` 正常生成：`d à f éi y ú @大肥鱼`。
+- NAS 模型准备脚本报告 KWS/STT/TTS assets all present；14/14 个运行时权重 SHA-256 全部 OK，没有重新下载模型。
+
+### 10.3 NAS 真实容器状态
+
+| 项目 | 生产验收值 |
+|---|---|
+| Container | `compose_sherpa-wyoming_1` |
+| Image | `ghcr.io/qyxx2/tivoo-sherpa-wyoming:sha-80e5888a1cad0a08811c034a630292274c808603` |
+| Digest | `sha256:dd31586274e7055f8e08549309221b406127acc8481de17e5327e202529cfef4` |
+| Network | `tivoo-sherpa-ha-private` / `172.23.0.0/24` / `internal=true` / `attachable=false` |
+| Container IP | `172.23.0.2` |
+| Host port mapping | none (`NetworkSettings.Ports={}`；`docker port` 无输出) |
+| Restart policy | `unless-stopped` |
+| Health | `healthy`；wake/asr/tts installed |
+| Start model load | KWS 1.951 s + STT 2.976 s + TTS 5.736 s = 13.787 s |
+
+容器使用 GHCR 已发布镜像；NAS 只执行模型准备、Compose pull/up 和运行时测试，没有构建镜像。原先 P7Ab7 镜像 digest 保持一致。
+
+### 10.4 生产 HA Core 2026.11.0 实际 Provider 请求
+
+在正在运行的 NAS Home Assistant 容器中执行 HA Core 自身 `WyomingService.create("172.23.0.2", 10400)`，Describe/Info 成功，结果如下：
+
+- `wake_word` installed；model `tivoo-wake`；phrase `大肥鱼`；languages `zh-CN`, `en-US`。
+- `stt` installed；Paraformer zh-small；languages `zh-CN`, `en-US`；`requires_external_vad=true`；`supports_transcript_streaming=false`。
+- `tts` installed；Matcha Baker；voice 0 / zh-CN；`supports_synthesize_streaming=true`。
+
+随后直接使用 HA Core 实际 `WyomingWakeWordProvider._async_process_audio_stream` 发送实时节奏的音频块：
+
+- 正样本：Matcha 模型生成“大肥鱼”语音、重采样为 16 kHz mono S16LE，并在尾部追加 1 秒静音；HA Provider 返回 `Detection`，`wake_word_id=tivoo-wake`，`wake_word_phrase=大肥鱼`；本次音频 1.788 秒，Provider 调用约 1.162 秒。
+- 负样本：Sherpa 官方 `zh_3.wav` 末尾补足 1 秒静音；同一 HA Provider 返回 `NotDetected`。
+- 这是真实生产 HA Python Provider 到 NAS Wyoming 容器的请求，不是直接调用容器内 KWS session。但正样本由 TTS 合成，不能代替 Tivoo/INMP441 真人收音、距离和环境噪声验收。
+
+### 10.5 生产 HA Config Entry 阶段状态
+
+上述生产 HA `WyomingService.create` 和真实 Wake Word Provider 请求证明 HA 容器网络到服务可用，但**不会写入 HA Config Entry 存储，也不会自动注册实体**。截至本次记录，生产 HA UI 尚未持久化添加 Wyoming Config Entry，因此：
+
+- C02：生产 HA Describe/Info 已通过。
+- C03：BLOCKED，等待唯一 Wyoming Config Entry 经 HA Config Flow 保存并创建 `wake_word`、`stt`、`tts` 实体。
+- C04、C10：正式 phrase 为“大肥鱼”，生产 Info 和 KWS 正负样本通过。
+- C36：按用户批准的 NAS host 信任边界 PASS。
+- C39：继续 BLOCKED，直到 C03 的生产 Config Entry/实体注册完成并重新检查阶段门。
+
+HA 添加方式：Settings → Devices & Services → Add Integration → Wyoming；Host `172.23.0.2`，Port `10400`。只添加一个条目。保存后检查三个平台实体存在；无需新建自定义 Provider 集成。
+
+生产 AstrBot 未被调用或重新配置；P3 的模拟 SSE 回归仍只证明测试文本路径，不声称生产 Assist 对话已完成。

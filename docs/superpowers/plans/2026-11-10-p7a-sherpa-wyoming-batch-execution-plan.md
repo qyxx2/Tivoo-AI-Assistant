@@ -1,6 +1,6 @@
 # P7A Sherpa Wyoming — Batch Execution Plan
 
-> 状态：批次已拆分，等待实施计划审阅；任何服务代码、镜像、Compose 或 NAS 配置均未在本计划任务中实现。
+> 状态：P7Ab0–P7Ab8 批次已完成；NAS 已运行单容器 Wyoming 服务，HA 生产容器已验证三 Provider Info 和 KWS 正负样本请求。C03/C39 仍等待 HA UI 持久化添加单一 Wyoming Config Entry。
 > 工作分支：`feature/p7a-sherpa-wyoming-service`
 > 基线提交：`aeef5183fef17e53bafbdda0e55f7de2300a8fdd`
 > 实施计划：[P7A Implementation Plan](2026-11-10-p7a-sherpa-wyoming-implementation-plan.md)
@@ -295,7 +295,7 @@ P7Ab2、P7Ab3、P7Ab4 在代码职责上可独立测试，但本工作区按一�
 
 **RED / GREEN tasks:**
 - [ ] RED：Compose 只包含一个 sherpa-wyoming service；使用 `ghcr.io/qyxx2/tivoo-sherpa-wyoming` 和显式 image tag；不得出现 `build:`；只 expose 内部 10400；没有 ports host mapping、10500、FastAPI 或其他 API。
-- [ ] RED：Compose 使用 HA 已存在的 external Docker network；网络名由 `HA_DOCKER_NETWORK` 配置；不臆造 NAS network 名。
+- [ ] RED：Compose 使用 external Docker network；若 HA 是 bridge network，则读取 HA 已存在网络；若 HA 为 host network，则创建单独 `internal=true`、`attachable=false` bridge 供 HA host namespace 到容器 IP 访问，不接共享网络；名称由 `HA_DOCKER_NETWORK` 显式配置。
 - [ ] RED：`/models/kws`、`/models/stt`、`/models/tts` 持久化挂载；容器重建后模型文件仍在。
 - [ ] RED：healthcheck 通过本地 Wyoming Describe 读取 Info，并分别断言 wake/asr/tts 三项 installed；仅端口可连接但 Info 不完整时失败。
 - [ ] GREEN：Dockerfile 基于 Python 3.11 slim amd64，依赖全部精确锁定，CPU-only；入口只运行单一服务进程。

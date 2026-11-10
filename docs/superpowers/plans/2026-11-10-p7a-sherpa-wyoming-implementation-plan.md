@@ -1,6 +1,6 @@
 # P7A Sherpa Wyoming 语音服务实施计划
 
-> 状态：实施计划已拆分，待用户审阅后逐批执行；尚未开始 P7A 服务代码实现。
+> 状态：P7Ab0–P7Ab8 服务实现与 NAS 部署已完成；生产 HA 到 Wyoming 的 Describe/Info 和 KWS 正负样本请求已验证。当前仅待生产 HA Config Flow 持久化添加单一 Wyoming Entry（C03/C39）。
 > 工作分支：`feature/p7a-sherpa-wyoming-service`
 > 计划基线：`aeef5183fef17e53bafbdda0e55f7de2300a8fdd`
 > 合同依据：[P7A Sherpa Wyoming 合同矩阵](../specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)
@@ -35,7 +35,7 @@
 - 所有请求级状态独立。不得共享全局音频 buffer、当前 STT stream、TTS 文本 buffer 或 PCM 队列。
 - 模型权重保存在持久化挂载目录 `/models/{kws,stt,tts}`，不提交进 Git。模型来源和实际加载文件均有 SHA-256 清单。
 - 日志只保留请求类型、关联 ID、耗时、错误类别、模型版本和资源指标；不记录 PCM、完整 Transcript、完整 TTS 回答、Token 或短时 URL 凭据。
-- Wyoming 10400 仅供 HA 所在 Docker 私有网络访问；不发布公网，不建立到 AstrBot 或 ESP32 的连接。
+- Wyoming 10400 只通过独立 `internal=true`、`attachable=false` bridge 提供；无 host/LAN/WAN 端口发布、不接共享/不可信容器网络。若 HA 使用 host 网络，HA 通过 NAS host 路由访问容器 IP；接受 NAS host 进程可访问这一残余边界，不新增应用层认证。
 - 优先直接复用固定上游已有实现；只剔除与合同冲突的代码并补足缺失行为。不得因单个上游模块不合适就拒绝整个上游，也不得重新编写 Wyoming 协议栈或 Sherpa 推理算法。
 - P7A 只交付独立语音服务及 HA Provider 验收；真实 INMP441 收音/声学性能属于 P7，ESP32 音频传输属于 P6/P7，TTS 下载播放属于 P6/P8，SPP/屏幕控制属于 P5/P6。
 
@@ -59,7 +59,7 @@
 | `.python-version`、`.venv-sherpa/` | 固定 ARM 开发测试 Python 3.11；独立虚拟环境，不提交环境目录 |
 | `tests/services/sherpa_wyoming/` | 配置、模型、Provider 事件、请求隔离、运行时、健康检查测试 |
 | `scripts/test-sherpa-wyoming.sh` | 在 ARM Ubuntu 的本地 Python 3.11 venv 运行服务代码测试；不使用 Docker，不污染 HA .venv |
-| `deploy/nas/compose/sherpa-wyoming.yml` | 单容器 Compose，接入 HA 私有网络，仅内部暴露 10400 |
+| `deploy/nas/compose/sherpa-wyoming.yml` | 单容器 Compose，接入独立 internal-only bridge，仅内部暴露 10400；HA host network 通过 NAS host 路由访问 |
 | `deploy/nas/config/sherpa-wyoming/` | 环境变量和关键词源文件模板，不含密钥或模型权重 |
 | `deploy/nas/scripts/prepare-sherpa-wyoming-models.sh` | 模型首次准备、文件完整性检查和 SHA-256 校验 |
 | `docs/superpowers/reports/2026-11-10-p7a-acceptance-report.md` | P7A 最终合同追踪、验证证据和仍然 DEFERRED 的设备范围 |
@@ -322,13 +322,13 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: 单服务 Compose 部署、持久化模型准备、Describe/Info 健康检查。
 
 **Tasks:**
-- [ ] RED：Compose 只包含一个 sherpa-wyoming service；使用 GHCR image tag，不包含本地 build:；不映射 host/public ports、不暴露 10500；只在 HA 私有网络内部 expose 10400。
+- [ ] RED：Compose 只包含一个 sherpa-wyoming service；使用 GHCR image tag，不包含本地 build:；不映射 host/public ports、不暴露 10500；只在独立 internal-only、不可 attach 的 Docker bridge expose 10400。HA 若为 host network，则从 NAS host namespace 访问容器 IP。
 - [ ] RED：模型目录持久化挂载；容器重建不重新下载模型；配置示例不含生产唤醒短语以外的秘密值/Token。
 - [ ] RED：healthcheck 必须对 localhost:10400 发送 Wyoming Describe 并检查 wake/asr/tts 三个 installed Provider；仅 TCP connect 不能返回 healthy。
 - [ ] 构建 Python 3.11 CPU-only 镜像；固定直接和传递依赖；不包含 FastAPI/uvicorn/OpenAI API；镜像入口只运行 run.py。
 - [ ] 增加模型准备脚本：只下载缺少文件，按来源/版本解包；逐项校验 MODEL_SHA256SUMS，失败时以非零退出，不覆盖有效模型。
 - [ ] KWS 关键词源文件从 `WAKE_WORD_PHRASE` 生成；生成文件与 Info phrase 必须一致；不要把实际 `.env` 或用户私有唤醒短语提交。
-- [ ] Compose 使用外部 HA 网络变量（例如 `HA_DOCKER_NETWORK`）；具体 network 名在实际 NAS 执行时读取已有 HA 容器连接，不猜测或创建重复网络。
+- [ ] Compose 使用外部专用网络变量（`HA_DOCKER_NETWORK`）；若 HA 本身为 host network，则创建独立 `internal=true`、`attachable=false` bridge，不连接共享/不可信容器网络，并记录 NAS host 进程可达的接受风险。
 - [ ] GREEN：将最终 Dockerfile/buildx/容器 smoke/Compose config 全部交给 GitHub Actions 的 ubuntu-24.04 amd64 runner。CI 完成 `buildx --check`、`linux/amd64` 完整镜像 build、无模型条件下的依赖/入口 smoke、Compose config 校验；通过后使用 GITHUB_TOKEN 发布 `sha-<commit>` tag 到 GHCR。CI 失败不得发布 tag。
 - [ ] workflow 在 pull_request 上只 build/test、不发布；feature branch push 在 Docker smoke 通过后发布 SHA tag，供 P7Ab8 测试；不发布 latest。无需自定义 GitHub Actions secret。
 - [ ] 不在本批将服务部署到生产 NAS；最终部署与 NAS 资源验收由 P7Ab8 执行。

@@ -45,4 +45,4 @@ services:
 networks:
   ha:
     external: true
-    name: "${HA_DOCKER_NETWORK:?Set HA_DOCKER_NETWORK to the existing HA Docker network}"
+    name: "${HA_DOCKER_NETWORK:?Set HA_DOCKER_NETWORK to the dedicated internal Docker network}"
