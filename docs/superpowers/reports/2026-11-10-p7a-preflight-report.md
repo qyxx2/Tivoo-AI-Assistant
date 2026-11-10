@@ -62,7 +62,7 @@ Repository: `qyxx2/Tivoo-AI-Assistant` (default branch `main`). GitHub Actions a
 
 The sole bootstrap job runs on GitHub-hosted `ubuntu-24.04`, asserts `x86_64` and `amd64`, initializes Buildx with `linux/amd64` using `docker/setup-buildx-action@v4.4.1` (Node 24 runtime), then inspects the builder and asserts that `linux/amd64` is advertised. Workflow permissions are only `contents: read`. It does not need a PAT, NAS secret or other repository secret. The reserved image destination is `ghcr.io/qyxx2/tivoo-sherpa-wyoming`.
 
-**This batch intentionally does not build an image.** P7Ab0 has no service Dockerfile yet. Dockerfile/buildx check, linux/amd64 image build, image dependency/entrypoint smoke, Compose validation and `packages:write` publishing are enabled in their later planned batch (P7Ab1/P7Ab7 as specified). The GitHub workflow run result is recorded below after the feature-branch push.
+**This batch intentionally does not build an image.** P7Ab0 has no service Dockerfile yet. Dockerfile/buildx check, linux/amd64 image build, image dependency/entrypoint smoke, Compose validation and `packages:write` publishing are enabled in their later planned batch (P7Ab1/P7Ab7 as specified). The first feature-branch run (42762304875) passed with the v3 action but emitted its Node 20 deprecation annotation. The workflow was updated to `docker/setup-buildx-action@v4.4.1`; final run [42762412996](https://github.com/qyxx2/Tivoo-AI-Assistant/actions/runs/42762412996) on commit `81a25acabb6b03ae7b2e12407604c49ce10f3a6e` completed successfully, including both runner architecture and `linux/amd64` builder checks, in 14 seconds.
 
 ## 5. Boundaries preserved
 
@@ -89,9 +89,9 @@ The sole bootstrap job runs on GitHub-hosted `ubuntu-24.04`, asserts `x86_64` an
 | Existing HA/P3/P4 regression suite | PASS — 205 passed, 74 warnings, 16.49 s (Python 3.14 environment) |
 | Existing STT and Matcha/Vocos asset SHA-256 checks | PASS — all 5 entries in the two existing manifests match |
 | `.venv-sherpa/` ignore rule | PASS — `git check-ignore` resolves `.gitignore` rule |
-| GitHub Actions amd64 Buildx job | PENDING — update this row with the actual workflow run before closing P7Ab0 |
+| GitHub Actions amd64 Buildx job | PASS — [run 42762412996](https://github.com/qyxx2/Tivoo-AI-Assistant/actions/runs/42762412996), job 129650996080; `ubuntu-24.04` architecture and `linux/amd64` builder checks passed with action v4.4.1 (14 s) |
 | ARM Docker build / NAS deployment | NOT RUN — explicitly outside this batch |
 
 ## 7. P7Ab0 outcome
 
-P7Ab0 can close only after the workflow has been triggered on the feature branch and the GitHub-hosted runner confirms its native amd64 Buildx builder. A workflow failure must remain visible as a blocker; do not infer remote CI success from local YAML inspection. No P7Ab1 work is authorized by this report.
+P7Ab0 exit gate passed: the ARM64 Python 3.11 environment is usable, upstream reuse and model gaps are recorded, and the final GitHub Actions run confirms the native amd64 Buildx builder. No Docker image was built and no P7Ab1 work is included in this batch.
