@@ -1,6 +1,9 @@
 # SHA-256 checksums relative to the configured models directory (/models).
-# KWS checksums are intentionally pending acquisition of the official release;
-# P7Ab2 will download, validate and append the five KWS asset checksums.
+408bbd740838c42d5bf6d1c5b80b3c88b616c7860b92d980328b5b068c76ae48  kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx
+63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21  kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/decoder-epoch-13-avg-2-chunk-16-left-64.onnx
+190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1  kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx
+2d3f32311f9b692b964da3c90e830258d3e78e013cb0c992dbfb15cd5a1a71b0  kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/tokens.txt
+f7000ec3a90544c0c7c16090d8951779c2b322e14dad5006290f498567d439ea  kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/en.phone
 3ef6c19369b912f7caf3cef8e545c5ccd1a33d9d7ec792a46668dc41c4b229ec  stt/sherpa-onnx-paraformer-zh-small-2024-03-09/model.int8.onnx
 4b2d964e18b9cf139b473003b6698fb2ed9a2a5ec55b93daa677b28f578897aa  stt/sherpa-onnx-paraformer-zh-small-2024-03-09/tokens.txt
 78a9fd17e9a6c20198dca4e69d18f941303f8ab39ec61dde04cfc7595262ddfd  tts/matcha-icefall-zh-baker/model-steps-3.onnx

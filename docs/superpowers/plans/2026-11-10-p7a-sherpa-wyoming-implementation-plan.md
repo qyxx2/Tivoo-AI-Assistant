@@ -177,7 +177,7 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - [ ] RED：验证缺失/损坏/哈希不匹配的任一必需模型文件使加载失败，不返回不完整 ModelBundle。
 - [ ] 从上游可复用 loader 改造 STT/TTS 模型加载；增加 KWS loader 配置入口，但不在此批实现 KWS 请求事件。
 - [ ] 建立 `ModelBundle`，固定包含 KeywordSpotter、OfflineRecognizer、OfflineTts；模型对象仅初始化一次。
-- [ ] 计算并记录 STT 已知模型 hash；补齐 Matcha tokens、phone/date/number FST hash；记录 Vocos hash；对 KWS 同 release 资产登记文件名和待取得 hash 的准备步骤。
+- [x] 计算并记录 STT 已知模型 hash；补齐 Matcha tokens、phone/date/number FST hash；记录 Vocos hash；取得官方 KWS release，校验 archive digest，并记录 chunk-16/left-64 五项运行文件 hash。
 - [ ] 分离模型准备与运行时加载：下载/解包在准备工具执行，启动阶段只做存在性和校验后加载；不得使用动态 eval 加载配置代码。
 - [ ] 锁定 Python 3.11 runtime 依赖及 ARM 本地开发测试依赖；在 `.venv-sherpa` 中通过 ARM64 wheel 安装 Sherpa-ONNX 2.0.1、Wyoming 1.10.2 和测试工具；不改变根目录 HA Python 3.14 环境。
 - [ ] GREEN：执行配置、哈希校验、加载成功/失败测试；使用 fake 模型验证失败不会产出半成品对象。所有 pytest/Ruff/compileall 在 ARM Ubuntu 本地执行。

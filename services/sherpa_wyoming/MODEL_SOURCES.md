@@ -5,23 +5,38 @@ stay outside Git and are supplied through the persistent model volume.
 MODEL_SHA256SUMS is the runtime integrity manifest consumed before any model
 object is constructed.
 
-## Keyword spotting — SHA-256 pending
+## Keyword spotting — verified official release
 
 - Model: sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20
 - Official model documentation: https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html
 - Official release archive:
   https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2
+- Archive size: 32,885,699 bytes
+- Official GitHub Release API SHA-256:
+  68447f4fbc67e70eee3a93961f36e81e98f47aef73ce7e7ca00885c6cd3616a6
+- The downloaded archive matched this official digest exactly before extraction.
+- Runtime asset location on the development device:
+  $HOME/.cache/tivoo-ai-assistant/models/kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20
+  (model weights are not stored in Git).
+- Unified local model root: $HOME/.cache/tivoo-ai-assistant/models. STT and
+  Matcha/Vocos are linked to the existing benchmark assets; KWS is stored
+  in this cache. Use MODELS_DIR=$HOME/.cache/tivoo-ai-assistant/models
+  for local development. The runtime keywords.txt is intentionally not
+  created until P7Ab2 uses the configured WAKE_WORD_PHRASE.
 - Required chunk-16 / left-64 files from the same release:
   - kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx
   - kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/decoder-epoch-13-avg-2-chunk-16-left-64.onnx
   - kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx
   - kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/tokens.txt
   - kws/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/en.phone
-- The P7Ab0 workspace inventory found no copy of this release. Its five checksums
-  are therefore not fabricated or copied from another model. P7Ab2 owns
-  acquisition, archive/file hashing, Sherpa 2.0.1 compatibility smoke and
-  keyword generation. Until those entries are added to MODEL_SHA256SUMS,
-  complete model-bundle validation correctly fails closed.
+- SHA-256 values for all five runtime files are recorded in MODEL_SHA256SUMS
+  and were computed from the extracted, archive-verified files. The model's
+  bundled test_wavs and keywords.txt are retained in the local cache for
+  P7Ab2's real-model smoke.
+- The generic bundled test keywords are test-only. P7Ab2 must generate the
+  runtime keywords file from the configured WAKE_WORD_PHRASE and verify that
+  it matches the Wyoming Info phrase; no user's actual wake phrase is stored
+  in this repository.
 
 ## Speech recognition — Paraformer zh-small INT8
 
