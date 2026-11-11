@@ -2,7 +2,7 @@
 
 > 状态：设计规格，待用户审阅  
 > 日期：2026-11-09  
-> 最近修订：2026-11-11（单 I²S 全双工、AEC 与全局音频打断基线）
+> 最近修订：2026-11-11（P5 最小网络/日志边界；单 I²S、AEC 与全局音频打断基线）
 >
 > 适用项目：Tivoo AI Assistant  
 > 范围：ESP32-WROVER-E-N16R8 自定义固件与 Home Assistant Tivoo 自定义集成之间的双向通信
@@ -18,6 +18,7 @@
 - 7777 控制通道与 7778 音频/设备事件通道分离，避免持续 PCM 流阻塞图片、动画和控制命令。
 - TTS 使用 HA 提供的音频资源 URL；ESP32 通过 HTTP 分块下载、解码为 PCM 并播放，不由 HA 再额外推送一份 PCM。
 - 本规格只面向用户现有的 Divoom Tivoo，不将其他 Divoom 型号的键盘灯、背光或 BLE 灯控能力移植进来。
+- **阶段边界：** P5 先实现 Wi-Fi、最小 7777 SPP 控制通路和 7778 诊断日志子集；P6 再完成双向控制、完整设备/音频消息及 HTTP 音频资源。P5 使用最终协议的子集，不另建临时端口或第二套日志协议，也不代表 P6 完成。
 
 不在本规格范围：AstrBot 内部对话协议、HA Assist Pipeline 的 STT/TTS 算法实现、ESP32 GPIO 最终分配及供电/模拟线路电路细节、其他 Divoom 型号兼容、A2DP 主路线实现。麦克风与 DAC 模块及其数字音频接口基线见 §2.2–§2.3。
 
@@ -134,8 +135,8 @@ AEC（Acoustic Echo Cancellation）和播放打断属于首期语音交互的必
 
 | 通道 | 默认端口 | HA 角色 | ESP32 角色 | 主要用途 |
 |---|---:|---|---|---|
-| Tivoo 控制桥 | 7777 | TCP Client | TCP Server | 复用 esp32-divoom 既有协议，SPP 连接/断开、屏幕命令、图片/动画、SPP 返回数据 |
-| 设备与音频 | 7778 | TCP Client | TCP Server | 设备握手/状态、AEC 后麦克风 PCM 上行、全局音频输出通知/停止/状态、打断事件、错误与心跳 |
+| Tivoo 控制桥 | 7777 | TCP Client | TCP Server | 复用 esp32-divoom 既有协议；P5 先实现 HA→ESP32→SPP 的单向命令子集，P6 补齐 SPP 返回数据及完整连接/结果处理 |
+| 设备与音频 | 7778 | TCP Client | TCP Server | P5 先实现最终消息封装、HELLO/ACK 和诊断日志/错误；P6 补齐设备状态、音频上行/下行、事件与心跳 |
 | 音频资源获取 | HA 配置的 HTTP(S) 地址 | HTTP Server | HTTP Client | ESP32 收到 URL 后 GET TTS/其他明确指定的音频资源，流式获取音频数据并解码 |
 
 另有独立的 HTTP 资源通道，它是本通信层的必要组成部分，不取代两个 TCP 通道：
@@ -316,6 +317,7 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | `0x33` | AUDIO_INTERRUPTED | ESP32 → HA | JSON：中断 ID、活动音频 ID（可空）、来源、近端语音打断原因 |
 | `0x40` | DEVICE_EVENT | ESP32 → HA | JSON：状态变化事件 |
 | `0x41` | ERROR | 双向 | JSON：错误代码、关联消息/会话 ID、简短说明 |
+| `0x42` | DIAGNOSTIC_LOG | ESP32 → HA | JSON：日志级别、模块、事件/简短消息、设备运行时间及可选关联 ID/丢弃计数 |
 
 未知消息类型不得导致连接进程崩溃；记录协议错误并忽略该消息。协议版本不兼容时，HELLO_ACK 返回不支持原因并关闭连接。
 
@@ -330,6 +332,12 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 7. 任一通道断开时，HA 单独重连该通道。7778 重连不得重置仍正常工作的 SPP 连接；7777 重连后按需恢复 SPP 连接。
 8. ESP32 网络断开时，停止新的网络音频会话；正在播放的受控音频按本地策略完成缓冲播放或由全局输出管理器停止，并上报可用的最终状态。
 
+**P5 只实现上述最终协议的最小子集：**
+
+- 7777：HA 下发 Tivoo 原始帧，ESP32 转交 SPP；P5 不要求 SPP 返回数据回传、完整结果语义或后续连接恢复策略。
+- 7778：使用相同的 16 字节 TVIO 头部，完成 HELLO/HELLO_ACK，并支持 DIAGNOSTIC_LOG 与 ERROR；连接断开后允许 HA 客户端做基础重连并重新握手，以恢复日志回传。P5 不实现心跳、完整 DEVICE_STATUS、MIC、TTS、AUDIO 或 HTTP 音频资源。
+- P6 在同一端口和封装上扩展其余消息及双向行为，不重新设计或替换 P5 已通过的基础通路。
+
 建议 HELLO Payload：
 
 ```json
@@ -339,12 +347,7 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
   "protocol_version": 1,
   "capabilities": [
     "spp_control",
-    "mic_pcm_upload",
-    "aec_playback_reference",
-    "voice_barge_in",
-    "audio_output_global_stop",
-    "tts_url_playback",
-    "i2s_dac_output"
+    "remote_diagnostics"
   ]
 }
 ```
@@ -361,6 +364,14 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 - 音频欠载/溢出计数和可用内存（用于诊断，不要求高频上报）。
 
 不要虚构电池电量、屏幕实际显示状态等没有可靠硬件/协议来源的数据。
+
+### 5.5 日志与诊断
+
+- 使用 ESP-IDF 日志级别和模块标签；保留 UART/控制台输出。DIAGNOSTIC_LOG 的 JSON 字段为 `level`、`module`、`message`、`uptime_ms`，可选 `correlation_id` 和 `dropped_count`。网络日志进入有界 RAM 队列，由低优先级发送任务上传；日志回调和实时任务不得直接等待 socket 或阻塞发送。
+- 7778 可用时发送 DIAGNOSTIC_LOG；未连接时只暂存有限的近期记录，重连后按序补发。队列满时丢弃低优先级记录并累计丢弃数，不得影响 SPP、网络控制或音频实时任务。
+- 启动后上报固件版本、设备 ID 和 Reset Reason。普通日志不逐条写 Flash；P5 不要求持久日志数据库或 Core Dump 导出，确有现场故障证据需求时再单独评估。
+- HA 将设备日志映射到 `custom_components.tivoo` 标准 Python logger，INFO 为常规基线、DEBUG 按需开启，并按级别写入 HA 主日志（Container 默认文件为 `/config/home-assistant.log`）。部署时确保 `/config` 挂载到 NAS 持久化目录；ESP32 不直接连接 NAS，也不另建日志存储服务。
+- 日志不得包含 Wi-Fi 密码、Authorization/API Token、短时音频 URL 凭据、原始 PCM、完整转写或回答正文。可记录模块、事件、错误码、耗时和内部关联 ID。
 
 ## 6. 麦克风音频上行：ESP32 → HA
 
@@ -520,6 +531,7 @@ HA 自定义集成是所有上层功能的唯一入口：
 - 管理 7777 Tivoo 控制桥，并把 HA 服务调用编码成 Tivoo 二进制帧。
 - 复用现有 Python Tivoo 协议/图片编码能力，不在 ESP32 重复图片编码。
 - 管理 7778 握手、消息解析、音频队列和状态更新。
+- P5 接收 DIAGNOSTIC_LOG/ERROR，按设备日志级别映射到 Tivoo 集成标准 logger；使用 HA 现有日志配置持久化，不直接写入自建文件或另开 NAS 接收服务。
 - 将 MIC_PCM 流交给 Assist Satellite Pipeline。
 - 监听 Pipeline 事件：在 `run-start` 保存 TTS URL、Token、MIME 和 `stream_response`；流式路径在 `intent-progress` 的 `tts_start_streaming=true` 时发送 TTS_PLAY，短回答/非流式路径在 `tts-end` 时发送 TTS_PLAY。
 - 确保下发 URL 是 ESP32 可直接访问的 HA LAN 地址，并在需要时提供短时 HTTP 访问凭据。
@@ -537,8 +549,10 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 
 固件以 ESP-IDF 为基础，按模块划分：
 
-- **network_control**：TCP 7777 Server，兼容上游 raw Tivoo bridge 协议。
-- **network_audio**：TCP 7778 Server、消息封装解析、HELLO/心跳、状态事件及音频消息。
+- **wifi_station**：Wi-Fi Station 配置、连接状态及基础重连。
+- **network_control**：TCP 7777 Server，兼容上游 raw Tivoo bridge 协议；P5 先支持单向 SPP 控制，P6 扩展完整双向行为。
+- **network_audio**：TCP 7778 Server 和统一消息封装；P5 先支持 HELLO/ACK、DIAGNOSTIC_LOG、ERROR，P6 扩展完整状态/音频消息。
+- **diagnostics_log**：封装 ESP-IDF 日志、启动/Reset Reason 记录和有界异步网络发送队列。
 - **tivoo_spp**：复用/适配 esp32-divoom 的 Classic Bluetooth SPP、SDP channel discovery、发送队列和连接管理。
 - **audio_capture**：共享全双工 I²S Controller 的 RX channel/DMA、INMP441 左 Slot 24-bit 提取、32 kHz → 16 kHz 转换、麦克风 M 通道准备和持续采集。
 - **audio_frontend**：对齐播放参考 R 通道、构造 AFE M/R 交错输入、运行 ESP-SR 经典 ESP32 target 的 AEC/VAD，并输出唯一的 16 kHz 增强 Mono PCM 供预录与网络发送。
@@ -619,9 +633,18 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 - 不在 ESP32 实现 PNG/JPG/GIF 图片量化和调色板编码。
 - 不新建与 `appendFrames` 功能重复的 TCP 帧解析器，除非 ESP-IDF 适配测试证明现有实现不适用。
 - 不重写 SPP 发送拥塞队列、SDP 通道发现等已有能力。
-- 新增代码限于 ESP-IDF 适配、7778 消息协议、音频采集/播放及 HA Assist Satellite 对接。
+- 新增代码限于 ESP-IDF 适配、Wi-Fi/既定 7777/7778 通信、诊断日志及音频采集/播放与 HA Assist Satellite 对接；Tivoo 协议和图片编码仍优先复用现有实现。
 
 ## 12. 验收标准
+
+### 12.0 P5 最小固件
+
+- ESP32 可连接配置的 Wi-Fi，并向 HA 提供 TCP 7777/7778；不要求配网门户或复杂网络管理功能。
+- HA 通过 7777 下发一条现有 Tivoo 原始命令，ESP32 能经 Classic SPP 发送并在 Tivoo 实机观察到效果；P5 不验收 SPP 反向数据。
+- HA 通过 7778 完成 HELLO/HELLO_ACK，并接收 DIAGNOSTIC_LOG/ERROR；日志按级别写入 HA 日志，并随 NAS 的 `/config` 持久化挂载保存。
+- HELLO 报告设备 ID、固件版本和已实现能力；启动后上报 Reset Reason。诊断日志包含模块/级别及 uptime，不得出现凭据、原始音频或完整对话正文。
+- 7778 断开、队列满或 HA 不可用时，日志发送不会阻塞 SPP；重连后补发队列中保留的记录并报告丢弃数。
+- P5 不以 SPP 返回数据、完整 DEVICE_STATUS/心跳、MIC_PCM、TTS、HTTP 音频资源、I²S、AEC/VAD 或 Core Dump 导出作为验收条件。
 
 ### 12.1 控制桥
 
@@ -663,6 +686,14 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 ## 13. 测试策略
 
 优先使用现有测试，不为已有逻辑重复建立平行测试框架：
+
+### P5 网络与日志基线
+
+- 验证 Wi-Fi、7778 HELLO/ACK 和诊断日志进入 HA 主日志。
+- 验证 7777 单向 SPP 控制能在 Tivoo 实机生效。
+- 覆盖 7778 断线、有限队列溢出、重连补发和 Reset Reason 上报，确认日志发送不阻塞 SPP。
+
+### 后续阶段验证
 
 1. **协议 Golden 测试**：沿用 `esp32-divoom/test/goldens` 思路和本地 Tivoo 协议测试，检查命令/图像编码字节不发生意外变化。
 2. **TCP 帧测试**：复用 `util.cpp` 的拆包/粘包用例，补充 ESP-IDF TCP 收包边界测试。

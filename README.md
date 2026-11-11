@@ -205,6 +205,16 @@ MCP 是工具调用协议，不是 HA 向 AstrBot 推送用户文本的消息通
 
 ### 5.2 固件任务
 
+**阶段边界：**
+
+- **P5 最小固件必须实现：** Wi-Fi Station 基础联网；TCP 7777 最小单向控制入口，接收 HA 下发的现有 Tivoo 原始帧并交给 SPP；TCP 7778 只实现最终消息封装、HELLO/ACK、诊断日志和错误上报。ESP-IDF 基础日志、固件/启动信息及 Reset Reason 需能回传 HA。HA 通过 Tivoo 集成接收并写入 HA 标准日志。P5 不实现 SPP 返回数据、完整设备状态、音频消息、HTTP 音频资源或 I²S/AEC/VAD。
+- **P6 补齐：** 在 P5 的同一端口和消息封装上完成双向 7777、完整 7778 状态/事件/音频消息与连接管理，以及 TTS 音频 HTTP GET。P5 的基础通路是后续实现的子集，不代表 P6 完成。
+- **P7/P8：** P7 实现 I²S 麦克风、AEC/VAD 和 Assist Satellite 音频上行；P8 实现 I²S TX、DAC、音频解码/采样率转换及统一输出/停止。不得把这些能力提前并入 P5 验收。
+
+**P5 实施顺序：**先完成 Wi-Fi Station 和连接状态；再建立 7778 HELLO/ACK 与日志回传；随后接入 7777 单向控制和 Classic SPP；最后通过 HA → ESP32 → Tivoo 完成实机闭环。
+
+**固件最终职责：**
+
 - 蓝牙连接与重连。
 - 同一 I²S Controller 以 32 kHz、Stereo、32-bit Slot 运行 Standard/Philips 全双工；INMP441 RX 与 PCM5102 TX 共享 BCLK/WS，RX/TX 各自使用 DMA 和独立任务。
 - INMP441 左 Slot 采样为 24-bit 数据；ESP32 提取有效样本、执行低通抗混叠和 32→16 kHz 降采样，再转为 16 kHz、16-bit、Mono S16LE。
@@ -460,8 +470,8 @@ python3 -m venv .venv
 | P3 | HA AstrBot Conversation Agent（HTTP OpenAPI、单用户会话映射、SSE → ChatLog） | HA Assist 接收 STT 文本后调用 AstrBot；24 小时活动会话可跨 HA 重启复用；逐段写入 ChatLog 并返回标准 ConversationResult |
 | P4 | HA MCP Server 暴露 Tivoo/设备工具，AstrBot 调用 | AI 能通过 MCP 控制 HA 设备 |
 | P7A | 独立 Sherpa Wyoming 容器：一个 TCP 入口提供 KWS、STT、TTS 三个 Provider | HA 用一个 Wyoming Config Entry 发现三类 Provider；完成模型、KWS、STT、非流式/流式 TTS 和容器验收 |
-| P5 | ESP32 最小固件与 Tivoo SPP | 能通过 HA 控制 Tivoo 屏幕 |
-| P6 | ESP32 ↔ HA 双向通信层（TCP 7777/7778 + HTTP 资源请求） | HA 可通过 7777 控制屏幕并接收 SPP 返回数据；通过 7778 获取设备状态、接收麦克风 PCM、发送 TTS URL；ESP32 再通过 HTTP GET 获取 TTS/其他指定音频资源 |
+| P5 | ESP32 最小固件：Wi-Fi、最小 TCP 7777 SPP 控制、TCP 7778 诊断日志子集及基础故障日志 | HA 可经局域网控制 Tivoo；设备日志和错误可回传并进入 HA 日志 |
+| P6 | 在 P5 基础上完成 ESP32 ↔ HA 双向通信（TCP 7777/7778 + HTTP 资源请求） | 补齐 SPP 返回数据、完整设备状态/事件/音频消息、连接管理，以及 TTS/其他指定音频资源 HTTP GET；不重复实现 P5 基础通路 |
 | P6.5 | [HA Assist Pipeline / TTS Proxy 取消链路前置验证](docs/superpowers/patches/2026-11-11-p6-5-ha-cancellation-preflight.patch.md) | 验证 Satellite Pipeline 取消能否终止 TTS Proxy 后台生成、HA Wyoming 请求与 P7A TTS 任务，并确认 P3 AstrBot SSE/session Stop 的取消传播；形成模块职责与缺口报告，作为 P7/P8 取消实现依据 |
 | P7 | I2S 麦克风采集、WROVER-E ESP-SR AFE AEC/VAD、HA Assist Satellite 与 P7A KWS/STT、AstrBot Conversation Agent 联调 | 空闲时不上传音频；AEC 后近端人声触发后由 HA WAKE_WORD 阶段检测唤醒词；播放期间维持 AEC/VAD 并验证近端语音打断，打断新会话从 STT 阶段进入 |
 | P8 | I2S TX + PCM5102 → AUX 输出、全局音频输出管理器及端到端取消联调 | AI 回复和其他受控音频通过统一输出管理器播放；验证 AUDIO_STOP、本地 barge-in、HA Pipeline/TTS Proxy/AstrBot 取消和 SPP 并发；Tivoo 端 AUX + SPP 已实测通过 |

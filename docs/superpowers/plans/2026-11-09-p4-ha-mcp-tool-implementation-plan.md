@@ -26,7 +26,7 @@ P4 交付的是 HA 工具接口、服务语义、AstrBot MCP 连接与 Persona �
 - P3 AstrBot Conversation Agent 已存在于 `homeassistant/custom_components/astrbot/`，并有配套 HA Core 测试。其 HTTP Chat、SSE、session 与 ChatLog 行为是回归基线。
 - `homeassistant/custom_components/tivoo/` 当前只有占位文件，没有可复用的 HA Tivoo 集成、服务或实体。P4 必须从最小集成骨架开始，不能假定服务已经存在。
 - 开发机已有 HA Core 2026.11.0 对应的 `.venv`、`pytest-homeassistant==2026.11.0`、Ruff 与 `scripts/test-ha.sh`。优先沿用，不另建测试框架。
-- HA Tivoo 服务的真实设备执行依赖后续 P6 通信层。P4 使用测试适配器验证 Tool → HA Service → 命令请求；生产路径在设备传输尚未接入时必须明确报告不可用，不能返回伪成功。
+- HA Tivoo 服务的真实设备执行依赖后续 P5/P6 通信层：P5 提供 Wi-Fi、最小单向 TCP 7777 SPP 控制和 7778 诊断日志，P6 再补齐完整双向通信及音频资源通路。P4 使用测试适配器验证 Tool → HA Service → 命令请求；传输尚未接入时必须明确报告不可用，不能返回伪成功。
 - 本计划不要求连接 NAS 运行测试。开发与回归测试在 Remote Desktop Commander 连接的 Ubuntu 开发机完成；生产 HA/AstrBot 联调仅做必要的配置和受控冒烟验证。
 
 ## 3. 架构决策
@@ -45,7 +45,7 @@ P4 交付的是 HA 工具接口、服务语义、AstrBot MCP 连接与 Persona �
 - 普通 HA 服务是自动化、脚本和 MCP Tool 共用的业务入口；LLM Tool 只做参数转发与结果适配，不复制协议或业务实现。
 - Tool 调用服务时使用 `hass.services.async_call("tivoo", service, ..., blocking=True, context=llm_context.context)`，让服务执行错误可被观察。
 - 服务调用成功只表示服务层已接受/完成其当前职责。无设备回执时不得声称屏幕已显示或动画已播放完成。
-- 服务到设备之间保留一个最小的语义命令接口。测试使用内存适配器；P6 再接入 TCP 7777 生产适配器。P4 的默认不可用适配器必须返回明确错误，不尝试自行连接 ESP32。
+- 服务到设备之间保留一个最小的语义命令接口。测试使用内存适配器；P5 接入单向 TCP 7777 SPP 控制及 7778 诊断日志适配器，P6 在此基础上扩展完整双向通信。P4 的默认不可用适配器必须返回明确错误，不尝试自行连接 ESP32。
 - 不在 P4 实现 TCP 7777/7778、HTTP 音频获取、SPP、Tivoo 帧编码或固件逻辑。
 
 ### 3.3 第一版 MVP 服务与工具集
@@ -87,7 +87,7 @@ P4 交付的是 HA 工具接口、服务语义、AstrBot MCP 连接与 Persona �
 
 ### 4.2 命令接口的深度与测试
 
-首版命令接口只表达 `set_expression`、`show_text`、`set_brightness`、`show_image`、`play_animation`、`start_countdown`、`stop_countdown`、`set_volume` 这些明确业务动作及合同参数，不暴露原始帧、TCP socket、蓝牙或 ESP32 细节。内存适配器验证 HA Service 的可观察请求；P6 的 TCP 适配器使用同一接口。未声明的其他服务不加入这批语义动作；不另建通用消息总线、任务队列或幂等数据库。
+首版命令接口只表达 `set_expression`、`show_text`、`set_brightness`、`show_image`、`play_animation`、`start_countdown`、`stop_countdown`、`set_volume` 这些明确业务动作及合同参数，不暴露原始帧、TCP socket、蓝牙或 ESP32 细节。内存适配器验证 HA Service 的可观察请求；P5 最小 TCP 适配器沿用同一接口，P6 再扩展完整双向通信。未声明的其他服务不加入这批语义动作；不另建通用消息总线、任务队列或幂等数据库。
 
 ### 4.3 错误与重试
 
@@ -137,4 +137,4 @@ P4 交付的是 HA 工具接口、服务语义、AstrBot MCP 连接与 Persona �
 
 P4b0–P4b6 全部必需批次通过；表情、文字、亮度 HA Service、图片/GIF 文件处理、倒计时启停和音量调整均有自动化测试或受控运行证据。AstrBot Persona 通过 `/api/mcp/assist` 发现并授权七个必需 Tool；各 Tool 正确调用对应 HA Service。P4b6 必须额外证明 StartCountdown、StopCountdown、SetVolume 三项经 AstrBot MCP → HA LLM Tool → HA Service → 语义 Adapter 的完整调用链；P3 全套测试无回归；凭据没有进入仓库或日志。
 
-亮度以 HA Service 验收，不要求新增同义 MCP Tool。未明确列入 MVP 的其他 Tivoo 服务标记为可选扩展，不阻塞本版。生产适配器在 P6 TCP 传输接入前必须明确报告 unavailable；测试适配器通过不代表 Tivoo 实机动作已经成功，实机回执仍属 P5/P6。
+亮度以 HA Service 验收，不要求新增同义 MCP Tool。未明确列入 MVP 的其他 Tivoo 服务标记为可选扩展，不阻塞本版。P4 默认生产适配器在 P5 最小 TCP 传输接入前必须明确报告 unavailable；P5 仅启用单向 SPP 控制和诊断日志，P6 再扩展完整双向通信。测试适配器通过不代表 Tivoo 实机动作已经成功，实机回执仍属 P5/P6。

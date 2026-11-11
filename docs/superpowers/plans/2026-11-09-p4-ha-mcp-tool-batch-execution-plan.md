@@ -24,7 +24,7 @@
 2. `docs/superpowers/plans/2026-11-09-p4-ha-mcp-tool-implementation-plan.md`：P4 架构、模块职责和批次总顺序。
 3. `README.md` §2–§4、§6–§8：项目层级职责、总体调用方向和上下游阶段。
 4. `docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md`：保护 P3 文本请求、SSE、session 与取消合同。
-5. `docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md`：仅用于确认 TCP 7777/7778、HTTP 音频资源和 SPP 属于 P6 及以后。
+5. `docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md`：用于确认 P4 不实现设备传输；当前阶段边界为 P5 最小 Wi-Fi/7777 SPP 控制/7778 诊断日志，P6 补齐完整双向和音频资源通路。
 6. `docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md`：仅用于确认 P4 不接管 STT/TTS。
 
 进入 P4b0 时：
@@ -269,7 +269,7 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 - [ ] 从真实 AstrBot Persona 验证 `StartCountdown(01:30)` 和 `SetVolume(0/100)` 的请求参数及 HA Service 入参；这两项尚无目标运行时证据。
 - [x] 通过错误输入测试确认倒计时格式、音量边界、媒体路径越界和文字/preset 非法输入会明确失败，不产生伪成功。
 - [x] 媒体验收覆盖相对 media_directory、PNG/JPG/GIF、GIF timing、路径穿越/逃逸 symlink/缺失文件拒绝。
-- [x] 验证 StopCountdown 无参数语义：HA Service 与语义 Adapter 收到空 data；P4 不实现字节级编码器，wire payload 留给 P6 传输 Adapter 验证。
+- [x] 验证 StopCountdown 无参数语义：HA Service 与语义 Adapter 收到空 data；P4 不实现字节级编码器，wire payload 留给 P5 最小传输 Adapter，并由 P6 补齐完整双向通路。
 - [ ] 在 AstrBot 4.29.4 运行时验证断线恢复/重试和响应丢失：**尚未验收**；已基于固定源码审查重连与两次总尝试行为，并记录非幂等动作重复执行风险。
 - [x] 运行 P3 全套 HA 测试，确认 Chat API、session、SSE、ChatLog、取消与 P4 无回归。
 - [x] 运行开发机完整测试与静态检查：`./scripts/test-ha.sh -q`、Ruff check、排除未修改基线文件后的 Ruff format check、Python compileall、`pip check`、`git diff --check`。
@@ -317,7 +317,7 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 - 优先复用 HA Core 的 Config Entry、Service Registry、LLM Tools、Assist API、MCP Server 和现有 P3 测试脚手架。AstrBot MCP Client 复用 4.29.4 原生实现。
 - HA 服务 Schema 与 LLM Tool 的 `probatio.Schema` 可能属于不同验证框架；共享一份参数合同，分别适配框架并通过合同测试检查字段、类型、默认值和范围，不强行共享不兼容的 Schema 对象。
 - Tool 调用服务必须等待服务执行结果，以便传播 ServiceNotFound/ServiceValidationError/设备不可用错误；不把异步事件已排队当作设备动作完成。
-- 测试适配器只用于开发机合同测试。生产默认适配器在 P6 传输接入前应清楚报告 unavailable；不可在生产中自动切换为“成功的内存适配器”。
+- 测试适配器只用于开发机合同测试。生产默认适配器在 P5 最小 TCP 传输接入前应清楚报告 unavailable；不可在生产中自动切换为“成功的内存适配器”。
 - 文件测试只读取 HA 配置 media directory 内的测试文件；不通过任意 HTTP URL、共享外部绝对路径或原始二进制简化文件交接。
 - 每批结束运行本批聚焦测试和必要回归；P4b2 之后至少运行 P3 现有测试。最终运行 `./scripts/test-ha.sh -q`、Ruff check/format、compileall、pip check 和 `git diff --check`。
 - 不在 NAS 上运行耗时测试或负载测试。开发机 Ubuntu 测试通过后，只进行必要的远程 MCP 连通/配置验证；不扫描、清理或修改无关 NAS 文件、容器和会话。
@@ -329,7 +329,7 @@ P4b3 与 P4b4 可在 P4b2 后分别执行；两者都是 MVP 必需批次，P4b5
 
 以下工作明确不属于 P4：
 
-- TCP 7777 原始 Tivoo frame bridge、TCP 7778 音频/状态协议、ESP32 固件和 Classic SPP。
+- P5/P6 的 TCP 7777 Tivoo frame bridge、TCP 7778 诊断/状态/音频协议、ESP32 固件和 Classic SPP；P4 不实现这些设备传输。
 - Tivoo 实际屏幕、表情、GIF、倒计时硬件动作的确认回执；这些属于 P5/P6 实机测试。
 - Assist Satellite 音频会话、麦克风 PCM、STT、TTS、HTTP 音频 URL 获取及主动播报生命周期。
 - AstrBot 主动任务插件、主动对话和情绪决策（P9）。

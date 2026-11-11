@@ -33,7 +33,7 @@ HA Device control API（Assist API，id=assist）
           Tivoo 集成的业务/命令网关
                     │
                     ▼
-       后续 P5/P6：P6 TCP 7777 → ESP32 → Classic SPP → Tivoo
+       后续 P5/P6：P5 最小 Wi-Fi、TCP 7777 SPP 控制及 7778 诊断日志；P6 补齐双向控制和完整通信
 ```
 
 AstrBot 不连接 ESP32，不拼接 Tivoo 二进制帧，也不访问 7777/7778。MCP 只传递工具名称、参数和 JSON 结果；图片帧、动画帧、PCM、TTS 音频均不走 MCP。
@@ -44,8 +44,8 @@ AstrBot 不连接 ESP32，不拼接 Tivoo 二进制帧，也不访问 7777/7778�
 |---|---|---|
 | P3 | HA Conversation Agent 通过 AstrBot HTTP Chat API 发送文本，并把 SSE 文本增量写入 HA ChatLog | 保持不变；MCP 不是 STT/文本对话入口 |
 | P4 | HA MCP Server 暴露设备/Tivoo 工具，AstrBot MCP Client 调用 | 本合同范围 |
-| P5 | ESP32 最小固件与 Tivoo Classic SPP 控制 | P4 仅调用 HA 服务，不实现该传输 |
-| P6 | HA↔ESP32 TCP 7777/7778 通信层与 HTTP 音频资源获取；7777 承载原始 Tivoo 控制桥，7778 承载设备状态/麦克风 PCM/TTS 通知 | P4 不实现、不使用 |
+| P5 | ESP32 最小固件：Wi-Fi、TCP 7777 单向 SPP 控制、TCP 7778 HELLO/ACK 与诊断日志子集 | P4 仅调用 HA 服务，不实现该传输 |
+| P6 | 完成 HA↔ESP32 双向 TCP 7777/7778 通信及 HTTP 音频资源获取；补齐 SPP 返回数据、设备状态、麦克风 PCM/TTS 通知和心跳 | P4 不实现、不使用 |
 | P7/P8 | 麦克风唤醒/STT 与 TTS 音频输出 | 不属于 P4 |
 | P9 | AstrBot 主动表达、表情/动画等主动交互 | 可复用 P4 工具，但不扩大 P4 范围 |
 | P10 | Wi-Fi、I²S、SPP 并发及设备实测 | 后续硬件验收 |
@@ -233,7 +233,7 @@ Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模�
 | 游戏 | `tivoo.show_game` | HA `game`；Tivoo 继承 `show_game()`；ESP32 `0xA0` | 游戏索引因设备/App 版本而异，当前没有 Tivoo 有效游戏列表 | 可选扩展（首版不实现） |
 | 游戏控制 | `tivoo.game_control` | HA `gamecontrol`；Tivoo 继承 `send_gamecontrol()`；ESP32 按键事件 | `value` 为 `go/left/right/up/down/ok`；仅在已打开且当前游戏可控时有意义 | 可选扩展（首版不实现） |
 | 原始协议 | 不提供 `raw` LLM Tool 或服务 | HA 上游有 `raw`；ESP32 raw bridge 能转发完整帧 | 任意字节会绕过所有业务参数和操作限制 | Excluded；只允许后续受控底层调试，不作为 AI 工具 |
-| 连接管理 | 不提供 `connect/disconnect` LLM Tool | HA 上游有连接动作；本项目由 HA 服务/网关维护到 ESP32 的 TCP 连接 | MCP 调用者不应决定 SPP/TCP 生命周期 | Excluded from LLM；由 P6 transport owner 管理 |
+| 连接管理 | 不提供 `connect/disconnect` LLM Tool | HA 上游有连接动作；本项目由 HA 服务/网关维护到 ESP32 的 TCP 连接 | MCP 调用者不应决定 SPP/TCP 生命周期 | Excluded from LLM；基础连接由 P5 固件/HA 传输适配维护，完整连接管理归 P6 |
 | 其他型号功能 | 不注册 `equalizer`、`keyboard`、独立 `temperature`、`signal`、`clock_id`、`volume1..8` | Tivoo 专用 `devices/tivoo.py` 明确对 equalizer/keyboard/temperature/signal 抛 unsupported；clock_id 和 volume1..8 只属于其他型号 | 时钟中的 `temp` 显示开关仍保留；这不等于支持独立 temperature channel | Excluded；不得把其他型号功能移植给 Tivoo |
 
 ### 4.1 第一版 MVP 输入合同
@@ -251,7 +251,7 @@ Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模�
 | `tivoo.show_image` | `tivoo__ShowImage` | `file: string` | 相对于 `media_directory`；支持静态 PNG/JPG 与 GIF；可选 `time: integer`，范围 0–65535 ms。 |
 | `tivoo.play_animation` | `tivoo__PlayAnimation` | `file: string` | 相对于同一 `media_directory`；只接受 GIF；可选 `time: integer`，范围 0–65535 ms。 |
 
-服务层需要保留语义命令接缝：测试环境可使用内存适配器验证调用参数；生产适配器在 P6 传输层接入前必须明确返回 unavailable，不得伪成功。屏幕亮度是必须注册的 HA Service，但不额外创建同义 MCP Tool。
+服务层需要保留语义命令接缝：测试环境可使用内存适配器验证调用参数；P5 最小 TCP 传输适配器实现前，生产适配器必须明确返回 unavailable，不得伪成功。P5 只提供单向 SPP 控制和诊断日志，P6 再补齐完整双向通信。屏幕亮度是必须注册的 HA Service，但不额外创建同义 MCP Tool。
 
 ### 4.2 MVP 媒体文件引用合同
 
@@ -347,8 +347,8 @@ P4 的 LLM Tool 只转发到 HA 服务，不负责：
 
 | 通道 | 既有合同 | P4 是否直接使用 |
 |---|---|---|
-| TCP 7777 | HA 主动连接 ESP32 TCP Server；raw Tivoo bridge control/connect/disconnect/data；完整 Tivoo 帧保持原始字节格式 | 否。由后续 Tivoo 服务/网关使用 |
-| TCP 7778 | 16-byte TVIO header、version/message type/sequence；设备状态、麦克风 PCM、TTS 控制/状态 | 否 |
+| TCP 7777 | HA 主动连接 ESP32 TCP Server；raw Tivoo bridge control/connect/disconnect/data；完整 Tivoo 帧保持原始字节格式。P5 为单向 SPP 控制，P6 补齐返回数据 |
+| TCP 7778 | 16-byte TVIO header、version/message type/sequence；P5 为 HELLO/ACK、诊断日志和错误；P6 扩展设备状态、麦克风 PCM、TTS 控制/状态 | 否 |
 | HTTP | ESP32 按 HA 下发 URL GET TTS 音频资源 | 否 |
 | Classic SPP | ESP32 将完整 Tivoo raw frame 转发到 Tivoo-audio RFCOMM | 否，由 ESP32 负责 |
 
