@@ -1,3 +1,4 @@
+#include "diagnostics.h"
 #include "network_listeners.h"
 
 #include <stdint.h>
@@ -23,7 +24,11 @@ int main(int argc, char **argv)
     uint16_t diagnostic_port;
     if (argc != 3 || parse_port(argv[1], &control_port) != 0 ||
         parse_port(argv[2], &diagnostic_port) != 0 ||
-        network_listeners_start(control_port, diagnostic_port) != ESP_OK) {
+        tivoo_diagnostics_start() != ESP_OK) {
+        return EXIT_FAILURE;
+    }
+    if (network_listeners_start(control_port, diagnostic_port) != ESP_OK) {
+        tivoo_diagnostics_stop();
         return EXIT_FAILURE;
     }
 
@@ -39,5 +44,6 @@ int main(int argc, char **argv)
     }
 
     network_listeners_stop();
+    tivoo_diagnostics_stop();
     return EXIT_SUCCESS;
 }

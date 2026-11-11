@@ -1,9 +1,12 @@
 #include "network_listeners.h"
 
+#include "diagnostics.h"
+
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <arpa/inet.h>
@@ -28,6 +31,7 @@ typedef struct {
     uint16_t port;
     int listener_fd;
     int client_fd;
+    bool listen_error_reported;
 } listener_endpoint_t;
 
 static listener_endpoint_t s_endpoints[2];
@@ -65,7 +69,12 @@ static void close_fd(int *fd)
 
 static void close_endpoint(listener_endpoint_t *endpoint)
 {
-    close_fd(&endpoint->client_fd);
+    if (endpoint->client_fd >= 0) {
+        if (endpoint == &s_endpoints[1]) {
+            tivoo_diagnostics_client_disconnected(endpoint->client_fd);
+        }
+        close_fd(&endpoint->client_fd);
+    }
     close_fd(&endpoint->listener_fd);
 }
 
@@ -115,17 +124,39 @@ static void accept_one_client(listener_endpoint_t *endpoint)
         return;
     }
     endpoint->client_fd = client_fd;
+    if (endpoint == &s_endpoints[1]) {
+        tivoo_diagnostics_client_connected(client_fd);
+    }
 }
 
 static void check_client(listener_endpoint_t *endpoint)
 {
+    if (endpoint == &s_endpoints[1]) {
+        uint8_t data[2048];
+        const ssize_t result =
+            recv(endpoint->client_fd, data, sizeof(data), 0);
+        if (result > 0) {
+            if (!tivoo_diagnostics_client_data(
+                    endpoint->client_fd, data, (size_t)result)) {
+                close_endpoint(endpoint);
+            }
+            return;
+        }
+        if (result == 0 ||
+            (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+            close_endpoint(endpoint);
+        }
+        return;
+    }
+
     char byte;
-    int result = (int)recv(endpoint->client_fd, &byte, sizeof(byte), MSG_PEEK);
+    const int result =
+        (int)recv(endpoint->client_fd, &byte, sizeof(byte), MSG_PEEK);
     if (result == 0 || result > 0 ||
         (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
          errno != EINTR)) {
-        /* P5b1 has no payload protocol. Close clients that send early data. */
-        close_fd(&endpoint->client_fd);
+        /* P5b1 control placeholder rejects early payloads until P5b3. */
+        close_endpoint(endpoint);
     }
 }
 
@@ -190,9 +221,21 @@ static void listener_worker(void)
         }
 
         for (size_t i = 0; i < 2; i++) {
-            if (s_endpoints[i].listener_fd < 0) {
-                s_endpoints[i].listener_fd =
-                    create_listener(s_endpoints[i].port);
+            listener_endpoint_t *endpoint = &s_endpoints[i];
+            if (endpoint->listener_fd < 0) {
+                endpoint->listener_fd = create_listener(endpoint->port);
+                if (endpoint->listener_fd >= 0) {
+                    endpoint->listen_error_reported = false;
+                } else if (!endpoint->listen_error_reported) {
+                    char message[80];
+                    (void)snprintf(
+                        message, sizeof(message),
+                        "tcp_listener_bind_failed port=%u",
+                        (unsigned int)endpoint->port);
+                    tivoo_report_error(
+                        "tcp_listen_failed", "tcp_listeners", message);
+                    endpoint->listen_error_reported = true;
+                }
             }
         }
         poll_listeners();

@@ -8,6 +8,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
+#include "diagnostics.h"
 #include "network_listeners.h"
 
 static const char *TAG = "tivoo_wifi";
@@ -27,28 +28,31 @@ static void station_event_handler(
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Initial Station connect failed (error %d)", (int)err);
+            tivoo_report_error(
+                "wifi_connect_failed", TAG, "initial_station_connect_failed");
         }
         return;
     }
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        TIVOO_LOGW(TAG, "station_disconnected");
         network_listeners_set_ip_available(false);
         esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Station reconnect request failed (error %d)", (int)err);
+            tivoo_report_error(
+                "wifi_connect_failed", TAG, "station_reconnect_request_failed");
         }
         return;
     }
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ESP_LOGI(TAG, "Station acquired IPv4; TCP listeners enabled");
+        TIVOO_LOGI(TAG, "station_connected");
         network_listeners_set_ip_available(true);
         return;
     }
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
-        ESP_LOGW(TAG, "Station IPv4 lost; TCP listeners disabled");
+        TIVOO_LOGW(TAG, "station_ipv4_lost");
         network_listeners_set_ip_available(false);
     }
 }
@@ -73,7 +77,9 @@ esp_err_t tivoo_wifi_station_start(void)
     const size_t password_length = strlen(CONFIG_TIVOO_WIFI_PASSWORD);
 
     if (ssid_length == 0 || ssid_length > 32 || password_length > 64) {
-        ESP_LOGE(TAG, "Wi-Fi credentials are not configured or exceed limits");
+        tivoo_report_error(
+            "wifi_init_failed", TAG,
+            "wifi_credentials_missing_or_exceeding_limits");
         return ESP_ERR_INVALID_ARG;
     }
 

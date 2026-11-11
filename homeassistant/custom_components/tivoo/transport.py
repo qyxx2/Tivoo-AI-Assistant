@@ -1,17 +1,49 @@
-"""ESP32 TCP connection lifecycle; application protocols are added later."""
+"""ESP32 TCP transport and P5 diagnostic protocol handling."""
 
 import asyncio
+import json
+import logging
 
 from homeassistant.exceptions import HomeAssistantError
 
 from .commands import TivooCommand
+from .diagnostics import (
+    TYPE_DIAGNOSTIC_LOG,
+    TYPE_ERROR,
+    TYPE_HELLO,
+    TYPE_HELLO_ACK,
+    DiagnosticFrameStream,
+    encode_message,
+)
+
+_LOGGER = logging.getLogger("custom_components.tivoo")
 
 CONTROL_PORT = 7777
 DIAGNOSTIC_PORT = 7778
 
+_ERROR_CODES = {
+    "wifi_init_failed",
+    "wifi_connect_failed",
+    "tcp_listen_failed",
+    "spp_init_failed",
+    "spp_connect_failed",
+    "spp_disconnect_failed",
+    "spp_not_connected",
+    "spp_tx_queue_full",
+    "spp_write_failed",
+    "tcp_control_malformed",
+    "tivoo_frame_malformed",
+}
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+}
+
 
 class Esp32ConnectionAdapter:
-    """Maintain independent TCP connections to the ESP32 listeners."""
+    """Maintain independent control and diagnostic connections to ESP32."""
 
     def __init__(self, host: str | None, retry_interval: float = 1.0) -> None:
         self.host = host
@@ -25,7 +57,7 @@ class Esp32ConnectionAdapter:
         self._stopping = False
 
     async def async_start(self) -> None:
-        """Start the independent connection loops when a host is configured."""
+        """Start independent connection loops when a host is configured."""
         if not self.host or self._tasks:
             return
 
@@ -63,12 +95,13 @@ class Esp32ConnectionAdapter:
     async def async_execute(self, command: TivooCommand) -> None:
         """Reject commands until the raw control bridge is implemented."""
         raise HomeAssistantError(
-            "Tivoo command forwarding is unavailable in P5b1; "
+            "Tivoo command forwarding remains unavailable after P5b1 and "
+            "until P5b3 implements the 7777 bridge; "
             f"{command.name} was not sent"
         )
 
     async def _connection_loop(self, channel: str, port: int) -> None:
-        """Connect and wait for peer closure; keep this channel independent."""
+        """Connect/reconnect one channel without coupling the other channel."""
         assert self.host is not None
         while not self._stopping:
             self.states[channel] = "connecting"
@@ -78,12 +111,18 @@ class Esp32ConnectionAdapter:
                     reader, writer = await asyncio.open_connection(self.host, port)
                 self._writers[channel] = writer
                 self.states[channel] = "connected"
-                # P5b1 owns connection state only. Later batches add each
-                # channel's protocol reader; no payload is interpreted here.
-                while await reader.read(4096):
-                    pass
-            except (OSError, TimeoutError):
-                self.states[channel] = "disconnected"
+
+                if channel == "diagnostic":
+                    await self._diagnostic_session(reader, writer)
+                else:
+                    # P5b2 intentionally leaves the 7777 raw control bridge
+                    # untouched; it is implemented by the next P5 batch.
+                    while await reader.read(4096):
+                        pass
+            except (OSError, TimeoutError) as err:
+                _LOGGER.debug("ESP32 %s channel disconnected: %s", channel, err)
+            except (ValueError, TypeError) as err:
+                _LOGGER.warning("ESP32 %s protocol error: %s", channel, err)
             except asyncio.CancelledError:
                 raise
             finally:
@@ -98,3 +137,139 @@ class Esp32ConnectionAdapter:
             if not self._stopping:
                 self.states[channel] = "disconnected"
                 await asyncio.sleep(self.retry_interval)
+
+    async def _diagnostic_session(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        """Negotiate TVIO v1 then consume device logs until this socket closes."""
+        frames = DiagnosticFrameStream()
+        handshaken = False
+
+        while data := await reader.read(4096):
+            for message in frames.feed(data):
+                if not handshaken:
+                    if message.message_type != TYPE_HELLO:
+                        raise ValueError("first diagnostic message must be HELLO")
+                    payload = self._decode_json(message.payload)
+                    self._validate_hello(payload)
+
+                    if payload["protocol_version"] != 1:
+                        acknowledgement = {
+                            "accepted": False,
+                            "reason": "unsupported_protocol_version",
+                        }
+                    else:
+                        acknowledgement = {"accepted": True}
+
+                    writer.write(
+                        encode_message(
+                            TYPE_HELLO_ACK,
+                            json.dumps(acknowledgement, separators=(",", ":")).encode(
+                                "utf-8"
+                            ),
+                            0,
+                        )
+                    )
+                    await writer.drain()
+                    if not acknowledgement["accepted"]:
+                        return
+
+                    handshaken = True
+                    _LOGGER.info(
+                        "ESP32 diagnostic channel ready: %s firmware=%s reset=%s",
+                        payload["device_id"],
+                        payload["firmware_version"],
+                        payload["reset_reason"],
+                    )
+                    continue
+
+                try:
+                    if message.message_type == TYPE_DIAGNOSTIC_LOG:
+                        self._log_diagnostic(self._decode_json(message.payload))
+                    elif message.message_type == TYPE_ERROR:
+                        self._log_error(self._decode_json(message.payload))
+                    # Unknown and not-applicable message types are ignored in P5.
+                except (ValueError, TypeError) as err:
+                    _LOGGER.warning(
+                        "Ignoring invalid ESP32 diagnostic message: %s", err
+                    )
+
+    @staticmethod
+    def _decode_json(payload: bytes) -> dict:
+        try:
+            value = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as err:
+            raise ValueError(f"invalid JSON payload: {err}") from err
+        if not isinstance(value, dict):
+            raise TypeError("JSON payload must be an object")
+        return value
+
+    @staticmethod
+    def _validate_hello(payload: dict) -> None:
+        if (
+            payload.get("device_id") != "tivoo-esp32"
+            or not isinstance(payload.get("firmware_version"), str)
+            or not payload["firmware_version"]
+            or payload.get("capabilities") != ["spp_control", "remote_diagnostics"]
+            or not isinstance(payload.get("reset_reason"), str)
+            or not payload["reset_reason"]
+            or isinstance(payload.get("protocol_version"), bool)
+            or not isinstance(payload.get("protocol_version"), int)
+        ):
+            raise ValueError("invalid HELLO payload")
+
+    @staticmethod
+    def _validate_log_fields(payload: dict) -> tuple[str, str, int]:
+        module = payload.get("module")
+        message = payload.get("message")
+        uptime_ms = payload.get("uptime_ms")
+        if (
+            not isinstance(module, str)
+            or not module
+            or not isinstance(message, str)
+            or len(message.encode("utf-8")) > 384
+            or isinstance(uptime_ms, bool)
+            or not isinstance(uptime_ms, int)
+            or uptime_ms < 0
+        ):
+            raise ValueError("invalid diagnostic log fields")
+        return module, message, uptime_ms
+
+    def _log_diagnostic(self, payload: dict) -> None:
+        level = payload.get("level")
+        if level not in _LOG_LEVELS:
+            raise ValueError("invalid diagnostic log level")
+        module, message, uptime_ms = self._validate_log_fields(payload)
+        correlation_id = payload.get("correlation_id")
+        if correlation_id is not None and not isinstance(correlation_id, str):
+            raise ValueError("invalid diagnostic correlation_id")
+        dropped_count = payload.get("dropped_count")
+        if dropped_count is not None and (
+            isinstance(dropped_count, bool)
+            or not isinstance(dropped_count, int)
+            or dropped_count < 0
+        ):
+            raise ValueError("invalid diagnostic dropped_count")
+
+        suffix = f" [module={module} uptime_ms={uptime_ms}"
+        if correlation_id:
+            suffix += f" correlation_id={correlation_id}"
+        if dropped_count is not None:
+            suffix += f" dropped_count={dropped_count}"
+        suffix += "]"
+        _LOGGER.log(_LOG_LEVELS[level], "ESP32 %s%s", message, suffix)
+
+    def _log_error(self, payload: dict) -> None:
+        error_code = payload.get("error_code")
+        if error_code not in _ERROR_CODES:
+            raise ValueError("invalid ESP32 error_code")
+        module, message, uptime_ms = self._validate_log_fields(payload)
+        correlation_id = payload.get("correlation_id")
+        if correlation_id is not None and not isinstance(correlation_id, str):
+            raise ValueError("invalid ERROR correlation_id")
+
+        suffix = f" [module={module} uptime_ms={uptime_ms}"
+        if correlation_id:
+            suffix += f" correlation_id={correlation_id}"
+        suffix += "]"
+        _LOGGER.error("ESP32 %s: %s%s", error_code, message, suffix)

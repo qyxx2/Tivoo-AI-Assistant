@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 LISTENER_SOURCE = ROOT / "esp32/firmware/main/network_listeners.c"
 LISTENER_HEADER = ROOT / "esp32/firmware/main/network_listeners.h"
 SIMULATOR_SOURCE = ROOT / "esp32/tests/p5b1_network_simulator/listener_host.c"
+DIAGNOSTICS_SOURCE = ROOT / "esp32/firmware/main/diagnostics.c"
+CJSON_SOURCE = ROOT / "esp32/firmware/managed_components/espressif__cjson/cJSON/cJSON.c"
 
 
 def _free_port() -> int:
@@ -36,6 +38,12 @@ def _wait_closed(sock: socket.socket) -> None:
     assert sock.recv(1) == b""
 
 
+def _drain_until_closed(sock: socket.socket) -> None:
+    sock.settimeout(2)
+    while sock.recv(4096):
+        pass
+
+
 def _assert_refused(port: int) -> None:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -56,13 +64,18 @@ def test_ip_events_manage_both_tcp_listeners_and_enforce_one_client(tmp_path):
             "-std=c11",
             "-D_POSIX_C_SOURCE=200809L",
             "-DNETWORK_LISTENERS_HOST",
+            "-DTIVOO_DIAGNOSTICS_HOST_TEST",
             "-Wall",
             "-Wextra",
             "-Werror",
             "-pthread",
             "-I",
             str(LISTENER_HEADER.parent),
+            "-I",
+            str(CJSON_SOURCE.parent),
             str(LISTENER_SOURCE),
+            str(DIAGNOSTICS_SOURCE),
+            str(CJSON_SOURCE),
             str(SIMULATOR_SOURCE),
             "-o",
             str(binary),
@@ -111,7 +124,7 @@ def test_ip_events_manage_both_tcp_listeners_and_enforce_one_client(tmp_path):
         process.stdin.write("down\n")
         process.stdin.flush()
         _wait_closed(control_client)
-        _wait_closed(diagnostic_client)
+        _drain_until_closed(diagnostic_client)
         _assert_refused(control_port)
         _assert_refused(diagnostic_port)
         control_client.close()
