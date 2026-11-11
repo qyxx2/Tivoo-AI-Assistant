@@ -135,7 +135,7 @@ P5 的 Tivoo TCP/SPP 适配以工作区现有仓库为参考，不把它的 Ardu
 
 - ESP32 使用 ESP-IDF 原生 `esp_wifi` Station API；初始化调用 `nvs_flash_init()`、`esp_netif_init()`、`esp_event_loop_create_default()`、`esp_netif_create_default_wifi_sta()`，再按 `esp_wifi_init()`、`esp_wifi_set_mode(WIFI_MODE_STA)`、`esp_wifi_set_config(WIFI_IF_STA, ...)`、`esp_wifi_start()` 启动；在 `IP_EVENT_STA_GOT_IP` 后启动两个 TCP Server，断线由 `WIFI_EVENT_STA_DISCONNECTED` 处理并重连。不实现 AP 配网门户。
 - SSID/密码由本地 Kconfig/menuconfig 输入并写入被 Git 忽略的 `sdkconfig`。不得写入 `sdkconfig.defaults`、源码、日志或 Git。发布的最终二进制包含运行所需的设备网络配置，交付时按用户本地网络生成。
-- ESP32 使用 DHCP 获取 IPv4 地址。HA Tivoo Config Flow 增加必需的 `esp32_host`（ESP32 DHCP 保留的 IPv4 地址）和可编辑的 `tivoo_bluetooth_mac`；MAC 默认值为本地实测协议记录的 `11:75:58:97:49:98`。P4 当前 Config Entry 还只有 `media_directory`：P5 必须保留该字段并迁移 Entry 版本；旧 Entry 不得猜测设备地址，未配置 `esp32_host` 时传输状态保持 unavailable，并要求用户通过集成重新配置补齐主机地址。
+- ESP32 使用 DHCP 获取 IPv4 地址。HA Tivoo Config Flow 增加必需的 `esp32_host`（ESP32 DHCP 保留的 IPv4 地址）和可编辑的 `tivoo_bluetooth_mac`；MAC 默认预填值为本地实测协议记录的 `11:75:58:97:49:98`，仅作 HA 表单初始值/旧 Entry 迁移兼容值，不是 ESP32 固件默认地址，也不代表替用户确认了当前设备。**`ConfigEntry.data["tivoo_bluetooth_mac"]` 是 Tivoo Classic SPP 目标 MAC 的唯一权威配置来源。** 用户使用手机蓝牙扫描，人工确认名称为 `Tivoo-audio` 的 Bluetooth Classic 设备后，将其 MAC 填入 HA 集成的该字段；不得误填 `Tivoo-light` 的 BLE 地址。HA 不扫描、不自动挑选蓝牙设备，ESP32 不保存第二份固定/备用 Tivoo MAC，也不执行设备发现。P4 当前 Config Entry 还只有 `media_directory`：P5 必须保留该字段并迁移 Entry 版本；旧 Entry 不得猜测 ESP32 地址，未配置 `esp32_host` 时传输状态保持 unavailable，并要求用户通过集成重新配置补齐主机地址。
 - 7777、7778 为本合同固定端口，不提供配置项；服务端使用 IPv4 `AF_INET`、`SOCK_STREAM`、`IPPROTO_IP`，绑定 `INADDR_ANY`，在 Station 获得 IPv4 后开始监听。HA 使用 Config Entry 的 `esp32_host` 连接这两个端口。每个 listener 同时只接收一个 HA client；额外连接直接拒绝/关闭，重新连接由 HA 独立重试。配置错误时不得静默改用其他端口。
 - Wi-Fi 断开时，停止接受新的网络控制数据并记录状态；按 ESP-IDF Station 事件恢复连接。网络日志队列不得阻塞 Wi-Fi 事件任务。
 
@@ -151,13 +151,13 @@ TCP 7777 是原始字节流，不是 JSON，也没有新增外层头部。P5 使
 | SPP 断开 | `96 <MAC:6 bytes>` | `0x96` 后跟 6 个原始蓝牙 MAC 字节 |
 | Tivoo 控制帧 | `01 <frame bytes...> 02` | 完整 Tivoo 原始协议帧，不转成十六进制文本 |
 
-P5 的 MAC 默认值 `11:75:58:97:49:98` 在 TCP 中以六个二进制字节发送：`11 75 58 97 49 98`。不得发送 ASCII 字符串 `"11:75:58:97:49:98"`。
+`0x69` 后的 MAC 必须取自 HA 当前 Config Entry 的 `tivoo_bluetooth_mac`，并以 6 个原始字节发送；不得从固件常量、sdkconfig、NVS 或其他第二配置源读取，也不得发送 ASCII MAC 字符串。HA 当前预填值 `11:75:58:97:49:98` 仅在用户确认该设备地址确实匹配后才作为有效目标使用。
 
 ### 6.2 SPP 寻址与客户端角色
 
 - ESP32 是 Bluetooth Classic SPP **initiator/client/master**，Tivoo 是远端 SPP acceptor；ESP32 不启动一个供 Tivoo 连接的本地 SPP Server。
-- `0x69 + MAC` 不带额外通道字节时，沿用上游默认行为：上游 `SPP_CHANNEL_AUTO=0xFF00`，先调用 `esp_spp_start_discovery()` 查找远端 RFCOMM SCN。上游 `discoverChannel()` 在服务发现启动失败、超时或未返回 SCN 时返回 0，`BluetoothHandler::connect()` 随后按 auto channel 的低字节回退到 SCN **1**；这与本机 `protocol-reference.md` 记录的 Tivoo RFCOMM Port 1 一致。
-- P5 不扫描设备、不依赖 BLE GATT；直接使用已知 MAC 建立 Classic SPP。
+- `0x69 + MAC` 不带额外通道字节时，沿用上游默认行为：上游 `SPP_CHANNEL_AUTO=0xFF00`，对 HA 已明确指定的远端 MAC 调用 `esp_spp_start_discovery()` 做 **SDP RFCOMM 服务通道查询**。这只是已选设备的服务通道发现，不是 Classic Bluetooth Inquiry 设备扫描。上游 `discoverChannel()` 在服务发现启动失败、超时或未返回 SCN 时返回 0，`BluetoothHandler::connect()` 随后按 auto channel 的低字节回退到 SCN **1**；这与本机 `protocol-reference.md` 记录的 Tivoo RFCOMM Port 1 一致。
+- P5 的 ESP32 不执行 Classic Bluetooth Inquiry、BLE Scan 或 BLE GATT 设备选择；不通过设备名自动匹配。它只接受 HA 经 `0x69 + 6-byte MAC` 明确指定的地址并建立 Classic SPP。这里的目标身份是手机扫描后由用户确认的 `Tivoo-audio` Classic Bluetooth 地址，不是 `Tivoo-light` BLE 身份。
 - SPP 发送需处理 `ESP_SPP_CONG_EVT` 和 `ESP_SPP_WRITE_EVT`；TCP recv 任务只解析并入队，独立 SPP worker 执行 SDP/connect/disconnect 和发送，不能在 Wi-Fi/TCP 回调中等待 SPP 写完成。SPP 初始化使用 `esp_spp_enhanced_init()` 且 `cfg.mode=ESP_SPP_MODE_CB`，保证收到 DATA_IND/CONG/WRITE callback；P5 只消费 CONG/WRITE 事件，不处理 DATA_IND 反向数据。
 - `0x69`、Tivoo frame、`0x96` 必须按 TCP 字节流到达顺序写入同一个 SPP worker 队列：先完成 SDP/connect 并收到 `ESP_SPP_OPEN_EVT`，再发送其后的 frame；每个 frame 的 SPP write 必须收到对应 `ESP_SPP_WRITE_EVT` 成功完成后才算发送完成；`0x96` 必须等它之前的 TX packet、聚合缓冲和在途 write 全部完成后再执行 disconnect。未连接时收到数据帧不得静默丢弃，使用 ERROR `spp_not_connected`；队列满使用 `spp_tx_queue_full`。
 - 发送队列沿用上游基线：`SPP_TX_QUEUE_SIZE=32`、聚合写缓冲 `SPP_TX_MAX=330` bytes、队列写入/拥塞/WRITE 完成等待各 1000 ms、SPP ready timeout 10000 ms、连接打开 settle 500 ms。上游 `TCP_PACING=15 ms` 也必须保留，但 pacing 在 SPP worker 的 frame 发送路径执行，不能让 TCP recv/listener 任务 sleep。P5 若需调整，必须记录原因并通过吞吐/断线测试。
@@ -294,7 +294,7 @@ P5 **不实现** 7777 SPP 反向数据通道，包括上游的 SPP DATA_IND 返�
 - 保持 HA 为 ESP32 唯一业务入口。HA 使用 Config Entry 中的 `esp32_host` 作为 TCP 目标地址；固定连接 7777 和 7778。
 - 在 P5 生产 Adapter 中实现：7777 TCP client、7778 TCP client、7778 header/JSON 编解码、HELLO/ACK、ERROR/DIAGNOSTIC_LOG 接收，以及断线后的重连和日志 logger 映射。
 - 现有 `UnavailableCommandAdapter` 由 P5 的最小传输 Adapter 替换；业务服务仍通过现有 `TivooCommand` 语义接缝提交命令。命令转换继续复用 HA 侧已有 Tivoo frame/payload builder，不把原始字节接口暴露给 MCP。
-- 7777 TCP 连接建立后发送一次 `0x69 + MAC`；同一连接中后续发送原始完整 Tivoo frames。连接重建后重新发送连接命令，再接受新的控制请求。
+- 7777 TCP 连接建立后，HA 从当前 Config Entry 读取唯一权威值 `tivoo_bluetooth_mac`，发送一次 `0x69 + MAC`；同一连接中后续发送原始完整 Tivoo frames。连接重建后必须重新读取当前 Config Entry 并发送连接命令，不能使用缓存的旧 MAC。HA 重新配置设备 MAC 时，Config Entry reload 关闭旧 TCP 会话；重连后发送新 MAC。ESP32 SPP worker 必须先有序结束当前活动 SPP 会话，再连接新地址；不得继续向旧设备发送后续控制帧。
 - 7778 断线重连独立于 7777，不重置正常的 SPP 连接；重连后重新 HELLO/ACK。
 - TCP write 成功只能报告数据已提交给本地传输层；P5 不提供 SPP 反向数据或设备确认，HA 不得声称屏幕动作已被设备确认。
 - 日志交由 HA 标准 logger，使用 HA 当前日志轮换/持久化配置，不在 integration 内自行追加文件。
@@ -304,10 +304,10 @@ P5 **不实现** 7777 SPP 反向数据通道，包括上游的 SPP DATA_IND 返�
 | 批次 | 实施内容 | 退出条件 |
 |---|---|---|
 | **P5b0（首要任务）** | ARM64 EIM/ESP-IDF v6.1 环境；工具/Python 环境；ESP32 target；三项音频组件精确版本与依赖锁；Classic SPP、I²S、AFE、codec、SRC 组合 smoke build；16MB Flash/8MB PSRAM sdkconfig 与分区表检查 | 所有后续阶段所需 API 在 IDF v6.1 + ESP32 target 下组合编译/链接；依赖锁和环境版本记录提交；未通过不得开始 P5b1；不进行硬件刷写 |
-| P5b1 | ESP-IDF 工程骨架、Kconfig Wi-Fi 凭据、Station 状态机、Reset Reason、7777/7778 listeners；HA Config Entry 迁移、reconfigure flow 和连接 Adapter 骨架 | 保留 P4 `media_directory`；旧 Entry 不猜 ESP32 地址，完成用户重新配置后才启用传输；自动化测试验证 IP 事件后启停监听、连接/断线状态和凭据不入仓库；使用网络模拟器，不刷写开发板 |
+| P5b1 | ESP-IDF 工程骨架、Kconfig Wi-Fi 凭据、Station 状态机、Reset Reason、7777/7778 listeners；HA Config Entry 迁移、包含可编辑 Tivoo MAC 的 reconfigure flow 和连接 Adapter 骨架 | 保留 P4 `media_directory`；旧 Entry 不猜 ESP32 地址；HA Config Entry 的 `tivoo_bluetooth_mac` 建立唯一地址配置入口，提供给用户填写手机确认的 `Tivoo-audio` Classic MAC；自动化测试验证配置字段/迁移/reconfigure、IP 事件后启停监听、连接/断线状态和凭据不入仓库；使用网络模拟器，不刷写开发板。P5b1 只建立配置入口，不提前发送 SPP 命令 |
 | P5b2 | 7778 TVIO framing、HELLO/ACK、ERROR/DIAGNOSTIC_LOG、HA logger 和断线补传 | 协议/HA 自动化测试通过；HA 日志进入标准 logger，由 NAS 上已有 HA `/config` 持久化；断线重连、补传、队列满和 dropped_count 测试通过 |
-| P5b3 | 7777 raw bridge、固定长度控制命令累积、上游帧流解析复用、Classic SPP initiator、SDP/SCN fallback、原样 SPP 转发 | 网络模拟器、frame goldens、SPP mock 和分段测试通过；不在此批次刷写开发板 |
-| P5b4 | 合并固件集成、故障注入、`merge-bin` 打包；将已通过构建及自动化验收的最终镜像交由 Windows 刷写，再通过 HA 网络验收 Wi-Fi/7777/7778/实际 Tivoo SPP | 所有 MUST 合同通过；Windows 只执行最终镜像刷写，不参与源码、构建、测试或日志分析；若修复后需要重新做实机回归，Windows 仍只重复刷写新生成的最终镜像；输出 merged image、flash 参数、版本清单和 SHA256 |
+| P5b3 | 7777 raw bridge、固定长度控制命令累积、上游帧流解析复用、Classic SPP initiator、SDP/SCN fallback、原样 SPP 转发；唯一使用 HA Config Entry 的 `tivoo_bluetooth_mac` 作为目标地址 | 网络模拟器、frame goldens、SPP mock 和分段测试通过；覆盖从 Config Entry 取 MAC、`0x69+MAC` 字节值、重新配置后断开旧 SPP peer 并连接新 peer；不得加入固件固定 MAC 或自动扫描选择；不在此批次刷写开发板 |
+| P5b4 | 合并固件集成、故障注入、`merge-bin` 打包；将已通过构建及自动化验收的最终镜像交由 Windows 刷写，再通过 HA 网络验收 Wi-Fi/7777/7778/实际 Tivoo SPP | 所有 MUST 合同通过；使用手机扫描确认 `Tivoo-audio` Classic MAC 并写入 HA 配置；实机验证该 MAC 被用于 SPP 连接，修改 HA MAC 后无需重刷固件即可切换到新 Tivoo；Windows 只执行最终镜像刷写，不参与源码、构建、测试或日志分析；若修复后需要重新做实机回归，Windows 仍只重复刷写新生成的最终镜像；输出 merged image、flash 参数、版本清单和 SHA256 |
 
 ### 10.1 P5 合同矩阵
 
@@ -334,6 +334,8 @@ P5 **不实现** 7777 SPP 反向数据通道，包括上游的 SPP DATA_IND 返�
 | P5-C19 | 凭据、PCM 和完整对话文本不出现在固件日志 | MUST | log redaction tests / source review |
 | P5-C20 | Windows 不参与开发；ARM64 生成可独立刷写的 merged image 和校验信息 | MUST | artifact manifest + SHA256 verify |
 | P5-C21 | P5 不实现完整 7777 reverse channel、7778 heartbeat/DEVICE_STATUS/audio messages、HTTP audio、I²S/AEC/VAD | MUST boundary | scope/code review |
+| P5-C22 | HA Config Entry 的 `tivoo_bluetooth_mac` 是 Tivoo Classic SPP 目标地址的唯一权威来源；用户用手机确认 `Tivoo-audio` Classic MAC 后手动填写；ESP32 不持有固定/备用 MAC，不扫描或自动选择设备；`Tivoo-light` BLE 地址不得代替 | MUST | HA Config Flow/reconfigure test、0x69 payload source test、firmware code review |
+| P5-C23 | 更换 Tivoo 只修改 HA Config Entry 的 MAC；HA reload 后在新 7777 会话发送新 `0x69+MAC`，ESP32 有序断开旧 SPP peer 并连接新地址，不要求修改/重刷固件，也不再向旧设备发帧 | MUST | HA reconfigure/reload test、SPP worker switch test、P5b4 real-device replacement test |
 
 ## 11. 明确排除项与不得扩张的内容
 
@@ -343,7 +345,8 @@ P5 不实现：
 - 7778 PING/PONG 心跳、GET_STATUS/DEVICE_STATUS、DEVICE_EVENT、MIC_SESSION、MIC_PCM、TTS_PLAY、AUDIO_STOP、AUDIO_STATE、AUDIO_INTERRUPTED；
 - HTTP Client 音频资源获取、HTTP Server、媒体流、PCM 和音频解码；
 - I²S RX/TX 实际驱动、INMP441、PCM5102、ESP-SR AFE runtime、AEC/VAD runtime、SRC/decoder runtime；
-- BLE GATT、WakeNet 本地唤醒、A2DP、OTA、Core Dump 网络回传、日志写入 Flash、配网门户、mDNS、MQTT 或额外协议；
+- ESP32 Classic Bluetooth Inquiry 设备扫描、BLE Scan/GATT、按设备名自动匹配/选择设备；设备 MAC 只由用户手机扫描确认后手动写入 HA Config Entry；
+- WakeNet 本地唤醒、A2DP、OTA、Core Dump 网络回传、日志写入 Flash、配网门户、mDNS、MQTT 或额外协议；
 - Windows 编译/调试/日志分析环境。
 
 B0 为 P7/P8 提前验证组件兼容性，不等于 P5 实现了音频功能；P5 合并固件不需启动 AFE、codec 或 SRC。
@@ -362,4 +365,4 @@ P5 完成时至少产出：
 - 固件版本、Git commit、target、Flash 配置和 SHA256 manifest；
 - P5b0–P5b4 验收结果。
 
-**阶段退出条件：** P5-C01 至 P5-C20 全部 MUST 通过，P5-C21 边界检查通过；失败项不得通过修改 P6/P7/P8 合同来规避。
+**阶段退出条件：** P5-C01 至 P5-C20、P5-C22、P5-C23 全部 MUST 通过，P5-C21 边界检查通过；失败项不得通过修改 P6/P7/P8 合同来规避。

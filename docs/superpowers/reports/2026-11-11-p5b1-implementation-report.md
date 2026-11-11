@@ -16,16 +16,23 @@
 
 ### Home Assistant
 - Upgraded the Tivoo Config Entry to version 2.
-- Added ESP32 IPv4 and Tivoo Bluetooth MAC config fields, validation, and reconfigure flow.
-- Migration from v1 preserves existing entry data and adds only the default Bluetooth MAC. It never guesses or inserts `esp32_host`; migrated entries without a host keep both connection channels unavailable until user reconfiguration.
+- Added ESP32 IPv4 and Tivoo Bluetooth MAC config fields, validation, and reconfigure flow. The form has an explicit `Tivoo-audio Classic Bluetooth MAC` field; its current prefill is HA-side only.
+- Migration from v1 preserves existing entry data and adds only the default Bluetooth MAC prefill. It never guesses or inserts `esp32_host`; migrated entries without a host keep both connection channels unavailable until user reconfiguration.
 - Preserved the existing media directory and service registration behavior.
 - Added independent HA TCP connection loops for ports 7777 and 7778, with connect/disconnect/reconnect states and unload cleanup.
 - Command execution deliberately remains unavailable in P5b1 and raises a clear error; no command payload is sent.
 
+### Bluetooth address ownership and downstream contract
+
+- The authoritative Tivoo Classic SPP target is the single HA Config Entry field `tivoo_bluetooth_mac`. The user scans with a phone, confirms the `Tivoo-audio` Classic Bluetooth device, and enters that address in HA; `Tivoo-light` is a separate BLE identity and must not be used.
+- HA does not scan or automatically choose Bluetooth devices. ESP32 firmware must not contain a fixed/backup Tivoo MAC or independently discover a target; P5b3 receives the selected address through the existing `0x69 + 6-byte MAC` command.
+- Replacing the Tivoo means changing this HA field. The HA entry reload closes the old TCP session; the next 7777 session sends the new address, and the ESP32 SPP worker switches peers in order. No firmware edit or reflashing is required.
+- This is a clarified cross-batch contract, not P5b1 SPP runtime implementation. P5b1 only delivers the HA field/reconfigure entry point; P5b3 implements address consumption and peer switching; P5b4 verifies a real-device change.
+
 ### Network simulator and guidance
 - Added a POSIX/pthread simulator that compiles the same listener source used by the ESP-IDF target.
 - Added `esp32/firmware/README.md` with local build, secret handling, listener lifecycle, and simulator instructions.
-- Added this report and an execution-plan checklist. The P5 contract matrix and its existing batch definitions were not modified.
+- Added this report and an execution-plan checklist. A follow-up documentation review closed the previously implicit Bluetooth address ownership/replacement contract in the authoritative P5 matrix; batch boundaries remain intact, with address consumption assigned to P5b3 and physical replacement verification assigned to P5b4.
 
 ## Verification
 

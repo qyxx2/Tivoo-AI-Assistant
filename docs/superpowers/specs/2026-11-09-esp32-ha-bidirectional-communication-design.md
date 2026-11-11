@@ -30,10 +30,10 @@
 
 | 设备身份 | 类型 | 当前已知用途 |
 |---|---|---|
-| `Tivoo-light` | BLE | 设备发现/广播身份 |
+| `Tivoo-light` | BLE | 设备广播身份；不是本项目的屏幕控制地址 |
 | `Tivoo-audio` | Bluetooth Classic RFCOMM | 实际控制通道，当前记录的 RFCOMM 通道为 1 |
 
-当前图形、文字、动画、亮度和已确认的内置功能命令均通过 Tivoo Classic SPP 控制。
+当前图形、文字、动画、亮度和已确认的内置功能命令均通过 Tivoo Classic SPP 控制。用户使用手机蓝牙扫描并人工确认 `Tivoo-audio` 的 Classic MAC，再将其填写到 HA Tivoo 集成的 `tivoo_bluetooth_mac` Config Entry 字段。该字段是整个系统唯一的 Tivoo SPP 目标地址来源；不得使用 `Tivoo-light` 的 BLE 地址。更换 Tivoo 时只修改 HA 该字段并重新加载集成，不修改或重刷 ESP32 固件。HA 不扫描/自动选择设备，ESP32 也不执行 Classic peer inquiry 或 BLE scan。
 
 **BLE GATT 灯光控制不属于本项目实现目标。** 现有本地协议记录没有给出适用于该 Tivoo 的 GATT 服务/特征 UUID、可写特征或灯控命令；现有 `esp32-divoom` 代码也没有实现 BLE GATT Client。仅观察到 `Tivoo-light` BLE 身份存在，不足以证明它提供可用的 GATT 灯控接口。
 
@@ -199,7 +199,7 @@ ESP32 HTTP Client ── GET 音频 URL ──> HA HTTP Resource（TTS / 预录�
 - `TcpInput`：TCP Server、接收缓冲、数据队列及数据解析入口。
 - `appendFrames()` / `getFrameSize()` / `isFramePending()`：从 TCP 字节流中组装完整 Tivoo 帧，处理 TCP 分段和粘连。
 - `BluetoothSpp`：Classic Bluetooth 初始化、SPP 连接、发送队列、拥塞处理、发送完成事件、SDP RFCOMM 通道发现。
-- `BluetoothHandler`：连接状态、断线重连、设备发现和 SPP 接收事件。
+- `BluetoothHandler`：连接状态、按上层明确给定的远端 MAC 执行连接/断线重连，以及 SPP 事件回调；不移植其 Classic peer inquiry 自动发现流程。
 - `BluetoothOutput`：将收到的 Tivoo 原始二进制数据写入 SPP，并将设备返回数据转发回 TCP。
 
 原仓库采用 Arduino/AsyncTCP 等平台层封装，而本项目固件基于 ESP-IDF。应复用协议逻辑和蓝牙实现思路，按 ESP-IDF 环境适配；不得为了复用而把整套 Arduino 网络运行时强行引入固件。
@@ -245,7 +245,7 @@ ESP32 HTTP Client ── GET 音频 URL ──> HA HTTP Resource（TTS / 预录�
 00 <MAC 的 6 个原始字节> <name_length> <UTF-8 name bytes>
 ```
 
-实际项目固定使用已配置的 Tivoo 地址，不要求 AI 每次重新发现设备；设备发现事件可用于诊断和首次配网。
+实际项目只使用 HA Config Entry 中由用户确认的 `tivoo_bluetooth_mac`。上面的 `0x00` 发现帧格式仅保留为上游协议兼容记录；本项目不通过 ESP32 设备扫描产生/消费首次配网选择，也不允许该帧自动修改 HA Config Entry。手机扫描和人工录入是唯一设备确认流程。
 
 ### 4.3 图形、图片与动画
 
@@ -619,7 +619,7 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 | `BluetoothBridgeTest/esp32-divoom/components/divoom/input_tcp.cpp` | TCP 7777 接入、命令识别、反向数据发送 | 保留协议兼容，按 ESP-IDF 适配网络层 |
 | `esp32-divoom/components/divoom/util.cpp` | Tivoo 帧拆分/组装、TCP 拆包与粘包处理 | 优先复用 `appendFrames` 和帧长度校验 |
 | `esp32-divoom/components/divoom/bluetooth_spp.cpp` | SPP 连接、SDP、发送队列、拥塞处理 | 作为 ESP-IDF SPP 模块主要实现参考 |
-| `esp32-divoom/components/divoom/hardware_bluetoothctl.cpp` | 设备发现、连接/重连和 SPP 事件回调 | 复用状态机和回调职责 |
+| `esp32-divoom/components/divoom/hardware_bluetoothctl.cpp` | 设备发现、连接/重连和 SPP 事件回调 | 只复用按指定 MAC 连接/重连的状态机和回调职责；不复用 Classic peer inquiry 自动发现流程 |
 | `esp32-divoom/components/divoom/output_bluetooth.cpp` | 原始数据向 SPP 转发 | 沿用简单转发边界 |
 | `BluetoothBridgeTest/tivoo/tivoo.py` | 图片缩放、像素编码、帧构建、外层校验 | HA 侧复用，不在 ESP32 重写 |
 | `BluetoothBridgeTest/tivoo/commands.py` | 常见 Tivoo 命令 Payload Builder | HA 端按需复用/移植 |

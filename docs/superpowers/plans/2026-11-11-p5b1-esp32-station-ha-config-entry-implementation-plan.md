@@ -4,11 +4,11 @@
 
 **Goal:** Implement the P5b1 production ESP-IDF scaffold and the corresponding Home Assistant configuration/connection lifecycle without implementing later P5 protocol batches.
 
-**Architecture:** The ESP32 firmware uses ESP-IDF v6.1 native Wi-Fi Station events to control two independent IPv4 TCP listeners. The HA Tivoo integration migrates its existing Config Entry without inventing an ESP32 address, requires explicit IPv4 reconfiguration, and maintains independent connection-state loops for ports 7777 and 7778. Both ends stop at connection lifecycle; P5b2/P5b3 own message framing and control forwarding.
+**Architecture:** The ESP32 firmware uses ESP-IDF v6.1 native Wi-Fi Station events to control two independent IPv4 TCP listeners. The HA Tivoo integration migrates its existing Config Entry without inventing an ESP32 address, requires explicit IPv4 reconfiguration, and maintains independent connection-state loops for ports 7777 and 7778. HA Config Entry field `tivoo_bluetooth_mac` is the only authoritative Tivoo SPP target address; the user confirms the `Tivoo-audio` Classic Bluetooth MAC with a phone scan and enters it in this HA field. P5b1 supplies that field/reconfigure UI; P5b3 consumes it via `0x69 + MAC`; P5b4 verifies physical connection and device replacement. Both ends stop at connection lifecycle; P5b2/P5b3 own message framing and control forwarding.
 
 **Tech Stack:** ESP-IDF v6.1 / ESP32 / Xtensa ARM64 toolchain; C and BSD sockets; Home Assistant Core 2026.11.0; pytest-homeassistant; a POSIX host simulator for the firmware listener source.
 
-**Spec:** docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md — authoritative requirements in §2, §3, §5.1–§5.2, §8, §9, P5b1 row in §10, and P5-C07/C08/C16/C19/C20/C21 in §10.1. The matrix is the single source for batch definitions; this plan must not redefine P5b1–P5b4.
+**Spec:** docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md — authoritative requirements in §2, §3, §5.1–§5.2, §8, §9, P5b1 row in §10, and P5-C07/C08/C16/C19/C20/C21/C22/C23 in §10.1 (C22/C23 are cross-batch handoff requirements for P5b3/P5b4, not P5b1 runtime work). The matrix is the single source for batch definitions; this plan must not redefine P5b1–P5b4.
 
 ## Global Constraints
 
@@ -17,7 +17,7 @@
 - Store Wi-Fi SSID/password only in local ignored sdkconfig through Kconfig; never put credentials in defaults, source, logs, or Git.
 - Start listeners only after Station receives IPv4; stop listeners when the IPv4 connection is lost.
 - TCP 7777 and 7778 are fixed IPv4 listeners, one HA client each, independent of one another.
-- Preserve media_directory; migrate the old entry without guessing esp32_host; require user reconfiguration before transport starts.
+- Preserve media_directory; migrate the old entry without guessing esp32_host; require user reconfiguration before transport starts. The HA Config Entry `tivoo_bluetooth_mac` is the sole authoritative SPP target; the user manually confirms the `Tivoo-audio` Classic Bluetooth MAC with a phone scan and enters it in this HA field (never the `Tivoo-light` BLE address). ESP32 must not define or persist a separate default/fallback Tivoo MAC.
 - HA connects to the configured IPv4 host on ports 7777 and 7778 independently. No payload framing, HELLO, SPP transfer, or audio behavior in P5b1.
 - Use the existing TivooCommand semantic seam. Command execution must remain explicitly unavailable until the later raw bridge is implemented; never report a device action as completed.
 - Develop and test on the ARM64 Ubuntu host. Do not flash or require USB access to the development board.
@@ -25,7 +25,7 @@
 ## Review Focus
 
 - Legacy entry with a missing ESP32 host must remain unavailable until the user supplies an IPv4 address; it must never inherit a guessed LAN address.
-- Reconfiguration must preserve an existing media_directory and Bluetooth MAC unless the user changes them.
+- Reconfiguration must preserve an existing media_directory and Bluetooth MAC unless the user changes them; when the user changes the MAC, the Config Entry becomes the new authority for subsequent P5b3 reconnects.
 - Wi-Fi credentials must not appear in tracked files, build output, or logs; the local sdkconfig must stay ignored.
 - IPv4 loss must close both listeners and their accepted sockets; a later IP event must recreate them.
 - A second client on either port must be rejected without affecting the existing client or the other port.
@@ -43,9 +43,9 @@
 
 **Interfaces:**
 - Config Entry version becomes 2.
-- Add CONF_ESP32_HOST = "esp32_host", CONF_TIVOO_BLUETOOTH_MAC = "tivoo_bluetooth_mac", and default MAC 11:75:58:97:49:98.
-- async_migrate_entry(hass, entry) -> bool preserves all existing data, adds only the default MAC when absent, and upgrades v1 to v2. It must not invent esp32_host.
-- User and reconfigure flows validate IPv4, MAC, and the existing relative media_directory. Reconfiguration updates the same entry and preserves media_directory.
+- Add CONF_ESP32_HOST = "esp32_host", CONF_TIVOO_BLUETOOTH_MAC = "tivoo_bluetooth_mac", and retain the existing HA-side prefill/legacy migration value 11:75:58:97:49:98. The prefill is only a form convenience; the Config Entry value is the only selected target address.
+- async_migrate_entry(hass, entry) -> bool preserves all existing data, adds only the default MAC when absent, and upgrades v1 to v2. It must not invent esp32_host or write any Bluetooth MAC into ESP32 firmware configuration.
+- User and reconfigure flows expose a clearly labelled editable `Tivoo-audio Classic Bluetooth MAC` field. The field guidance identifies `Tivoo-audio` as the required Classic Bluetooth identity and tells the user to confirm its MAC with a phone scan; explicitly reject using `Tivoo-light` BLE identity. Reconfiguration updates the same entry and preserves media_directory.
 
 - [x] Write tests for v1 migration, missing-host behavior, required IPv4 input, MAC validation, and reconfigure preservation.
 - [x] Run the focused HA tests and observe failures against the current v1 integration.
@@ -101,6 +101,13 @@
 
 ---
 
+## Cross-batch Bluetooth identity handoff (not P5b1 runtime work)
+
+- P5b1 owns the explicit HA Config Entry field and reconfigure UI only; it does not discover/connect to Tivoo or send SPP commands.
+- P5b3 must read the current `tivoo_bluetooth_mac` from Config Entry whenever the 7777 control connection is (re)established and send its six raw bytes in `0x69 + MAC`. It must not cache a prior MAC across Config Entry reloads or introduce an ESP32-side MAC setting.
+- When the HA MAC is changed, reconfigure reloads the integration and closes the old TCP connection. The next 7777 connection sends the new MAC; the ESP32 SPP worker disconnects the active peer before connecting the new peer, preserving FIFO ordering. P5b4 validates this with the physical Tivoo.
+- The phone is an external discovery/confirmation tool only. HA does not scan Bluetooth and ESP32 does not auto-discover/select devices.
+
 ## Acceptance and Commit
 
-P5b1 is complete only when Tasks 1–3 pass, the production firmware builds for ESP32 under ESP-IDF v6.1, the host simulator proves the listener lifecycle/client limit, HA tests pass, and no board flashing or P5b2–P5b4 behavior is performed. Commit only P5b1 sources, tests, plan, and report on the existing P5 branch.
+P5b1 is complete only when Tasks 1–3 pass, the production firmware builds for ESP32 under ESP-IDF v6.1, the host simulator proves the listener lifecycle/client limit, HA tests pass, and no board flashing or P5b2–P5b4 behavior is performed. The HA-only MAC source and downstream handoff above are documented here; actual `0x69 + MAC` switching remains P5b3/P5b4 scope. Commit only P5b1 sources, tests, plan, and report on the existing P5 branch.

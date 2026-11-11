@@ -3,20 +3,20 @@
     "step": {
       "user": {
         "title": "Configure Tivoo",
-        "description": "Set the HA media directory, ESP32 IPv4 address, and Tivoo Bluetooth MAC.",
+        "description": "Set the HA media directory and ESP32 IPv4 address. Enter the Bluetooth Classic MAC shown for your Tivoo-audio device; confirm it with a phone Bluetooth scan. Do not use the Tivoo-light BLE address.",
         "data": {
           "media_directory": "Media directory",
           "esp32_host": "ESP32 IPv4 address",
-          "tivoo_bluetooth_mac": "Tivoo Bluetooth MAC"
+          "tivoo_bluetooth_mac": "Tivoo-audio Classic Bluetooth MAC"
         }
       },
       "reconfigure": {
         "title": "Reconfigure Tivoo",
-        "description": "Enter the reserved IPv4 address of the ESP32 device.",
+        "description": "Update the ESP32 IPv4 address or selected Tivoo device. When replacing the Tivoo, scan and confirm the new Tivoo-audio Classic Bluetooth MAC with your phone, then enter it here. Do not use the Tivoo-light BLE address.",
         "data": {
           "media_directory": "Media directory",
           "esp32_host": "ESP32 IPv4 address",
-          "tivoo_bluetooth_mac": "Tivoo Bluetooth MAC"
+          "tivoo_bluetooth_mac": "Tivoo-audio Classic Bluetooth MAC"
         }
       }
     }
