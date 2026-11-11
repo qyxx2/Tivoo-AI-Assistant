@@ -1,7 +1,11 @@
 """Tests for the Tivoo Home Assistant integration setup."""
 
 import pytest
-from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    SOURCE_USER,
+    ConfigEntryState,
+)
 from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.helpers.translation import async_get_translations
 from pytest_homeassistant.common import MockConfigEntry
@@ -18,7 +22,8 @@ async def _submit_user_flow(hass, media_directory=DEFAULT_MEDIA_DIRECTORY):
     )
     assert result["type"] == "form"
     return await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={"media_directory": media_directory}
+        result["flow_id"],
+        user_input={"media_directory": media_directory, "esp32_host": "127.0.0.1"},
     )
 
 
@@ -33,7 +38,9 @@ async def test_manifest_is_a_single_configurable_service(
     assert integration.manifest["integration_type"] == "service"
 
 
-async def test_config_flow_uses_pixelart_as_default_media_directory(hass):
+async def test_config_flow_uses_pixelart_as_default_media_directory(
+    hass, socket_enabled
+):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
@@ -47,20 +54,28 @@ async def test_config_flow_uses_pixelart_as_default_media_directory(hass):
     assert marker.default() == DEFAULT_MEDIA_DIRECTORY
 
     created = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={}
+        result["flow_id"], user_input={"esp32_host": "127.0.0.1"}
     )
     assert created["type"] == "create_entry"
-    assert created["data"] == {"media_directory": DEFAULT_MEDIA_DIRECTORY}
+    assert created["data"] == {
+        "media_directory": DEFAULT_MEDIA_DIRECTORY,
+        "esp32_host": "127.0.0.1",
+        "tivoo_bluetooth_mac": "11:75:58:97:49:98",
+    }
 
 
-async def test_config_flow_saves_custom_media_directory(hass):
+async def test_config_flow_saves_custom_media_directory(hass, socket_enabled):
     result = await _submit_user_flow(hass, "media/tivoo")
 
     assert result["type"] == "create_entry"
-    assert result["data"] == {"media_directory": "media/tivoo"}
+    assert result["data"] == {
+        "media_directory": "media/tivoo",
+        "esp32_host": "127.0.0.1",
+        "tivoo_bluetooth_mac": "11:75:58:97:49:98",
+    }
 
 
-async def test_config_flow_rejects_a_second_instance(hass):
+async def test_config_flow_rejects_a_second_instance(hass, socket_enabled):
     first = await _submit_user_flow(hass)
     assert first["type"] == "create_entry"
 
@@ -98,11 +113,20 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
         "show_image",
         "play_animation",
     }
-    assert hass.data[DOMAIN][entry.entry_id]["media_directory"] == hass.config.path(
-        DEFAULT_MEDIA_DIRECTORY
-    )
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    assert runtime["media_directory"] == hass.config.path(DEFAULT_MEDIA_DIRECTORY)
+    assert runtime["connection_adapter"].states == {
+        "control": "unavailable",
+        "diagnostic": "unavailable",
+    }
+    assert "esp32_host" not in entry.data
+    assert entry.version == 2
 
     assert await hass.config_entries.async_unload(entry.entry_id)
+    assert runtime["connection_adapter"].states == {
+        "control": "unavailable",
+        "diagnostic": "unavailable",
+    }
     assert entry.state is ConfigEntryState.NOT_LOADED
     assert not hass.services.has_service(DOMAIN, "stop_countdown")
     assert not hass.services.has_service(DOMAIN, "set_volume")
@@ -121,7 +145,8 @@ async def test_config_flow_rejects_media_directory_outside_config_root(
         DOMAIN, context={"source": SOURCE_USER}
     )
     configured = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={"media_directory": media_directory}
+        result["flow_id"],
+        user_input={"media_directory": media_directory, "esp32_host": "127.0.0.1"},
     )
 
     assert configured["type"] == "form"
@@ -185,3 +210,94 @@ async def test_config_and_service_descriptions_are_available(
         services[DOMAIN]["start_countdown"]["fields"]["countdown"]["required"] is True
     )
     assert services[DOMAIN]["set_brightness"]["fields"]["value"]["required"] is True
+
+
+async def test_config_flow_rejects_non_ipv4_esp32_host(hass):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    configured = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"media_directory": DEFAULT_MEDIA_DIRECTORY, "esp32_host": "::1"},
+    )
+
+    assert configured["type"] == "form"
+    assert configured["errors"] == {"esp32_host": "invalid_ipv4"}
+
+
+async def test_config_flow_rejects_invalid_tivoo_bluetooth_mac(hass):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    configured = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "media_directory": DEFAULT_MEDIA_DIRECTORY,
+            "esp32_host": "127.0.0.1",
+            "tivoo_bluetooth_mac": "not-a-mac",
+        },
+    )
+
+    assert configured["type"] == "form"
+    assert configured["errors"] == {"tivoo_bluetooth_mac": "invalid_mac"}
+
+
+async def test_legacy_entry_migration_preserves_media_without_guessing_host(hass):
+    import importlib
+
+    integration = importlib.import_module("custom_components.tivoo")
+    migrate = getattr(integration, "async_migrate_entry", None)
+    assert callable(migrate), "Tivoo Config Entry migration must be implemented"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tivoo",
+        data={"media_directory": "media/tivoo"},
+        version=1,
+        unique_id=DOMAIN,
+    )
+    entry.add_to_hass(hass)
+
+    assert await migrate(hass, entry)
+    assert entry.version == 2
+    assert entry.data == {
+        "media_directory": "media/tivoo",
+        "tivoo_bluetooth_mac": "11:75:58:97:49:98",
+    }
+    assert "esp32_host" not in entry.data
+
+
+async def test_reconfigure_adds_explicit_host_and_preserves_existing_media(
+    hass, socket_enabled
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tivoo",
+        data={
+            "media_directory": "media/tivoo",
+            "esp32_host": "127.0.0.1",
+            "tivoo_bluetooth_mac": "11:75:58:97:49:98",
+        },
+        version=2,
+        unique_id=DOMAIN,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    assert result["type"] == "form"
+    updated = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "media_directory": "media/tivoo",
+            "esp32_host": "127.0.0.1",
+            "tivoo_bluetooth_mac": "11:75:58:97:49:98",
+        },
+    )
+
+    assert updated["type"] == "abort"
+    assert entry.data["media_directory"] == "media/tivoo"
+    assert entry.data["esp32_host"] == "127.0.0.1"
+    assert entry.data["tivoo_bluetooth_mac"] == "11:75:58:97:49:98"

@@ -3,9 +3,20 @@
     "step": {
       "user": {
         "title": "Configure Tivoo",
-        "description": "Choose the media directory relative to the Home Assistant configuration directory.",
+        "description": "Set the HA media directory, ESP32 IPv4 address, and Tivoo Bluetooth MAC.",
         "data": {
-          "media_directory": "Media directory"
+          "media_directory": "Media directory",
+          "esp32_host": "ESP32 IPv4 address",
+          "tivoo_bluetooth_mac": "Tivoo Bluetooth MAC"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Tivoo",
+        "description": "Enter the reserved IPv4 address of the ESP32 device.",
+        "data": {
+          "media_directory": "Media directory",
+          "esp32_host": "ESP32 IPv4 address",
+          "tivoo_bluetooth_mac": "Tivoo Bluetooth MAC"
         }
       }
     }

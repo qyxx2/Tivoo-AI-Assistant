@@ -4,6 +4,9 @@ DOMAIN = "tivoo"
 
 CONF_MEDIA_DIRECTORY = "media_directory"
 DEFAULT_MEDIA_DIRECTORY = "pixelart"
+CONF_ESP32_HOST = "esp32_host"
+CONF_TIVOO_BLUETOOTH_MAC = "tivoo_bluetooth_mac"
+DEFAULT_TIVOO_BLUETOOTH_MAC = "11:75:58:97:49:98"
 
 SERVICE_STOP_COUNTDOWN = "stop_countdown"
 SERVICE_SET_VOLUME = "set_volume"
