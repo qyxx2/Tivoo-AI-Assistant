@@ -12,6 +12,9 @@ LISTENER_SOURCE = ROOT / "esp32/firmware/main/network_listeners.c"
 LISTENER_HEADER = ROOT / "esp32/firmware/main/network_listeners.h"
 SIMULATOR_SOURCE = ROOT / "esp32/tests/p5b1_network_simulator/listener_host.c"
 DIAGNOSTICS_SOURCE = ROOT / "esp32/firmware/main/diagnostics.c"
+CONTROL_BRIDGE_SOURCE = ROOT / "esp32/firmware/main/control_bridge.c"
+FRAME_STREAM_SOURCE = ROOT / "esp32/firmware/main/tivoo_frame_stream.c"
+CONTROL_STUB_SOURCE = ROOT / "esp32/tests/p5b3_control_simulator/control_bridge_host_stub.c"
 CJSON_SOURCE = ROOT / "esp32/firmware/managed_components/espressif__cjson/cJSON/cJSON.c"
 
 
@@ -74,8 +77,11 @@ def test_ip_events_manage_both_tcp_listeners_and_enforce_one_client(tmp_path):
             "-I",
             str(CJSON_SOURCE.parent),
             str(LISTENER_SOURCE),
+            str(CONTROL_BRIDGE_SOURCE),
+            str(FRAME_STREAM_SOURCE),
             str(DIAGNOSTICS_SOURCE),
             str(CJSON_SOURCE),
+            str(CONTROL_STUB_SOURCE),
             str(SIMULATOR_SOURCE),
             "-o",
             str(binary),

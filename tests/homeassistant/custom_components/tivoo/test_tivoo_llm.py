@@ -161,7 +161,7 @@ async def test_stop_countdown_tool_calls_the_existing_service_with_empty_data_an
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_stop_countdown_tool_propagates_unavailable_adapter_error(
+async def test_stop_countdown_tool_propagates_missing_control_channel_error(
     hass, enable_custom_integrations
 ):
     await _setup_llm(hass)
@@ -169,7 +169,7 @@ async def test_stop_countdown_tool_propagates_unavailable_adapter_error(
     _, regular = await _create_users(hass)
 
     api = await _assist_api(hass, regular)
-    with pytest.raises(HomeAssistantError, match="unavailable"):
+    with pytest.raises(HomeAssistantError, match="control channel"):
         await api.async_call_tool(
             llm_helpers.ToolInput(tool_name=TOOL_NAME, tool_args={})
         )

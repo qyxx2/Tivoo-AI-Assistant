@@ -99,12 +99,12 @@ async def test_set_volume_requires_volume(hass, enable_custom_integrations):
     ("service", "data"),
     [("stop_countdown", {}), ("set_volume", {"volume": 50})],
 )
-async def test_unavailable_production_adapter_fails_instead_of_reporting_success(
+async def test_production_adapter_rejects_commands_without_control_connection(
     hass, enable_custom_integrations, service, data
 ):
     await _loaded_entry(hass)
 
-    with pytest.raises(HomeAssistantError, match="unavailable"):
+    with pytest.raises(HomeAssistantError, match="control channel"):
         await hass.services.async_call(DOMAIN, service, data, blocking=True)
 
 
@@ -113,6 +113,4 @@ async def test_unloaded_tivoo_service_is_not_callable(hass, enable_custom_integr
     assert await hass.config_entries.async_unload(entry.entry_id)
 
     with pytest.raises(HomeAssistantError):
-        await hass.services.async_call(
-            DOMAIN, "stop_countdown", {}, blocking=True
-        )
+        await hass.services.async_call(DOMAIN, "stop_countdown", {}, blocking=True)

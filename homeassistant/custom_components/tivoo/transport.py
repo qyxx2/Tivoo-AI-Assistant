@@ -15,6 +15,7 @@ from .diagnostics import (
     DiagnosticFrameStream,
     encode_message,
 )
+from .protocol import encode_command
 
 _LOGGER = logging.getLogger("custom_components.tivoo")
 
@@ -45,9 +46,28 @@ _LOG_LEVELS = {
 class Esp32ConnectionAdapter:
     """Maintain independent control and diagnostic connections to ESP32."""
 
-    def __init__(self, host: str | None, retry_interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        host: str | None,
+        bluetooth_mac: str | None = None,
+        retry_interval: float = 1.0,
+    ) -> None:
         self.host = host
         self.retry_interval = retry_interval
+        self._bluetooth_mac = None
+        if host:
+            if not isinstance(bluetooth_mac, str):
+                raise ValueError(
+                    "Tivoo Bluetooth MAC is required when ESP32 host is set"
+                )
+            mac = bluetooth_mac.replace(":", "").replace("-", "")
+            if len(mac) != 12:
+                raise ValueError("Tivoo Bluetooth MAC must contain six octets")
+            try:
+                self._bluetooth_mac = bytes.fromhex(mac)
+            except ValueError as err:
+                raise ValueError("Tivoo Bluetooth MAC must be hexadecimal") from err
+        self._control_write_lock = asyncio.Lock()
         self.states = {
             "control": "unavailable",
             "diagnostic": "unavailable",
@@ -93,12 +113,31 @@ class Esp32ConnectionAdapter:
         self.states = {"control": state, "diagnostic": state}
 
     async def async_execute(self, command: TivooCommand) -> None:
-        """Reject commands until the raw control bridge is implemented."""
-        raise HomeAssistantError(
-            "Tivoo command forwarding remains unavailable after P5b1 and "
-            "until P5b3 implements the 7777 bridge; "
-            f"{command.name} was not sent"
-        )
+        """Send encoded Tivoo command frames through the active 7777 session."""
+        try:
+            packets = encode_command(command)
+        except (KeyError, TypeError, ValueError) as err:
+            raise HomeAssistantError(
+                f"Invalid Tivoo command {command.name}: {err}"
+            ) from err
+
+        async with self._control_write_lock:
+            writer = self._writers.get("control")
+            if (
+                self.states["control"] != "connected"
+                or writer is None
+                or writer.is_closing()
+            ):
+                raise HomeAssistantError(
+                    f"ESP32 control channel is not connected; {command.name} was not sent"
+                )
+            try:
+                writer.write(b"".join(packets))
+                await writer.drain()
+            except (OSError, ConnectionError) as err:
+                raise HomeAssistantError(
+                    f"ESP32 control channel failed while sending {command.name}"
+                ) from err
 
     async def _connection_loop(self, channel: str, port: int) -> None:
         """Connect/reconnect one channel without coupling the other channel."""
@@ -110,15 +149,17 @@ class Esp32ConnectionAdapter:
                 async with asyncio.timeout(5):
                     reader, writer = await asyncio.open_connection(self.host, port)
                 self._writers[channel] = writer
-                self.states[channel] = "connected"
-
-                if channel == "diagnostic":
-                    await self._diagnostic_session(reader, writer)
-                else:
-                    # P5b2 intentionally leaves the 7777 raw control bridge
-                    # untouched; it is implemented by the next P5 batch.
+                if channel == "control":
+                    if self._bluetooth_mac is None:
+                        raise ValueError("Tivoo Bluetooth MAC is not configured")
+                    writer.write(b"\x69" + self._bluetooth_mac)
+                    await writer.drain()
+                    self.states[channel] = "connected"
                     while await reader.read(4096):
                         pass
+                else:
+                    self.states[channel] = "connected"
+                    await self._diagnostic_session(reader, writer)
             except (OSError, TimeoutError) as err:
                 _LOGGER.debug("ESP32 %s channel disconnected: %s", channel, err)
             except (ValueError, TypeError) as err:

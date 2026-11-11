@@ -18,7 +18,10 @@ from .transport import Esp32ConnectionAdapter
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Tivoo services and the shared runtime for one config entry."""
     media_directory = entry.data.get(CONF_MEDIA_DIRECTORY, DEFAULT_MEDIA_DIRECTORY)
-    adapter = Esp32ConnectionAdapter(entry.data.get(CONF_ESP32_HOST))
+    adapter = Esp32ConnectionAdapter(
+        entry.data.get(CONF_ESP32_HOST),
+        entry.data.get(CONF_TIVOO_BLUETOOTH_MAC, DEFAULT_TIVOO_BLUETOOTH_MAC),
+    )
     await adapter.async_start()
 
     runtime = {

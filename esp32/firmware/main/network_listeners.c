@@ -1,6 +1,7 @@
 #include "network_listeners.h"
 
 #include "diagnostics.h"
+#include "control_bridge.h"
 
 #include <errno.h>
 #include <stdatomic.h>
@@ -15,6 +16,13 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#define TCP_RECV_BUFFER_SIZE CONFIG_LWIP_TCP_MSS
+#else
+#define TCP_RECV_BUFFER_SIZE 2048
+#endif
 
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
@@ -70,7 +78,9 @@ static void close_fd(int *fd)
 static void close_endpoint(listener_endpoint_t *endpoint)
 {
     if (endpoint->client_fd >= 0) {
-        if (endpoint == &s_endpoints[1]) {
+        if (endpoint == &s_endpoints[0]) {
+            tivoo_control_client_disconnected(endpoint->client_fd);
+        } else {
             tivoo_diagnostics_client_disconnected(endpoint->client_fd);
         }
         close_fd(&endpoint->client_fd);
@@ -124,7 +134,9 @@ static void accept_one_client(listener_endpoint_t *endpoint)
         return;
     }
     endpoint->client_fd = client_fd;
-    if (endpoint == &s_endpoints[1]) {
+    if (endpoint == &s_endpoints[0]) {
+        tivoo_control_client_connected(client_fd);
+    } else {
         tivoo_diagnostics_client_connected(client_fd);
     }
 }
@@ -132,7 +144,7 @@ static void accept_one_client(listener_endpoint_t *endpoint)
 static void check_client(listener_endpoint_t *endpoint)
 {
     if (endpoint == &s_endpoints[1]) {
-        uint8_t data[2048];
+        uint8_t data[TCP_RECV_BUFFER_SIZE];
         const ssize_t result =
             recv(endpoint->client_fd, data, sizeof(data), 0);
         if (result > 0) {
@@ -149,13 +161,17 @@ static void check_client(listener_endpoint_t *endpoint)
         return;
     }
 
-    char byte;
-    const int result =
-        (int)recv(endpoint->client_fd, &byte, sizeof(byte), MSG_PEEK);
-    if (result == 0 || result > 0 ||
-        (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
-         errno != EINTR)) {
-        /* P5b1 control placeholder rejects early payloads until P5b3. */
+    uint8_t data[TCP_RECV_BUFFER_SIZE];
+    const ssize_t result = recv(endpoint->client_fd, data, sizeof(data), 0);
+    if (result > 0) {
+        if (!tivoo_control_client_data(
+                endpoint->client_fd, data, (size_t)result)) {
+            close_endpoint(endpoint);
+        }
+        return;
+    }
+    if (result == 0 ||
+        (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
         close_endpoint(endpoint);
     }
 }

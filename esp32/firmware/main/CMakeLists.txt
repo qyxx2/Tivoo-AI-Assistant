@@ -4,12 +4,18 @@ idf_component_register(
         "wifi_station.c"
         "network_listeners.c"
         "diagnostics.c"
+        "control_bridge.c"
+        "tivoo_frame_stream.c"
+        "bt_security_policy.c"
+        "tivoo_spp.c"
+        "tivoo_spp_session.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_event
         esp_netif
         esp_timer
         esp_wifi
+        bt
         espressif__cjson
         lwip
         nvs_flash

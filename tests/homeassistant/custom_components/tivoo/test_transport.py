@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from custom_components.tivoo import transport
 from custom_components.tivoo.const import DOMAIN
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant.common import MockConfigEntry
 
@@ -52,7 +53,9 @@ async def test_connections_are_independent_and_reconnect_separately(
         transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
     )
 
-    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", retry_interval=0.05)
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=0.05
+    )
     await adapter.async_start()
     try:
         await _wait_for_state(adapter, "control", "connected")
@@ -93,10 +96,10 @@ async def test_missing_host_keeps_both_channels_unavailable():
     await adapter.async_stop()
 
 
-async def test_command_execution_remains_unavailable_in_p5b1():
-    adapter = transport.Esp32ConnectionAdapter("127.0.0.1")
+async def test_command_execution_requires_a_connected_control_channel():
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
 
-    with pytest.raises(HomeAssistantError, match="P5b1"):
+    with pytest.raises(HomeAssistantError, match="control channel"):
         await adapter.async_execute(
             transport.TivooCommand(name="set_brightness", data={"value": 50})
         )
@@ -107,9 +110,11 @@ async def test_config_entry_starts_and_stops_both_connections(
 ):
     control_clients = []
     diagnostic_clients = []
+    control_macs = []
 
     async def control_handler(reader, writer):
         control_clients.append(writer)
+        control_macs.append(await reader.readexactly(7))
         await reader.read()
 
     async def diagnostic_handler(reader, writer):
@@ -144,6 +149,7 @@ async def test_config_entry_starts_and_stops_both_connections(
         adapter = hass.data[DOMAIN][entry.entry_id]["connection_adapter"]
         await _wait_for_state(adapter, "control", "connected")
         await _wait_for_state(adapter, "diagnostic", "connected")
+        assert control_macs == [bytes.fromhex("69 11 75 58 97 49 98")]
 
         assert await hass.config_entries.async_unload(entry.entry_id)
         assert adapter.states == {"control": "stopped", "diagnostic": "stopped"}
@@ -251,7 +257,9 @@ async def test_diagnostic_handshake_and_device_messages_use_standard_logger(
         transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
     )
 
-    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", retry_interval=5)
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
     await adapter.async_start()
     try:
         await _wait_for_state(adapter, "control", "connected")
@@ -321,7 +329,9 @@ async def test_unsupported_hello_protocol_is_rejected_and_closes_only_diagnostic
         transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
     )
 
-    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", retry_interval=10)
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=10
+    )
     await adapter.async_start()
     try:
         await _wait_for_state(adapter, "control", "connected")
@@ -387,7 +397,9 @@ async def test_invalid_diagnostic_json_is_ignored_without_losing_connection(
         transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
     )
 
-    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", retry_interval=5)
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
     await adapter.async_start()
     try:
         await _wait_for_log(caplog, "still_connected")
@@ -398,5 +410,187 @@ async def test_invalid_diagnostic_json_is_ignored_without_losing_connection(
         await adapter.async_stop()
         control_server.close()
         diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_control_connection_sends_authoritative_mac_and_encoded_commands(
+    monkeypatch, socket_enabled
+):
+    from custom_components.tivoo.protocol import encode_command
+
+    received = []
+
+    async def control_handler(reader, writer):
+        received.append(await reader.readexactly(7))
+        received.append(await reader.readexactly(8))
+        await reader.read()
+        writer.close()
+        await writer.wait_closed()
+
+    async def diagnostic_handler(reader, writer):
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
+    try:
+        await adapter.async_start()
+        await _wait_for_state(adapter, "control", "connected")
+        command = transport.TivooCommand("set_brightness", {"value": 100})
+        await adapter.async_execute(command)
+        for _ in range(100):
+            if len(received) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert received[0] == bytes.fromhex("69 11 75 58 97 49 98")
+        assert received[1] == encode_command(command)[0]
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_new_config_entry_mac_is_sent_after_adapter_replacement(
+    monkeypatch, socket_enabled
+):
+    received = []
+
+    async def control_handler(reader, writer):
+        received.append(await reader.readexactly(7))
+        await reader.read()
+        writer.close()
+        await writer.wait_closed()
+
+    async def diagnostic_handler(reader, writer):
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+    adapters = [
+        transport.Esp32ConnectionAdapter(
+            "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+        ),
+        transport.Esp32ConnectionAdapter(
+            "127.0.0.1", "AA:BB:CC:DD:EE:FF", retry_interval=5
+        ),
+    ]
+    try:
+        for adapter in adapters:
+            await adapter.async_start()
+            await _wait_for_state(adapter, "control", "connected")
+            await asyncio.sleep(0.03)
+            await adapter.async_stop()
+        assert received[:2] == [
+            bytes.fromhex("69 11 75 58 97 49 98"),
+            bytes.fromhex("69 AA BB CC DD EE FF"),
+        ]
+    finally:
+        for adapter in adapters:
+            await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_config_entry_mac_change_reload_connects_the_new_peer(
+    hass, socket_enabled, monkeypatch
+):
+    control_clients = []
+    diagnostic_clients = []
+    control_macs = []
+
+    async def control_handler(reader, writer):
+        control_clients.append(writer)
+        control_macs.append(await reader.readexactly(7))
+        await reader.read()
+        writer.close()
+        await writer.wait_closed()
+
+    async def diagnostic_handler(reader, writer):
+        diagnostic_clients.append(writer)
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tivoo",
+        data={
+            "media_directory": "pixelart",
+            "esp32_host": "127.0.0.1",
+            "tivoo_bluetooth_mac": "11:75:58:97:49:98",
+        },
+        version=2,
+        unique_id=DOMAIN,
+    )
+    entry.add_to_hass(hass)
+    adapter = None
+
+    try:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        adapter = hass.data[DOMAIN][entry.entry_id]["connection_adapter"]
+        await _wait_for_state(adapter, "control", "connected")
+        await _wait_for_state(adapter, "diagnostic", "connected")
+        for _ in range(100):
+            if len(control_macs) == 1:
+                break
+            await asyncio.sleep(0.01)
+        assert control_macs == [bytes.fromhex("69 11 75 58 97 49 98")]
+
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                "tivoo_bluetooth_mac": "AA:BB:CC:DD:EE:FF",
+            },
+        )
+        assert await hass.config_entries.async_reload(entry.entry_id)
+
+        reloaded_adapter = hass.data[DOMAIN][entry.entry_id]["connection_adapter"]
+        assert reloaded_adapter is not adapter
+        await _wait_for_state(reloaded_adapter, "control", "connected")
+        await _wait_for_state(reloaded_adapter, "diagnostic", "connected")
+        for _ in range(100):
+            if len(control_macs) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert control_macs == [
+            bytes.fromhex("69 11 75 58 97 49 98"),
+            bytes.fromhex("69 AA BB CC DD EE FF"),
+        ]
+        adapter = reloaded_adapter
+    finally:
+        if entry.state is ConfigEntryState.LOADED:
+            await hass.config_entries.async_unload(entry.entry_id)
+        if adapter is not None:
+            await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await _close_clients(control_clients + diagnostic_clients)
         await control_server.wait_closed()
         await diagnostic_server.wait_closed()
