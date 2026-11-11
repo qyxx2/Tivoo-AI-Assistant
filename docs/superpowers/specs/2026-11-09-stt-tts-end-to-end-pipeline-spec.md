@@ -10,7 +10,7 @@
 
 目标链路：
 
-- 上行：Tivoo 麦克风 → ESP32 采集与本地 VAD 门控 → HA Assist Satellite → HA Wyoming STT → Paraformer 最终转写 → AstrBot。
+- 上行：Tivoo 麦克风 → ESP32 采集与播放参考对齐 → AEC → 本地 VAD 门控 → HA Assist Satellite → HA Wyoming KWS/STT → Paraformer 最终转写 → AstrBot；TTS/其他声音播放期间保持采集和 AEC，以支持近端语音打断。
 - 下行：AstrBot SSE 增量文本 → HA Conversation Agent → HA Assist Pipeline/TTS Proxy → Wyoming TTS → 分句合成及 PCM 分块 → ESP32 HTTP 流式接收 → 解码与 I²S DAC → Tivoo AUX。
 - KWS/STT/TTS 模型和推理依赖运行在独立 Sherpa Wyoming 容器中，不装入 HA Core，也不装入 ESP32 固件。
 - 普通语音回复由 HA Pipeline 完成 TTS 调度；AstrBot 不直接调用 TTS 模型，也不直接向 ESP32 发送音频。
@@ -27,7 +27,7 @@
 | P7A KWS/STT/TTS 单容器部署、三个 Provider 的 Wyoming 事件、模型和健康检查合同 | [P7A Sherpa Wyoming 合同矩阵](2026-11-10-p7a-sherpa-wyoming-contract-matrix.md) |
 | 已核实的 HA 2026.11.0 Wyoming/Provider 能力、协议兼容细节及流式事件条件 | [项目主文档 §11.4](../../../README.md#114-ha-wyoming--provider-接入与流式回馈判断) |
 | STT/TTS 模型测试数据、设备环境、RTF、内存和样本 | [项目主文档 §11](../../../README.md#11-stt--tts-实测结果) 与 [benchmarks/voice](../../../benchmarks/voice/) |
-| ESP32 麦克风 PCM 上行、TTS URL 通知、HTTP 拉流、播放状态和 Satellite 结束条件 | [ESP32 ↔ HA 双向通信规格 §6–§8、§12](2026-11-09-esp32-ha-bidirectional-communication-design.md) |
+| ESP32 单 I²S 全双工硬件基线、AEC/播放参考、全局音频打断、32 kHz ↔ P7A 音频格式转换、麦克风 PCM 上行、TTS URL/HTTP 拉流、HA 取消与 Satellite 收尾条件 | [ESP32 ↔ HA 双向通信规格 §2.2–§2.4、§6–§9、§12–§14](2026-11-09-esp32-ha-bidirectional-communication-design.md) |
 | Paraformer 实测方法与限制 | [STT 对比报告](../../../benchmarks/voice/stt/STT_COMPARISON.md) |
 | TTS 模型测试及试听材料 | [NAS TTS 测试报告](../../../benchmarks/voice/tts/nas/README.md)、[ARM Ubuntu Matcha/Melo 测试](../../../tts-benchmark-matcha-melo/README.md) |
 
@@ -75,9 +75,10 @@ Conversation Agent 是 HA 与 AstrBot 的文本桥梁：
 
 ESP32 只负责物理音频与设备侧实时任务：
 
-- I²S 采集、预录缓冲、本地 VAD 门控及麦克风 PCM 上行。
-- 按 HA 通知的 URL 获取 TTS 音频流，增量解码、PCM 缓冲并驱动 I²S TX/DAC。
-- 把播放完成、停止或失败状态反馈给 HA。
+- 使用同一 I²S Controller 的 32 kHz Standard/Philips 全双工 RX/TX；INMP441 原始左 Slot 数据和最终输出 PCM 参考分别转换为 16 kHz S16LE，送入经典 ESP32 target 的 ESP-SR AFE AEC；AEC 后的单声道 PCM 供 VAD、预录缓冲和麦克风上传共用。
+- 按 HA 通知的 URL 获取编码 TTS 音频流，增量解码并有状态重采样到 32 kHz，提交给统一音频输出管理器，再驱动 PCM5102 I²S TX。所有 ESP32 受控声音源通过该管理器；全局停止在最终输出层执行，不只取消 TTS 任务。
+- 播放期间持续采集并运行 AEC/VAD；本地 near-end VAD 打断后停止全局输出并通知 HA 取消旧 Pipeline/TTS/对话流，再把新的语音作为 STT 阶段输入。具体设备协议、格式和取消行为以 [ESP32 ↔ HA 双向通信规格 §2.4、§6–§9](2026-11-09-esp32-ha-bidirectional-communication-design.md) 为准。
+- 把播放完成、停止、打断或失败状态反馈给 HA。
 - 音频播放期间保持 SPP 显示控制可用。
 
 音频格式、帧结构、TCP 端口、消息字段和播放状态名称以通信规格为准。
@@ -86,9 +87,9 @@ ESP32 只负责物理音频与设备侧实时任务：
 
 ### 4.1 处理顺序
 
-1. ESP32 在空闲状态持续本地采样，VAD 只负责判断是否启动上传；保留短时预录数据，避免丢失语音开头。
-2. VAD 触发后，ESP32 建立本轮麦克风会话，先上传预录音频，再持续上传实时 PCM。
-3. HA Assist Satellite 将音频流交给 Assist Pipeline。HA 服务端通过 P7A Sherpa Wyoming Wake Word Provider 判断是否命中唤醒词；未命中时 HA Pipeline 终止本轮，不进入 STT。
+1. ESP32 持续采集麦克风；播放期间同时取得最终播放参考，运行 AEC。AEC 后音频进入本地 VAD；空闲时 VAD 只负责判断是否启动上传，并保留短时预录数据。
+2. 普通空闲 VAD 触发后，ESP32 建立本轮麦克风会话，先上传 AEC 后预录音频，再持续上传实时增强 PCM。播放期间若检测到近端语音，则本地先停止最终音频输出并建立 `barge_in` 会话；此会话交给 HA 从 STT 阶段处理，不要求再次经过唤醒词。
+3. 普通 `idle_vad` 会话从 `PipelineStage.WAKE_WORD` 开始，由 HA 服务端通过 P7A Sherpa Wyoming Wake Word Provider 判断是否命中唤醒词；未命中时 HA Pipeline 终止本轮，不进入 STT。`barge_in` 会话是在本地已检测到播放期间近端语音后触发，应在旧响应取消收尾后从 `PipelineStage.STT` 启动，不再经过 KWS。
 4. 唤醒词命中后，Pipeline 将音频交给 Wyoming STT Provider。Provider 将收到的音频块按顺序交给当前识别会话。
 5. 当 HA 结束本轮音频输入并关闭 Wyoming 音频会话时，STT 服务调用 Paraformer OfflineRecognizer 完成整段识别。
 6. Wyoming 服务返回最终 Transcript；HA Pipeline 将文本交给 Conversation Agent。
@@ -182,7 +183,7 @@ AISHELL3 可保留为 NAS 多音色备选，但 8 kHz 输出的听感需要单�
 | AstrBot SSE 中断 | Conversation Agent 结束当前 HA 对话流并传播取消，不把未完成回答当成正常完成 |
 | TTS 流没有完整句末标点 | 流结束时提交剩余文本；流仍持续且缓冲过长时按长度上限提交 |
 | TTS 生成失败 | 终止当前合成流并报告错误，不伪造正常 AudioStop 完成 |
-| HA/ESP32 取消播放 | 停止后续 TTS 生成/传输；设备侧取消 HTTP 与播放任务，最终状态以通信规格为准 |
+| HA/ESP32 取消播放 | 通过全局音频输出停止终止所有 ESP32 受控音源及待播 PCM；取消 HTTP/解码/输出任务。若由近端语音触发，HA 还必须取消旧 Assist Pipeline、TTS Proxy、Conversation Agent SSE 和 P3 约定的 AstrBot session stop；最终状态以通信规格为准 |
 | ESP32 下载或播放失败 | 由设备报告失败；HA 结束或清理对应播报生命周期 |
 | 服务重启 | 旧请求不恢复、不重复播放；新请求重新建立会话，HA/ESP32 清理失效状态 |
 
@@ -228,6 +229,7 @@ AISHELL3 可保留为 NAS 多音色备选，但 8 kHz 输出的听感需要单�
 - 语音播放期间 Tivoo SPP 屏幕控制持续可用。
 - 记录从音频输入结束到 STT 文本可用、AstrBot 首段文本、首个 PCM 块、设备开始播放及播放完成的时间点，以区分各阶段延迟。
 - 连续多轮和较长回答测试中，无会话串线、重复播放、资源持续增长或无法退出的忙碌状态。
+- TTS 播放中用户近端语音可触发 AEC 后打断；设备先停最终输出，HA 取消旧响应并从 STT 处理新语音；扬声器自身回声不得稳定触发误打断。具体验收以通信规格 §12–§14 为准。
 
 ## 10. 当前未验收事项
 
