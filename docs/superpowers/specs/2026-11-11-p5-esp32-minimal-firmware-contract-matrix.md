@@ -161,8 +161,12 @@ TCP 7777 是原始字节流，不是 JSON，也没有新增外层头部。P5 使
 - SPP 发送需处理 `ESP_SPP_CONG_EVT` 和 `ESP_SPP_WRITE_EVT`；TCP recv 任务只解析并入队，独立 SPP worker 执行 SDP/connect/disconnect 和发送，不能在 Wi-Fi/TCP 回调中等待 SPP 写完成。SPP 初始化使用 `esp_spp_enhanced_init()` 且 `cfg.mode=ESP_SPP_MODE_CB`，保证收到 DATA_IND/CONG/WRITE callback；P5 只消费 CONG/WRITE 事件，不处理 DATA_IND 反向数据。
 - `0x69`、Tivoo frame、`0x96` 必须按 TCP 字节流到达顺序写入同一个 SPP worker 队列：先完成 SDP/connect 并收到 `ESP_SPP_OPEN_EVT`，再发送其后的 frame；每个 frame 的 SPP write 必须收到对应 `ESP_SPP_WRITE_EVT` 成功完成后才算发送完成；`0x96` 必须等它之前的 TX packet、聚合缓冲和在途 write 全部完成后再执行 disconnect。未连接时收到数据帧不得静默丢弃，使用 ERROR `spp_not_connected`；队列满使用 `spp_tx_queue_full`。
 - 发送队列沿用上游基线：`SPP_TX_QUEUE_SIZE=32`、聚合写缓冲 `SPP_TX_MAX=330` bytes、队列写入/拥塞/WRITE 完成等待各 1000 ms、SPP ready timeout 10000 ms、连接打开 settle 500 ms。上游 `TCP_PACING=15 ms` 也必须保留，但 pacing 在 SPP worker 的 frame 发送路径执行，不能让 TCP recv/listener 任务 sleep。P5 若需调整，必须记录原因并通过吞吐/断线测试。
-- SPP 安全参数按 IDF v6.1 `esp_spp_api.h` 处理：头文件 Security Setting Mask 总表将 `ESP_SPP_SEC_NONE`、`ESP_SPP_SEC_AUTHENTICATE`、`ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT` 列为双端支持，并将 `ESP_SPP_SEC_AUTHORIZE`、`ESP_SPP_SEC_MODE4_LEVEL4`、`ESP_SPP_SEC_MITM` 列为受限；同一头文件 `esp_spp_connect()` 参数注释另建议只用 NONE/AUTHORIZE/AUTHENTICATE，与总表存在文字不一致。上游固定 commit 实际采用 `ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT`，P5 暂按该可用掩码保留上游行为；B0 只验证编译/链接，必须在 P5 实机完成 Tivoo 配对验收，若连接/配对失败，停止验收并根据实测调整，不绕过错误继续。
-- 上游 GAP PIN 请求行为也按固定 commit 复用：收到 `ESP_BT_GAP_PIN_REQ_EVT` 时，若 `min_16_digit`，回复 16 个 ASCII `'0'`；否则回复 ASCII `1234`。若 Tivoo 实测要求固定 PIN，则通过项目私有 Kconfig 项提供覆写，不把 PIN 写入日志或提交到仓库。
+- SPP 安全参数按 IDF v6.1 `esp_spp_api.h` 处理：头文件 Security Setting Mask 总表将 `ESP_SPP_SEC_NONE`、`ESP_SPP_SEC_AUTHENTICATE`、`ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT` 列为双端支持，并将 `ESP_SPP_SEC_AUTHORIZE`、`ESP_SPP_SEC_MODE4_LEVEL4`、`ESP_SPP_SEC_MITM` 列为受限；同一头文件 `esp_spp_connect()` 参数注释另建议只用 NONE/AUTHORIZE/AUTHENTICATE，与总表存在文字不一致。上游固定 commit 实际采用 `ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT`，P5b3 先保留该掩码作为待实机验证基线，不把它视为已经证明兼容 Tivoo 的配对方案。IDF v6.1 在 SSP 安全模式下，认证/加密要求可能进一步要求 MITM；`ESP_BT_IO_CAP_NONE` 的 Just Works 本身不提供 MITM。P5b4 必须以真实 Tivoo 验证组合结果；失败时记录 `AUTH_CMPL` 状态与链路密钥类型，再根据证据调整安全参数，不得静默降级到 `ESP_SPP_SEC_NONE` 或把认证失败当成连接成功。
+- P5b3 必须在发起 SPP 连接前显式设置 `ESP_BT_SP_IOCAP_MODE = ESP_BT_IO_CAP_NONE`，如实声明 ESP32 没有供配对使用的键盘/显示器，不能依赖 IDF 内部默认值。这个能力声明允许双方协商可用的免交互 Just Works 路径，但不等于无条件接受所有 SSP 请求：`ESP_BT_GAP_CFM_REQ_EVT` 是需要比较数字的用户确认请求；当前 ESP32 没有可供用户核对的显示界面，必须调用 `esp_bt_gap_ssp_confirm_reply(bda, false)` 拒绝并报告该不支持的交互路径，不能直接 `accept=true`。`ESP_BT_GAP_KEY_REQ_EVT` 因本机没有键盘，必须调用 `esp_bt_gap_ssp_passkey_reply(bda, false, 0)` 拒绝；`KEY_NOTIF` 不得记录或假装显示给用户。同样不伪造键盘输入或输出 passkey；PIN/passkey 不得写入日志。
+- 首次配对的 Legacy PIN 路径沿用上游固定 commit：收到 `ESP_BT_GAP_PIN_REQ_EVT` 时，若 `min_16_digit`，回复 16 个 ASCII `'0'`；否则回复 ASCII `1234`。若实测要求固定 PIN，则通过项目私有 Kconfig 项提供覆写；不得把 PIN 写入日志或提交到仓库。SSP 仅在协商结果确为无需用户交互的 Just Works 等支持路径时自动完成；若 Tivoo 要求数值比较、输入 passkey 或其他交互，P5 当前硬件/产品流程不能自动满足，应明确失败而不是伪造确认。
+- GAP 回调必须处理 `ESP_BT_GAP_AUTH_CMPL_EVT`，记录目标 BDA、`stat` 和 `lk_type`。事件 BDA 与当前 HA 指定的目标 MAC 不一致时不得更新当前 peer 的认证状态；目标认证失败时清除该 peer 的可用连接状态、停止后续帧发送并输出非敏感诊断信息。成功的认证结果与 `ESP_SPP_OPEN_EVT` 一起用于确认 SPP 会话可用；不得仅因发起 `esp_spp_connect()` 或收到 TCP `0x69` 就报告已配对/已连接。
+- Bluedroid 原生 Bond Key 存储使用 NVS；NVS 必须在 Bluetooth Controller/Bluedroid 初始化前成功初始化。P5b3 必须检查并调整现有 `wifi_station.c::initialize_nvs()`：不得在 `ESP_ERR_NVS_NO_FREE_PAGES` 或 `ESP_ERR_NVS_NEW_VERSION_FOUND` 时无条件调用 `nvs_flash_erase()` 清空整个 NVS，因为这会同时删除 Bluedroid 已保存的 Link Key。此类初始化异常应停止蓝牙启动并报告错误，不能通过自动全擦除掩盖。不得另建应用层 Link Key 副本，也不得读取/记录密钥内容。
+- 成功完成首次认证后，Link Key 由 Bluedroid 自行保存到 NVS；P5b3 应通过 `esp_bt_gap_get_bond_device_num()` / `esp_bt_gap_get_bond_device_list()` 确认当前目标 MAC 已进入 bond list（只读取 peer 地址，不读取密钥内容）。相同 Tivoo 在 ESP32 重启/断电后应直接复用已保存的 Bond Key，不应每次要求手机重新配对或再次输入 PIN。更换为新 MAC 时，新 peer 首次连接按同一流程配对并保存自己的 Bond Key；目标 MAC 的权威来源仍是 HA Config Entry，不因 Bond Key 持久化而引入固件固定 MAC。
 
 ### 6.3 Tivoo frame 格式与 TCP 流处理
 
@@ -306,8 +310,8 @@ P5 **不实现** 7777 SPP 反向数据通道，包括上游的 SPP DATA_IND 返�
 | **P5b0（首要任务）** | ARM64 EIM/ESP-IDF v6.1 环境；工具/Python 环境；ESP32 target；三项音频组件精确版本与依赖锁；Classic SPP、I²S、AFE、codec、SRC 组合 smoke build；16MB Flash/8MB PSRAM sdkconfig 与分区表检查 | 所有后续阶段所需 API 在 IDF v6.1 + ESP32 target 下组合编译/链接；依赖锁和环境版本记录提交；未通过不得开始 P5b1；不进行硬件刷写 |
 | P5b1 | ESP-IDF 工程骨架、Kconfig Wi-Fi 凭据、Station 状态机、Reset Reason、7777/7778 listeners；HA Config Entry 迁移、包含可编辑 Tivoo MAC 的 reconfigure flow 和连接 Adapter 骨架 | 保留 P4 `media_directory`；旧 Entry 不猜 ESP32 地址；HA Config Entry 的 `tivoo_bluetooth_mac` 建立唯一地址配置入口，提供给用户填写手机确认的 `Tivoo-audio` Classic MAC；自动化测试验证配置字段/迁移/reconfigure、IP 事件后启停监听、连接/断线状态和凭据不入仓库；使用网络模拟器，不刷写开发板。P5b1 只建立配置入口，不提前发送 SPP 命令 |
 | P5b2 | 7778 TVIO framing、HELLO/ACK、ERROR/DIAGNOSTIC_LOG、HA logger 和断线补传 | 协议/HA 自动化测试通过；HA 日志进入标准 logger，由 NAS 上已有 HA `/config` 持久化；断线重连、补传、队列满和 dropped_count 测试通过 |
-| P5b3 | 7777 raw bridge、固定长度控制命令累积、上游帧流解析复用、Classic SPP initiator、SDP/SCN fallback、原样 SPP 转发；唯一使用 HA Config Entry 的 `tivoo_bluetooth_mac` 作为目标地址 | 网络模拟器、frame goldens、SPP mock 和分段测试通过；覆盖从 Config Entry 取 MAC、`0x69+MAC` 字节值、重新配置后断开旧 SPP peer 并连接新 peer；不得加入固件固定 MAC 或自动扫描选择；不在此批次刷写开发板 |
-| P5b4 | 合并固件集成、故障注入、`merge-bin` 打包；将已通过构建及自动化验收的最终镜像交由 Windows 刷写，再通过 HA 网络验收 Wi-Fi/7777/7778/实际 Tivoo SPP | 所有 MUST 合同通过；使用手机扫描确认 `Tivoo-audio` Classic MAC 并写入 HA 配置；实机验证该 MAC 被用于 SPP 连接，修改 HA MAC 后无需重刷固件即可切换到新 Tivoo；Windows 只执行最终镜像刷写，不参与源码、构建、测试或日志分析；若修复后需要重新做实机回归，Windows 仍只重复刷写新生成的最终镜像；输出 merged image、flash 参数、版本清单和 SHA256 |
+| P5b3 | 7777 raw bridge、固定长度控制命令累积、上游帧流解析复用、Classic SPP initiator、SDP/SCN fallback、原样 SPP 转发；唯一使用 HA Config Entry 的 `tivoo_bluetooth_mac` 作为目标地址；实现显式 SSP I/O capability、Legacy PIN/SSP 请求处理、认证结果状态和 Bluedroid NVS Bond Key 持久化 | 网络模拟器、frame goldens、SPP mock 和分段测试通过；覆盖从 Config Entry 取 MAC、`0x69+MAC` 字节值、重新配置后断开旧 SPP peer 并连接新 peer；测试 IO_CAP_NONE 配置、PIN_REQ、通过 GAP reply API 拒绝 CFM_REQ/KEY_REQ、AUTH_CMPL 成功/失败/目标 MAC 匹配、bond list 含目标 MAC、NVS 初始化失败不擦除 Bond Key；连接认证失败不得发送帧；不得加入固件固定 MAC 或自动扫描选择；不在此批次刷写开发板 |
+| P5b4 | 合并固件集成、故障注入、`merge-bin` 打包；将已通过构建及自动化验收的最终镜像交由 Windows 刷写，再通过 HA 网络验收 Wi-Fi/7777/7778/实际 Tivoo SPP、首次自动配对和 Bond Key 持久化 | 所有 MUST 合同通过；使用手机扫描确认 `Tivoo-audio` Classic MAC 并写入 HA 配置；实机验证目标设备能按当前协商的 Legacy PIN/SSP 路径完成首次认证；首次配对后检查 bond list 含目标 MAC；ESP32 软件重启及完全断电重启后检查 bond list 恢复，并复用 NVS 中的 Bond Key 重新连接同一 Tivoo，不要求手机再次配对或再次输入 PIN；更换 MAC 后新设备可完成首次配对并保存密钥；实测记录认证状态/链路密钥类型，不能把 AUTH_CMPL 失败视为连接成功；修改 HA MAC 后无需重刷固件即可切换到新 Tivoo；Windows 只执行最终镜像刷写，不参与源码、构建、测试或日志分析；若修复后需要重新做实机回归，Windows 仍只重复刷写新生成的最终镜像；输出 merged image、flash 参数、版本清单和 SHA256 |
 
 ### 10.1 P5 合同矩阵
 
@@ -336,6 +340,8 @@ P5 **不实现** 7777 SPP 反向数据通道，包括上游的 SPP DATA_IND 返�
 | P5-C21 | P5 不实现完整 7777 reverse channel、7778 heartbeat/DEVICE_STATUS/audio messages、HTTP audio、I²S/AEC/VAD | MUST boundary | scope/code review |
 | P5-C22 | HA Config Entry 的 `tivoo_bluetooth_mac` 是 Tivoo Classic SPP 目标地址的唯一权威来源；用户用手机确认 `Tivoo-audio` Classic MAC 后手动填写；ESP32 不持有固定/备用 MAC，不扫描或自动选择设备；`Tivoo-light` BLE 地址不得代替 | MUST | HA Config Flow/reconfigure test、0x69 payload source test、firmware code review |
 | P5-C23 | 更换 Tivoo 只修改 HA Config Entry 的 MAC；HA reload 后在新 7777 会话发送新 `0x69+MAC`，ESP32 有序断开旧 SPP peer 并连接新地址，不要求修改/重刷固件，也不再向旧设备发帧 | MUST | HA reconfigure/reload test、SPP worker switch test、P5b4 real-device replacement test |
+| P5-C24 | SPP 首次配对显式声明 `ESP_BT_IO_CAP_NONE`；按合同处理 Legacy `PIN_REQ`，对没有本机显示/输入能力的 SSP 数字确认或 passkey 交互路径 fail-closed；捕获 `AUTH_CMPL` 的目标地址、状态和 link-key type，认证失败不得将 peer 标记为可用或继续发帧；沿用上游 `AUTHENTICATE`+`ENCRYPT` 安全掩码必须经 Tivoo 实测验证，不得静默降级安全掩码 | MUST | GAP callback unit/mock tests、security config assertion、AUTH_CMPL success/failure/peer-match tests、P5b4 real-device first-pair test |
+| P5-C25 | Bluedroid 原生 Bond Key 持久化到 NVS；NVS 在 Bluetooth 初始化前就绪，运行时不得因常规 NVS 初始化错误自动擦除整个 NVS；相同 Tivoo 在 ESP32 重启/断电后复用已保存密钥，无需重复人工配对；不建立应用层密钥副本、不记录密钥/PIN/passkey | MUST | NVS startup/error-path test、source review、P5b4 software-restart and power-cycle reconnect test |
 
 ## 11. 明确排除项与不得扩张的内容
 
@@ -365,4 +371,4 @@ P5 完成时至少产出：
 - 固件版本、Git commit、target、Flash 配置和 SHA256 manifest；
 - P5b0–P5b4 验收结果。
 
-**阶段退出条件：** P5-C01 至 P5-C20、P5-C22、P5-C23 全部 MUST 通过，P5-C21 边界检查通过；失败项不得通过修改 P6/P7/P8 合同来规避。
+**阶段退出条件：** P5-C01 至 P5-C20、P5-C22 至 P5-C25 全部 MUST 通过，P5-C21 边界检查通过；失败项不得通过修改 P6/P7/P8 合同来规避。

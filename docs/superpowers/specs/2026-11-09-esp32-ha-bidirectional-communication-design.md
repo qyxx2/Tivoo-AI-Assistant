@@ -247,6 +247,15 @@ ESP32 HTTP Client ── GET 音频 URL ──> HA HTTP Resource（TTS / 预录�
 
 实际项目只使用 HA Config Entry 中由用户确认的 `tivoo_bluetooth_mac`。上面的 `0x00` 发现帧格式仅保留为上游协议兼容记录；本项目不通过 ESP32 设备扫描产生/消费首次配网选择，也不允许该帧自动修改 HA Config Entry。手机扫描和人工录入是唯一设备确认流程。
 
+### 4.2.1 Classic SPP 配对与 Bond Key 持久化
+
+- HA 配置的 Classic MAC 只标识目标 peer；它本身不是配对凭据。ESP32 发起 SPP 连接后，由 Bluedroid 安全管理器完成首次认证/配对。
+- ESP32 在连接前显式配置 `ESP_BT_SP_IOCAP_MODE = ESP_BT_IO_CAP_NONE`，声明自身没有可用于配对交互的显示器或键盘。Legacy `ESP_BT_GAP_PIN_REQ_EVT` 沿用上游行为：`min_16_digit=true` 时回复 16 个 ASCII `0`，否则回复 ASCII `1234`；如实际 Tivoo 要求固定 PIN，再通过本地未跟踪的 Kconfig 覆写。
+- SSP 在双方协商为无需用户交互的 Just Works 等支持路径时可自动完成。数值比较 `ESP_BT_GAP_CFM_REQ_EVT`、要求输入的 passkey 或需要用户查看 passkey 的路径不能由当前 ESP32 硬件完成；不允许无条件自动确认，也不伪造用户输入/确认。遇到不支持的交互请求应拒绝并报告原因。
+- 继续以 `ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT` 作为上游复用基线，但不能据此预先断言 Tivoo 一定能用 Just Works 完成配对：IDF v6.1 的 SSP 安全级别可能要求 MITM，而 NoInputNoOutput 的 Just Works 不提供 MITM。P5b4 必须用当前 Tivoo 实测；认证失败时记录 `ESP_BT_GAP_AUTH_CMPL_EVT` 的状态和 link-key type，并根据证据调整，不得静默关闭认证或加密。
+- GAP 回调记录 `AUTH_CMPL` 的远端地址、成功/失败状态和 link-key type。认证失败的目标不得标记为已认证/可用，也不得继续发送 Tivoo 帧；不得记录 Link Key、PIN 或 passkey。
+- 成功配对的 Link Key 由 Bluedroid 原生存储机制写入 NVS。NVS 必须在 Bluetooth Controller/Bluedroid 初始化前成功初始化；运行时不能因 `ESP_ERR_NVS_NO_FREE_PAGES` 或 `ESP_ERR_NVS_NEW_VERSION_FOUND` 自动清空整个 NVS，因为这会一并删除已配对设备的密钥。ESP32 重启或断电后，Bluedroid 从 NVS 恢复 Bond Key，同一 Tivoo 应能直接重新连接，无需再次通过手机配对或重新输入 PIN。应用层不另存一份 Link Key。
+
 ### 4.3 图形、图片与动画
 
 - HA 负责把语义化服务参数转换成 Tivoo 二进制协议帧。
