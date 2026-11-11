@@ -211,7 +211,7 @@ MCP 是工具调用协议，不是 HA 向 AstrBot 推送用户文本的消息通
 - **P6 补齐：** 在 P5 的同一端口和消息封装上完成双向 7777、完整 7778 状态/事件/音频消息与连接管理，以及 TTS 音频 HTTP GET。P5 的基础通路是后续实现的子集，不代表 P6 完成。
 - **P7/P8：** P7 实现 I²S 麦克风、AEC/VAD 和 Assist Satellite 音频上行；P8 实现 I²S TX、DAC、音频解码/采样率转换及统一输出/停止。不得把这些能力提前并入 P5 验收。
 
-**P5 实施顺序：**先完成 Wi-Fi Station 和连接状态；再建立 7778 HELLO/ACK 与日志回传；随后接入 7777 单向控制和 Classic SPP；最后通过 HA → ESP32 → Tivoo 完成实机闭环。
+**P5 合同与实施顺序：**按[P5 ESP32 最小固件合同矩阵](docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md)执行；B0 首先锁定 ESP-IDF/组件版本并完成跨 P5/P6/P7/P8 的兼容性 smoke build，通过后依次完成 Wi-Fi、7778 HELLO/ACK 与日志、7777 单向 SPP，最后通过 HA → ESP32 → Tivoo 完成实机闭环。
 
 **固件最终职责：**
 

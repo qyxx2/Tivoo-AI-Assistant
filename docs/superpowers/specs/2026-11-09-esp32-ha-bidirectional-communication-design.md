@@ -285,7 +285,7 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | 5 | 1 | Message Type | 消息类型枚举 |
 | 6 | 2 | Flags | 小端；v1 暂保留为 0 |
 | 8 | 4 | Payload Length | 小端无符号长度 |
-| 12 | 4 | Sequence | 小端消息序号，按连接递增 |
+| 12 | 4 | Sequence | 小端消息序号；每个发送方向独立计数，每条 TCP 连接从 0 开始递增 |
 | 16 | N | Payload | JSON UTF-8 或指定二进制格式 |
 
 接收方必须按 Payload Length 组装完整消息，不得假定一次 `recv()` 恰好返回一条消息。允许 TCP 拆包和粘包。
@@ -302,7 +302,7 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | Type | 名称 | 方向 | Payload |
 |---:|---|---|---|
 | `0x01` | HELLO | ESP32 → HA | JSON：设备 ID、固件版本、协议版本、能力列表 |
-| `0x02` | HELLO_ACK | HA → ESP32 | JSON：接受状态、会话参数、心跳间隔 |
+| `0x02` | HELLO_ACK | HA → ESP32 | JSON：接受/拒绝状态；P5 只要求 `accepted`，P6 再加入会话参数和心跳间隔 |
 | `0x03` | PING | HA → ESP32 | 空或 JSON 时间戳 |
 | `0x04` | PONG | ESP32 → HA | 空或 JSON 时间戳 |
 | `0x10` | GET_STATUS | HA → ESP32 | JSON：可选状态查询范围 |
@@ -323,9 +323,9 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 
 ### 5.4 握手与连接状态
 
-1. ESP32 开机后启动 TCP 7777 与 7778 Server，并尝试连接 Wi-Fi。
+1. ESP32 开机后初始化 NVS/事件/Wi-Fi Station；取得 WLAN IP 后再启动 TCP 7777 与 7778 Server。
 2. HA 根据配置的 ESP32 地址分别建立两个 TCP Client 连接。
-3. 7777 连接建立后，HA 按需发送 `0x69 + MAC + channel` 建立 SPP。
+3. 7777 连接建立后，HA 发送 `0x69 + 6-byte MAC` 请求 SPP 连接；P5 省略可选通道字节，由 ESP32 使用 SDP 发现 RFCOMM SCN，失败时回退至本机协议记录的通道 1。
 4. 7778 建立后，ESP32 发送 HELLO；HA 校验协议版本并回复 HELLO_ACK。
 5. 完成握手后，双方可在 7778 双向发送消息。
 6. HA 使用 PING/PONG 判断 7778 是否仍可用；控制与音频通道的连接状态分别维护。
@@ -334,21 +334,22 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 
 **P5 只实现上述最终协议的最小子集：**
 
-- 7777：HA 下发 Tivoo 原始帧，ESP32 转交 SPP；P5 不要求 SPP 返回数据回传、完整结果语义或后续连接恢复策略。
-- 7778：使用相同的 16 字节 TVIO 头部，完成 HELLO/HELLO_ACK，并支持 DIAGNOSTIC_LOG 与 ERROR；连接断开后允许 HA 客户端做基础重连并重新握手，以恢复日志回传。P5 不实现心跳、完整 DEVICE_STATUS、MIC、TTS、AUDIO 或 HTTP 音频资源。
+- 7777：HA 下发 Tivoo 原始帧，ESP32 转交 SPP；P5 不要求 SPP 返回数据回传、完整结果语义或设备 ACK。HA TCP 连接断开后可重新建立连接，并重新发送 `0x69 + MAC` 恢复 SPP 控制通道；P5 不实现额外的 SPP 自动状态同步/回执协议。
+- 7778：使用相同的 16 字节 TVIO 头部，完成 HELLO/HELLO_ACK，并支持 DIAGNOSTIC_LOG 与 ESP32→HA ERROR；Sequence 每个发送方向独立计数、每条连接从 0 开始。P5 HELLO/ACK JSON 结构和日志队列行为见 §5.5。连接断开后允许 HA 客户端做基础重连并重新握手，以恢复日志回传。P5 不实现心跳、完整 DEVICE_STATUS、MIC、TTS、AUDIO 或 HTTP 音频资源。
 - P6 在同一端口和封装上扩展其余消息及双向行为，不重新设计或替换 P5 已通过的基础通路。
 
-建议 HELLO Payload：
+P5 HELLO Payload：
 
 ```json
 {
   "device_id": "tivoo-esp32",
-  "firmware_version": "0.1.0",
+  "firmware_version": "0.1.0+<git-short-sha>",
   "protocol_version": 1,
   "capabilities": [
     "spp_control",
     "remote_diagnostics"
-  ]
+  ],
+  "reset_reason": "<ESP-IDF reset reason name>"
 }
 ```
 
@@ -367,9 +368,10 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 
 ### 5.5 日志与诊断
 
-- 使用 ESP-IDF 日志级别和模块标签；保留 UART/控制台输出。DIAGNOSTIC_LOG 的 JSON 字段为 `level`、`module`、`message`、`uptime_ms`，可选 `correlation_id` 和 `dropped_count`。网络日志进入有界 RAM 队列，由低优先级发送任务上传；日志回调和实时任务不得直接等待 socket 或阻塞发送。
-- 7778 可用时发送 DIAGNOSTIC_LOG；未连接时只暂存有限的近期记录，重连后按序补发。队列满时丢弃低优先级记录并累计丢弃数，不得影响 SPP、网络控制或音频实时任务。
-- 启动后上报固件版本、设备 ID 和 Reset Reason。普通日志不逐条写 Flash；P5 不要求持久日志数据库或 Core Dump 导出，确有现场故障证据需求时再单独评估。
+- 项目模块通过 `TIVOO_LOGE/W/I/D` 分级宏记录日志；宏同时调用对应 ESP-IDF `ESP_LOG*` 保留 UART/console 输出，并将明确的级别、TAG 和消息放入网络诊断队列。第三方组件内部日志仍保留本地 UART，不通过解析全局格式化日志字符串推断级别。DIAGNOSTIC_LOG JSON 字段为 `level`、`module`、`message`、`uptime_ms`，可选 `correlation_id`、`dropped_count`；`level` 为 DEBUG/INFO/WARNING/ERROR。HELLO 报告设备 ID、固件版本（含 Git 短 SHA）、协议版本、能力列表及 `esp_reset_reason()` 的实际原因。具体 P5 JSON schema 以 `2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md` §7.3 为准。
+- 网络日志进入有界 RAM 队列，由低优先级发送任务上传；日志宏只做有界格式化/入队，不调用 socket、不等待发送。P5 默认队列深度 16 条，单条 `message` 最多 384 UTF-8 bytes，序列化 JSON 最大 1 KiB；达到上限时丢弃新记录并累计 `dropped_count`，不阻塞调用者。
+- 仅在 7778 HELLO_ACK `accepted=true` 后发送 DIAGNOSTIC_LOG；未连接时保留有限近期记录，重连并重新握手后按入队顺序补发。队列满时丢弃新记录并累计 `dropped_count`；该计数随下一条成功日志上报后清零。队列只在 RAM，设备重启后不保留普通日志；不将每条日志写入 Flash。P5 ERROR 使用项目合同矩阵 §7.3 定义的错误码集合。
+- 普通日志不逐条写 Flash；P5 不要求持久日志数据库或 Core Dump 导出，确有现场故障证据需求时再单独评估。
 - HA 将设备日志映射到 `custom_components.tivoo` 标准 Python logger，INFO 为常规基线、DEBUG 按需开启，并按级别写入 HA 主日志（Container 默认文件为 `/config/home-assistant.log`）。部署时确保 `/config` 挂载到 NAS 持久化目录；ESP32 不直接连接 NAS，也不另建日志存储服务。
 - 日志不得包含 Wi-Fi 密码、Authorization/API Token、短时音频 URL 凭据、原始 PCM、完整转写或回答正文。可记录模块、事件、错误码、耗时和内部关联 ID。
 
