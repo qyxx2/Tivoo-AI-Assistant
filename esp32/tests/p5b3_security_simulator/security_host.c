@@ -16,6 +16,12 @@ typedef struct {
     unsigned int passkey_calls;
     bool passkey_accepted;
     uint32_t passkey;
+    unsigned int auth_complete_calls;
+    uint8_t auth_peer[6];
+    int auth_status;
+    uint8_t auth_link_key_type;
+    bool auth_target_match;
+    bool auth_authenticated;
 } capture_t;
 
 static bool set_io_capability(void *context, uint8_t value)
@@ -64,6 +70,19 @@ static bool passkey_reply(
     return true;
 }
 
+static void auth_complete(
+    void *context, const uint8_t peer[6], int status, uint8_t link_key_type,
+    bool target_match, bool authenticated)
+{
+    capture_t *capture = context;
+    capture->auth_complete_calls++;
+    memcpy(capture->auth_peer, peer, sizeof(capture->auth_peer));
+    capture->auth_status = status;
+    capture->auth_link_key_type = link_key_type;
+    capture->auth_target_match = target_match;
+    capture->auth_authenticated = authenticated;
+}
+
 int main(void)
 {
     const uint8_t target[6] = {0x11, 0x75, 0x58, 0x97, 0x49, 0x98};
@@ -75,6 +94,7 @@ int main(void)
         .pin_reply = pin_reply,
         .ssp_confirm_reply = confirm_reply,
         .ssp_passkey_reply = passkey_reply,
+        .auth_complete = auth_complete,
     };
     tivoo_gap_security_t security;
     assert(tivoo_gap_security_init(&security, target, &callbacks));
@@ -106,16 +126,32 @@ int main(void)
     assert(capture.passkey == 0);
 
     event.status = 0;
+    event.link_key_type = 2;
     memcpy(event.peer, other, sizeof(other));
     assert(tivoo_gap_security_handle(&security, TIVOO_GAP_EVENT_AUTH_COMPLETE, &event));
     assert(!tivoo_gap_security_authenticated(&security));
+    assert(capture.auth_complete_calls == 1);
+    assert(memcmp(capture.auth_peer, other, 6) == 0);
+    assert(capture.auth_status == 0 && capture.auth_link_key_type == 2);
+    assert(!capture.auth_target_match && !capture.auth_authenticated);
+
     memcpy(event.peer, target, sizeof(target));
     event.status = 1;
+    event.link_key_type = 4;
     assert(tivoo_gap_security_handle(&security, TIVOO_GAP_EVENT_AUTH_COMPLETE, &event));
     assert(!tivoo_gap_security_authenticated(&security));
+    assert(capture.auth_complete_calls == 2);
+    assert(memcmp(capture.auth_peer, target, 6) == 0);
+    assert(capture.auth_status == 1 && capture.auth_link_key_type == 4);
+    assert(capture.auth_target_match && !capture.auth_authenticated);
+
     event.status = 0;
+    event.link_key_type = 5;
     assert(tivoo_gap_security_handle(&security, TIVOO_GAP_EVENT_AUTH_COMPLETE, &event));
     assert(tivoo_gap_security_authenticated(&security));
+    assert(capture.auth_complete_calls == 3);
+    assert(capture.auth_status == 0 && capture.auth_link_key_type == 5);
+    assert(capture.auth_target_match && capture.auth_authenticated);
 
     uint8_t bonds[3][6] = {
         {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF},

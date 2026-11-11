@@ -10,7 +10,8 @@ bool tivoo_gap_security_init(
     if (security == NULL || target == NULL || callbacks == NULL ||
         callbacks->set_io_capability == NULL || callbacks->pin_reply == NULL ||
         callbacks->ssp_confirm_reply == NULL ||
-        callbacks->ssp_passkey_reply == NULL) {
+        callbacks->ssp_passkey_reply == NULL ||
+        callbacks->auth_complete == NULL) {
         return false;
     }
 
@@ -57,6 +58,13 @@ bool tivoo_gap_security_handle(
         security->authenticated = is_target && data->status == 0;
         security->auth_status = data->status;
         security->link_key_type = data->link_key_type;
+        security->callbacks.auth_complete(
+            security->callbacks.context,
+            data->peer,
+            data->status,
+            data->link_key_type,
+            is_target,
+            security->authenticated);
         return true;
     default:
         return false;

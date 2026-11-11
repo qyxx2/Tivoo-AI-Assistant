@@ -109,12 +109,33 @@ static bool gap_ssp_passkey_reply(
         (uint8_t *)peer, accept, passkey) == ESP_OK;
 }
 
+static void gap_auth_complete(
+    void *context, const uint8_t peer[6], int status, uint8_t link_key_type,
+    bool target_match, bool authenticated)
+{
+    (void)context;
+    if (authenticated) {
+        TIVOO_LOGI(
+            TAG,
+            "auth_complete peer=%02X:%02X:%02X:%02X:%02X:%02X status=%d link_key_type=%u target_match=1 authenticated=1",
+            peer[0], peer[1], peer[2], peer[3], peer[4], peer[5], status,
+            (unsigned int)link_key_type);
+    } else {
+        TIVOO_LOGW(
+            TAG,
+            "auth_complete peer=%02X:%02X:%02X:%02X:%02X:%02X status=%d link_key_type=%u target_match=%u authenticated=0",
+            peer[0], peer[1], peer[2], peer[3], peer[4], peer[5], status,
+            (unsigned int)link_key_type, target_match ? 1U : 0U);
+    }
+}
+
 static const tivoo_gap_callbacks_t s_gap_callbacks = {
     .context = NULL,
     .set_io_capability = gap_set_io_capability,
     .pin_reply = gap_pin_reply,
     .ssp_confirm_reply = gap_ssp_confirm_reply,
     .ssp_passkey_reply = gap_ssp_passkey_reply,
+    .auth_complete = gap_auth_complete,
 };
 
 static void gap_event_handler(
@@ -368,7 +389,11 @@ static bool connect_peer(const uint8_t peer[6])
     }
 
     vTaskDelay(pdMS_TO_TICKS(SPP_OPEN_SETTLE_MS));
-    TIVOO_LOGI(TAG, "authenticated_spp_peer_ready");
+    TIVOO_LOGI(
+        TAG,
+        "authenticated_spp_peer_ready peer=%02X:%02X:%02X:%02X:%02X:%02X bond_list=confirmed",
+        s_target[0], s_target[1], s_target[2], s_target[3], s_target[4],
+        s_target[5]);
     return true;
 }
 

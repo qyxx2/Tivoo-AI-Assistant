@@ -30,6 +30,9 @@ typedef struct {
         void *context, const uint8_t peer[6], bool accept);
     bool (*ssp_passkey_reply)(
         void *context, const uint8_t peer[6], bool accept, uint32_t passkey);
+    void (*auth_complete)(
+        void *context, const uint8_t peer[6], int status, uint8_t link_key_type,
+        bool target_match, bool authenticated);
 } tivoo_gap_callbacks_t;
 
 typedef struct {
