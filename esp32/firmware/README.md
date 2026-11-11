@@ -1,4 +1,4 @@
-# Tivoo ESP32 firmware (P5b3)
+# Tivoo ESP32 firmware (P5b4)
 
 This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; it does not run the Tivoo display codec or any audio pipeline.
 
@@ -111,6 +111,7 @@ raise SystemExit(pytest.main([
     "tests/esp32/test_p5b3_control_bridge.py",
     "tests/esp32/test_p5b3_security.py",
     "tests/esp32/test_p5b3_session.py",
+    "tests/esp32/test_p5b4_integration.py",
     "tests/homeassistant/custom_components/tivoo",
     "-q",
 ]))
@@ -118,3 +119,41 @@ PY
 ```
 
 No development-board flashing or physical pairing acceptance is part of P5b3. P5b4 owns final merged-image packaging, Windows flashing, first pairing with the actual Tivoo, and verification that the native Bluedroid bond list survives both software restart and complete power loss. P5b3 does not implement a 7777 reverse channel, 7778 heartbeat/DEVICE_STATUS/audio messages, HTTP audio, or I²S/AEC/VAD.
+
+## P5b4 release package and Windows flashing
+
+The release package is generated on the ARM64 Ubuntu development machine after a clean ESP-IDF v6.1 build:
+
+`build/p5b4-release/`
+
+- `tivoo-esp32-wrover-e-n16r8-p5b4-b3af194.bin` — complete raw 16MB flash image, including bootloader, partition table and application; flash once at offset `0x000000`.
+- `tivoo-esp32-app-p5b4-b3af194.bin` — application-only image; flash at `0x010000` for a compatible firmware update after initial installation. It does not overwrite NVS, the partition table or bootloader.
+- `manifest.json` — source commit, IDF version, flash geometry, partition layout, image sizes and SHA256 values.
+- `flash_args.txt` — generated ESP-IDF flash input map used by `merge-bin`.
+
+The complete image is exactly 16,777,216 bytes and is padded to the full 16MB address range. Flash it using ESP32 target, 16MB flash size, DIO mode and 40MHz frequency. It is a single image at address `0x000000`; do not also program the individual bootloader/partition/application files. Check its SHA256 against `manifest.json` on Windows before flashing.
+
+**NVS preservation:** The full 16MB image covers the NVS partition and is intended for first installation or a deliberate full reinitialization. Flashing it again after pairing will replace the existing NVS contents, including Bluetooth Bond Keys. For an ordinary firmware update after the device has been paired, use the application-only image at `0x010000` and do not erase flash/NVS. Keep the partition layout unchanged.
+
+All firmware builds, tests, merge-bin generation and hash verification are performed on Ubuntu. Windows is only used to verify the package hash and flash the prepared image.
+
+## P5b4 physical-device acceptance
+
+Use the Classic Bluetooth address of the actual Tivoo audio endpoint (`Tivoo-audio`), not the BLE address of `Tivoo-light`. Enter that address in the HA Config Entry `tivoo_bluetooth_mac`; it remains the single source of the peer address. Do not hardcode it in firmware.
+
+After boot, verify Wi-Fi obtains an address and HA establishes both TCP channels. On the 7778 log stream, the expected successful pairing sequence includes:
+
+- `auth_complete peer=<configured-MAC> status=0 ... target_match=1 authenticated=1`.
+- `authenticated_spp_peer_ready peer=<configured-MAC> bond_list=confirmed`.
+
+A wrong peer or failed authentication must log `authenticated=0` and must never reach the ready state or accept frame writes.
+
+For software-restart acceptance, invoke ESP-IDF `esp_restart()` through a JTAG/OpenOCD GDB session while the board is running. Pressing EN, disconnecting USB or cycling the power supply is a hardware reset/power cycle, not a software-restart test. If a JTAG debugger is unavailable, leave the software-restart result NOT RUN; do not mark an EN-button reset as its substitute.
+
+After pairing, verify native Bluedroid Bond Key reuse through both a software restart and a complete power-off/on cycle. Do not forget the Tivoo in the phone or erase NVS between these steps. A successful reconnect must use the same configured Classic MAC, return to the authenticated SPP-ready state without a new pairing/PIN interaction, and accept a real HA control command.
+
+To verify HA-side MAC replacement, change only `tivoo_bluetooth_mac` in the HA Config Entry and reload the existing integration. The ESP32 must disconnect the old peer and attempt the new configured address without firmware rebuild or reflash. Use a second real Tivoo for a positive replacement-pairing test; an intentionally wrong address is useful only to verify fail-closed rejection, not to claim successful replacement pairing.
+
+Finally, disable the Wi-Fi AP or remove the ESP32 from the network. Both TCP sessions should close; after network recovery, HA must reconnect, complete the 7778 HELLO/ACK exchange, restore the 7777 control session and deliver a fresh command.
+
+The P5b4 report records each physical item separately from host-test results.
