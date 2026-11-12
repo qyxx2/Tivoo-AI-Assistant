@@ -83,7 +83,7 @@ P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩�
 | AstrBot Tivoo Bridge | AstrBot 插件 | 主动任务通知、HA 接口调用及交互桥接 |
 | ESP32 固件 | Tivoo 专用开发板 | 本地 VAD、音频收发与播放、SPP 协议桥接及屏幕控制 |
 
-**网络边界：ESP32 只连接 Home Assistant，不直接连接 AstrBot、云端 LLM、MCP 服务或其他 NAS 容器。**  
+**网络边界：ESP32 只连接 Home Assistant，不直接连接 AstrBot、云端 LLM、MCP 服务或其他 NAS 容器。**
 AstrBot 需要控制 Tivoo 时，统一经过 Home Assistant 提供的 Tivoo 工具和接口。
 
 NAS 上的 AstrBot、HA 和辅助服务按实际 NAS 系统及容器环境部署。本目录保存部署文件和脚本；不会把它们安装到 ESP32。
@@ -473,7 +473,7 @@ python3 -m venv .venv
 | P4 | HA MCP Server 暴露 Tivoo/设备工具，AstrBot 调用 | AI 能通过 MCP 控制 HA 设备 |
 | P7A | 独立 Sherpa Wyoming 容器：一个 TCP 入口提供 KWS、STT、TTS 三个 Provider | HA 用一个 Wyoming Config Entry 发现三类 Provider；完成模型、KWS、STT、非流式/流式 TTS 和容器验收 |
 | P5 | ESP32 最小固件：Wi-Fi、最小 TCP 7777 SPP 控制、TCP 7778 诊断日志子集及基础故障日志 | HA 可经局域网控制 Tivoo；设备日志和错误可回传并进入 HA 日志 |
-| P6 | 在 P5 基础上完成 ESP32 ↔ HA 双向通信（TCP 7777/7778 + HTTP 资源请求） | 补齐 SPP 返回数据、完整设备状态/事件/音频消息、连接管理，以及 TTS/其他指定音频资源 HTTP GET；不重复实现 P5 基础通路 |
+| P6 | [P6 合同矩阵](docs/superpowers/specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md) · [详细实施计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-implementation-plan.md) · [分批执行计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-batch-execution-plan.md)：在 P5 基础上完成 ESP32 ↔ HA 双向通信（TCP 7777/7778 + HTTP 资源请求） | 补齐 SPP 返回数据、完整设备状态/事件/音频消息、连接管理，以及 TTS 音频资源 HTTP GET；不重复实现 P5 基础通路 |
 | P6.5 | [HA Assist Pipeline / TTS Proxy 取消链路前置验证](docs/superpowers/patches/2026-11-11-p6-5-ha-cancellation-preflight.patch.md) | 验证 Satellite Pipeline 取消能否终止 TTS Proxy 后台生成、HA Wyoming 请求与 P7A TTS 任务，并确认 P3 AstrBot SSE/session Stop 的取消传播；形成模块职责与缺口报告，作为 P7/P8 取消实现依据 |
 | P7 | I2S 麦克风采集、WROVER-E ESP-SR AFE AEC/VAD、HA Assist Satellite 与 P7A KWS/STT、AstrBot Conversation Agent 联调 | 空闲时不上传音频；AEC 后近端人声触发后由 HA WAKE_WORD 阶段检测唤醒词；播放期间维持 AEC/VAD 并验证近端语音打断，打断新会话从 STT 阶段进入 |
 | P8 | I2S TX + PCM5102 → AUX 输出、全局音频输出管理器及端到端取消联调 | AI 回复和其他受控音频通过统一输出管理器播放；验证 AUDIO_STOP、本地 barge-in、HA Pipeline/TTS Proxy/AstrBot 取消和 SPP 并发；Tivoo 端 AUX + SPP 已实测通过 |
