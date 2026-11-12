@@ -29,6 +29,8 @@ int main(void)
             network_listeners_set_ip_available(false);
         } else if (strcmp(command, "fail_next_frame\n") == 0) {
             tivoo_spp_host_fail_next_frame();
+            puts("COMMAND fail_next_frame");
+            fflush(stdout);
         } else if (strcmp(command, "log\n") == 0) {
             TIVOO_LOGI("p5b4_host", "integration_log");
         } else if (strcmp(command, "exit\n") == 0) {

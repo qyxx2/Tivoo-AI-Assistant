@@ -10,6 +10,7 @@
 typedef enum {
     TIVOO_SPP_REQUEST_CONNECT,
     TIVOO_SPP_REQUEST_DISCONNECT,
+    TIVOO_SPP_REQUEST_RECONNECT,
     TIVOO_SPP_REQUEST_FRAME,
 } tivoo_spp_request_type_t;
 
@@ -44,6 +45,14 @@ typedef enum {
 } tivoo_spp_session_result_t;
 
 uint8_t tivoo_spp_select_scn(bool discovery_completed, uint8_t discovered_scn);
+
+uint32_t tivoo_spp_connection_wait_mask(
+    uint32_t current,
+    uint32_t event_open,
+    uint32_t event_auth_done,
+    uint32_t event_failed);
+
+void tivoo_spp_session_mark_disconnected(tivoo_spp_session_t *session);
 
 tivoo_spp_session_result_t tivoo_spp_session_process(
     tivoo_spp_session_t *session,

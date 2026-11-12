@@ -91,4 +91,55 @@ def test_every_firmware_error_uses_the_closed_p5_error_code_set():
 def test_firmware_receive_block_uses_the_idf_tcp_mss():
     source = (FIRMWARE / "main/network_listeners.c").read_text()
     assert "TCP_RECV_BUFFER_SIZE CONFIG_LWIP_TCP_MSS" in source
-    assert "uint8_t data[TCP_RECV_BUFFER_SIZE]" in source
+    assert "static uint8_t s_receive_buffer[TCP_RECV_BUFFER_SIZE];" in source
+    assert "uint8_t data[TCP_RECV_BUFFER_SIZE]" not in source
+
+
+def test_spp_tx_queue_applies_the_contract_bounded_backpressure_wait():
+    source = (FIRMWARE / "main/tivoo_spp.c").read_text()
+    assert "SPP_QUEUE_WRITE_TIMEOUT_MS 1000" in source
+    assert "pdMS_TO_TICKS(SPP_QUEUE_WRITE_TIMEOUT_MS)" in source
+    assert "xQueueSend(s_request_queue, &request, 0)" not in source
+
+
+def test_spp_connection_callbacks_report_each_lifecycle_stage():
+    source = (FIRMWARE / "main/tivoo_spp.c").read_text()
+    assert "case ESP_SPP_CL_INIT_EVT:" in source
+    assert "case ESP_SPP_DISCOVERY_COMP_EVT:" in source
+    assert "case ESP_SPP_OPEN_EVT:" in source
+    assert "case ESP_SPP_CLOSE_EVT:" in source
+    assert "cl_init.status" in source
+    assert "open.status" in source
+    assert "close.async" in source
+    assert "disc_comp.status" in source
+    assert "spp_connect_wait_timeout" in source
+    assert "spp_bond_missing" in source
+
+
+def test_spp_disconnect_reaches_worker_auto_reconnect_path():
+    source = (FIRMWARE / "main/tivoo_spp.c").read_text()
+    close_handler = source.split("case ESP_SPP_CLOSE_EVT:", 1)[1].split(
+        "case ESP_SPP_CONG_EVT:", 1
+    )[0]
+    request_handler = source.split("static void process_request(", 1)[1].split(
+        "static void spp_worker(", 1
+    )[0]
+    assert "EVENT_AUTO_RECONNECT" in close_handler
+    assert "EVENT_FAILED | EVENT_LINK_LOST" in close_handler
+    assert "REQUEST_CONNECT" in request_handler
+    assert "xEventGroupSetBits(s_events, EVENT_AUTO_RECONNECT)" in request_handler
+    assert "REQUEST_DISCONNECT" in request_handler
+    assert "spp_connect_duplicate_ignored" in request_handler
+    assert "same_address(queued->peer, s_session.peer)" in request_handler
+    assert "xEventGroupClearBits(s_events, EVENT_AUTO_RECONNECT)" in request_handler
+    assert "volatile bool s_auto_reconnect_enabled" not in source
+    assert "s_target_valid" not in source
+    assert "service_spp_reconnect" in source
+    assert "TIVOO_SPP_REQUEST_RECONNECT" in source
+    assert "pdMS_TO_TICKS(SPP_WORKER_POLL_MS)" in source
+    failed_connect = source.split("case TIVOO_SPP_SESSION_CONNECT_FAILED:", 1)[1].split(
+        "case TIVOO_SPP_SESSION_DISCONNECT_FAILED:", 1
+    )[0]
+    assert "EVENT_AUTO_RECONNECT" in failed_connect
+    assert "s_reconnect_not_before" in failed_connect
+    assert "SPP_RECONNECT_RETRY_MS" in failed_connect

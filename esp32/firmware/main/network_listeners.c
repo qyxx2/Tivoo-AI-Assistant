@@ -43,6 +43,7 @@ typedef struct {
 } listener_endpoint_t;
 
 static listener_endpoint_t s_endpoints[2];
+static uint8_t s_receive_buffer[TCP_RECV_BUFFER_SIZE];
 static atomic_bool s_running = ATOMIC_VAR_INIT(false);
 static atomic_bool s_ip_available = ATOMIC_VAR_INIT(false);
 static atomic_bool s_worker_running = ATOMIC_VAR_INIT(false);
@@ -144,12 +145,12 @@ static void accept_one_client(listener_endpoint_t *endpoint)
 static void check_client(listener_endpoint_t *endpoint)
 {
     if (endpoint == &s_endpoints[1]) {
-        uint8_t data[TCP_RECV_BUFFER_SIZE];
         const ssize_t result =
-            recv(endpoint->client_fd, data, sizeof(data), 0);
+            recv(endpoint->client_fd, s_receive_buffer,
+                 sizeof(s_receive_buffer), 0);
         if (result > 0) {
             if (!tivoo_diagnostics_client_data(
-                    endpoint->client_fd, data, (size_t)result)) {
+                    endpoint->client_fd, s_receive_buffer, (size_t)result)) {
                 close_endpoint(endpoint);
             }
             return;
@@ -161,11 +162,12 @@ static void check_client(listener_endpoint_t *endpoint)
         return;
     }
 
-    uint8_t data[TCP_RECV_BUFFER_SIZE];
-    const ssize_t result = recv(endpoint->client_fd, data, sizeof(data), 0);
+    const ssize_t result =
+        recv(endpoint->client_fd, s_receive_buffer,
+             sizeof(s_receive_buffer), 0);
     if (result > 0) {
         if (!tivoo_control_client_data(
-                endpoint->client_fd, data, (size_t)result)) {
+                endpoint->client_fd, s_receive_buffer, (size_t)result)) {
             close_endpoint(endpoint);
         }
         return;

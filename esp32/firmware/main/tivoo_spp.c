@@ -1,5 +1,6 @@
 #include "tivoo_spp.h"
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,11 +20,14 @@
 #include "tivoo_spp_session.h"
 
 #define SPP_TX_QUEUE_SIZE 32
+#define SPP_QUEUE_WRITE_TIMEOUT_MS 1000
 #define SPP_READY_TIMEOUT_MS 10000
 #define SPP_OPERATION_TIMEOUT_MS 10000
 #define SPP_WRITE_TIMEOUT_MS 1000
 #define SPP_CONGESTION_TIMEOUT_MS 1000
 #define SPP_OPEN_SETTLE_MS 500
+#define SPP_WORKER_POLL_MS 250
+#define SPP_RECONNECT_RETRY_MS 2000
 
 #define EVENT_SPP_READY BIT0
 #define EVENT_SPP_INIT_FAILED BIT1
@@ -35,12 +39,15 @@
 #define EVENT_CLOSED BIT7
 #define EVENT_UNCONGESTED BIT8
 #define EVENT_WRITE_DONE BIT9
+#define EVENT_LINK_LOST BIT10
+#define EVENT_AUTO_RECONNECT BIT11
 
 static const char *TAG = "tivoo_spp";
 
 typedef enum {
     REQUEST_CONNECT,
     REQUEST_DISCONNECT,
+    REQUEST_RECONNECT,
     REQUEST_FRAME,
 } request_type_t;
 
@@ -54,7 +61,7 @@ typedef struct {
 static QueueHandle_t s_request_queue;
 static EventGroupHandle_t s_events;
 static uint8_t s_target[6];
-static bool s_target_valid;
+static TickType_t s_reconnect_not_before;
 static volatile uint32_t s_handle;
 static uint8_t s_discovered_scn;
 static tivoo_gap_security_t s_gap_security;
@@ -151,14 +158,30 @@ static void gap_event_handler(
     case ESP_BT_GAP_PIN_REQ_EVT:
         memcpy(event_data.peer, param->pin_req.bda, 6);
         event_data.min_16_digit = param->pin_req.min_16_digit;
+        TIVOO_LOGI(
+            TAG,
+            "gap_pin_request peer=%02X:%02X:%02X:%02X:%02X:%02X min_16_digit=%u",
+            event_data.peer[0], event_data.peer[1], event_data.peer[2],
+            event_data.peer[3], event_data.peer[4], event_data.peer[5],
+            event_data.min_16_digit ? 1U : 0U);
         policy_event = TIVOO_GAP_EVENT_PIN_REQUEST;
         break;
     case ESP_BT_GAP_CFM_REQ_EVT:
         memcpy(event_data.peer, param->cfm_req.bda, 6);
+        TIVOO_LOGW(
+            TAG,
+            "gap_ssp_confirm_request_rejected peer=%02X:%02X:%02X:%02X:%02X:%02X reason=no_display",
+            event_data.peer[0], event_data.peer[1], event_data.peer[2],
+            event_data.peer[3], event_data.peer[4], event_data.peer[5]);
         policy_event = TIVOO_GAP_EVENT_SSP_CONFIRM;
         break;
     case ESP_BT_GAP_KEY_REQ_EVT:
         memcpy(event_data.peer, param->key_req.bda, 6);
+        TIVOO_LOGW(
+            TAG,
+            "gap_passkey_request_rejected peer=%02X:%02X:%02X:%02X:%02X:%02X reason=no_keyboard",
+            event_data.peer[0], event_data.peer[1], event_data.peer[2],
+            event_data.peer[3], event_data.peer[4], event_data.peer[5]);
         policy_event = TIVOO_GAP_EVENT_SSP_PASSKEY;
         break;
     case ESP_BT_GAP_AUTH_CMPL_EVT:
@@ -206,9 +229,34 @@ static void spp_event_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *para
             param->disc_comp.scn_num > 0) {
             s_discovered_scn = param->disc_comp.scn[0];
         }
+        TIVOO_LOGI(
+            TAG,
+            "spp_discovery_complete status=%d scn_num=%u scn0=%u",
+            (int)param->disc_comp.status,
+            (unsigned int)param->disc_comp.scn_num,
+            (unsigned int)s_discovered_scn);
         xEventGroupSetBits(s_events, EVENT_DISCOVERY_DONE);
         break;
+    case ESP_SPP_CL_INIT_EVT:
+        TIVOO_LOGI(
+            TAG,
+            "spp_client_init status=%d handle=%" PRIu32 " sec_id=%u",
+            (int)param->cl_init.status,
+            param->cl_init.handle,
+            (unsigned int)param->cl_init.sec_id);
+        if (param->cl_init.status != ESP_SPP_SUCCESS) {
+            xEventGroupSetBits(s_events, EVENT_FAILED);
+        }
+        break;
     case ESP_SPP_OPEN_EVT:
+        TIVOO_LOGI(
+            TAG,
+            "spp_open status=%d handle=%" PRIu32 " peer=%02X:%02X:%02X:%02X:%02X:%02X",
+            (int)param->open.status,
+            param->open.handle,
+            param->open.rem_bda[0], param->open.rem_bda[1],
+            param->open.rem_bda[2], param->open.rem_bda[3],
+            param->open.rem_bda[4], param->open.rem_bda[5]);
         if (param->open.status != ESP_SPP_SUCCESS ||
             !same_address(param->open.rem_bda, s_target)) {
             if (param->open.status == ESP_SPP_SUCCESS) {
@@ -221,13 +269,23 @@ static void spp_event_handler(esp_spp_cb_event_t event, esp_spp_cb_param_t *para
         xEventGroupSetBits(s_events, EVENT_OPEN | EVENT_UNCONGESTED);
         break;
     case ESP_SPP_CLOSE_EVT:
+        TIVOO_LOGW(
+            TAG,
+            "spp_close status=%d handle=%" PRIu32 " async=%u port_status=%" PRIu32,
+            (int)param->close.status,
+            param->close.handle,
+            param->close.async ? 1U : 0U,
+            param->close.port_status);
         if (param->close.handle == s_handle) {
             s_handle = 0;
             xEventGroupClearBits(s_events, EVENT_OPEN | EVENT_UNCONGESTED);
-            xEventGroupSetBits(
-                s_events,
-                param->close.status == ESP_SPP_SUCCESS
-                    ? EVENT_CLOSED : EVENT_FAILED);
+            EventBits_t close_bits = EVENT_CLOSED;
+            if ((xEventGroupGetBits(s_events) & EVENT_AUTO_RECONNECT) != 0) {
+                close_bits |= EVENT_FAILED | EVENT_LINK_LOST;
+            } else if (param->close.status != ESP_SPP_SUCCESS) {
+                close_bits |= EVENT_FAILED;
+            }
+            xEventGroupSetBits(s_events, close_bits);
         }
         break;
     case ESP_SPP_CONG_EVT:
@@ -313,6 +371,12 @@ static bool wait_for_open_and_auth(void)
     for (;;) {
         const EventBits_t current = xEventGroupGetBits(s_events);
         if ((current & EVENT_FAILED) != 0) {
+            TIVOO_LOGW(
+                TAG,
+                "spp_connect_failed_events open=%u auth_done=%u auth_ok=%u failed=1",
+                (current & EVENT_OPEN) != 0 ? 1U : 0U,
+                (current & EVENT_AUTH_DONE) != 0 ? 1U : 0U,
+                (current & EVENT_AUTH_OK) != 0 ? 1U : 0U);
             return false;
         }
         if ((current & (EVENT_OPEN | EVENT_AUTH_DONE)) ==
@@ -322,15 +386,30 @@ static bool wait_for_open_and_auth(void)
 
         const TickType_t now = xTaskGetTickCount();
         if (now >= deadline) {
+            const EventBits_t final_bits = xEventGroupGetBits(s_events);
+            TIVOO_LOGW(
+                TAG,
+                "spp_connect_wait_timeout open=%u auth_done=%u auth_ok=%u failed=%u",
+                (final_bits & EVENT_OPEN) != 0 ? 1U : 0U,
+                (final_bits & EVENT_AUTH_DONE) != 0 ? 1U : 0U,
+                (final_bits & EVENT_AUTH_OK) != 0 ? 1U : 0U,
+                (final_bits & EVENT_FAILED) != 0 ? 1U : 0U);
             return false;
         }
         const TickType_t remaining = deadline - now;
-        (void)xEventGroupWaitBits(
-            s_events,
-            EVENT_OPEN | EVENT_AUTH_DONE | EVENT_FAILED,
-            pdFALSE,
-            pdFALSE,
-            remaining);
+        const EventBits_t wait_mask = (EventBits_t)tivoo_spp_connection_wait_mask(
+            current, EVENT_OPEN, EVENT_AUTH_DONE, EVENT_FAILED);
+        const EventBits_t observed = xEventGroupWaitBits(
+            s_events, wait_mask, pdFALSE, pdFALSE, remaining);
+        if ((observed & EVENT_FAILED) != 0) {
+            TIVOO_LOGW(
+                TAG,
+                "spp_connect_failed_events open=%u auth_done=%u auth_ok=%u",
+                (observed & EVENT_OPEN) != 0 ? 1U : 0U,
+                (observed & EVENT_AUTH_DONE) != 0 ? 1U : 0U,
+                (observed & EVENT_AUTH_OK) != 0 ? 1U : 0U);
+            return false;
+        }
     }
 }
 
@@ -338,29 +417,34 @@ static bool connect_peer(const uint8_t peer[6])
 {
     /* Retry cleanup if an earlier asynchronous disconnect did not complete. */
     if (s_handle != 0 && !disconnect_active_peer()) {
-        s_target_valid = false;
         return false;
     }
 
     memcpy(s_target, peer, sizeof(s_target));
-    s_target_valid = true;
     if (!tivoo_gap_security_init(&s_gap_security, s_target, &s_gap_callbacks)) {
-        s_target_valid = false;
         return false;
     }
 
     xEventGroupClearBits(
         s_events,
         EVENT_DISCOVERY_DONE | EVENT_OPEN | EVENT_AUTH_DONE |
-            EVENT_AUTH_OK | EVENT_FAILED | EVENT_CLOSED);
+            EVENT_AUTH_OK | EVENT_FAILED | EVENT_CLOSED | EVENT_LINK_LOST);
     s_discovered_scn = 0;
 
     bool discovery_completed = false;
-    if (esp_spp_start_discovery((uint8_t *)s_target) == ESP_OK) {
-        EventBits_t bits = xEventGroupWaitBits(
+    const esp_err_t discovery_err =
+        esp_spp_start_discovery((uint8_t *)s_target);
+    if (discovery_err == ESP_OK) {
+        const EventBits_t bits = xEventGroupWaitBits(
             s_events, EVENT_DISCOVERY_DONE, pdTRUE, pdTRUE,
             pdMS_TO_TICKS(SPP_OPERATION_TIMEOUT_MS));
         discovery_completed = (bits & EVENT_DISCOVERY_DONE) != 0;
+    }
+    if (!discovery_completed) {
+        TIVOO_LOGW(
+            TAG,
+            "spp_discovery_unavailable api_err=%s completed=0 fallback_scn=1",
+            esp_err_to_name(discovery_err));
     }
 
     const uint8_t channel = tivoo_spp_select_scn(
@@ -374,17 +458,27 @@ static bool connect_peer(const uint8_t peer[6])
         ESP_SPP_ROLE_MASTER,
         channel,
         (uint8_t *)s_target);
+    TIVOO_LOGI(
+        TAG,
+        "spp_connect_requested peer=%02X:%02X:%02X:%02X:%02X:%02X scn=%u sec_mask=0x%04X api_err=%s",
+        s_target[0], s_target[1], s_target[2], s_target[3], s_target[4],
+        s_target[5], (unsigned int)channel,
+        (unsigned int)(ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT),
+        esp_err_to_name(err));
     if (err != ESP_OK || !wait_for_open_and_auth()) {
         if (s_handle != 0) {
             (void)disconnect_active_peer();
         }
-        s_target_valid = false;
         return false;
     }
 
     if (!bond_list_contains_target()) {
+        TIVOO_LOGW(
+            TAG,
+            "spp_bond_missing peer=%02X:%02X:%02X:%02X:%02X:%02X",
+            s_target[0], s_target[1], s_target[2], s_target[3],
+            s_target[4], s_target[5]);
         (void)disconnect_active_peer();
-        s_target_valid = false;
         return false;
     }
 
@@ -399,7 +493,7 @@ static bool connect_peer(const uint8_t peer[6])
 
 static bool write_chunk(const uint8_t *data, size_t size)
 {
-    if (s_handle == 0 || !s_target_valid) {
+    if (s_handle == 0) {
         return false;
     }
 
@@ -427,7 +521,6 @@ static bool session_disconnect(void *context, const uint8_t peer[6])
 {
     (void)context;
     (void)peer;
-    s_target_valid = false;
     return disconnect_active_peer();
 }
 
@@ -458,8 +551,67 @@ static const tivoo_spp_session_backend_t s_session_backend = {
     .delay_ms = session_delay,
 };
 
+static void service_spp_reconnect(void)
+{
+    if ((xEventGroupGetBits(s_events) & EVENT_AUTO_RECONNECT) == 0) {
+        xEventGroupClearBits(s_events, EVENT_LINK_LOST);
+        return;
+    }
+
+    const EventBits_t events = xEventGroupGetBits(s_events);
+    if ((events & EVENT_LINK_LOST) != 0) {
+        xEventGroupClearBits(s_events, EVENT_LINK_LOST);
+        tivoo_spp_session_mark_disconnected(&s_session);
+    }
+
+    if (!s_session.peer_valid || s_session.connected) {
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    if (s_reconnect_not_before != 0 &&
+        (int32_t)(now - s_reconnect_not_before) < 0) {
+        return;
+    }
+
+    const tivoo_spp_request_t request = {
+        .type = TIVOO_SPP_REQUEST_RECONNECT,
+    };
+    const tivoo_spp_session_result_t result = tivoo_spp_session_process(
+        &s_session, &request, &s_session_backend);
+    if (result == TIVOO_SPP_SESSION_OK) {
+        s_reconnect_not_before = 0;
+        TIVOO_LOGI(
+            TAG,
+            "spp_reconnected peer=%02X:%02X:%02X:%02X:%02X:%02X",
+            s_session.peer[0], s_session.peer[1], s_session.peer[2],
+            s_session.peer[3], s_session.peer[4], s_session.peer[5]);
+        return;
+    }
+    s_reconnect_not_before =
+        xTaskGetTickCount() + pdMS_TO_TICKS(SPP_RECONNECT_RETRY_MS);
+    TIVOO_LOGW(TAG, "spp_reconnect_failed retry_ms=%u", SPP_RECONNECT_RETRY_MS);
+}
+
 static void process_request(spp_request_t *queued)
 {
+    if (queued->type == REQUEST_CONNECT) {
+        if (s_session.peer_valid && s_session.connected &&
+            same_address(queued->peer, s_session.peer)) {
+            TIVOO_LOGI(
+                TAG,
+                "spp_connect_duplicate_ignored peer=%02X:%02X:%02X:%02X:%02X:%02X",
+                queued->peer[0], queued->peer[1], queued->peer[2],
+                queued->peer[3], queued->peer[4], queued->peer[5]);
+        }
+        xEventGroupSetBits(s_events, EVENT_AUTO_RECONNECT);
+        s_reconnect_not_before = 0;
+    } else if (queued->type == REQUEST_DISCONNECT && s_session.peer_valid &&
+               same_address(queued->peer, s_session.peer)) {
+        xEventGroupClearBits(s_events, EVENT_AUTO_RECONNECT);
+        s_reconnect_not_before = 0;
+    }
+
     tivoo_spp_request_t request = {0};
     request.type = (tivoo_spp_request_type_t)queued->type;
     memcpy(request.peer, queued->peer, sizeof(request.peer));
@@ -472,11 +624,13 @@ static void process_request(spp_request_t *queued)
     case TIVOO_SPP_SESSION_OK:
         break;
     case TIVOO_SPP_SESSION_CONNECT_FAILED:
-        s_target_valid = false;
+        if ((xEventGroupGetBits(s_events) & EVENT_AUTO_RECONNECT) != 0) {
+            s_reconnect_not_before =
+                xTaskGetTickCount() + pdMS_TO_TICKS(SPP_RECONNECT_RETRY_MS);
+        }
         report_spp_error("spp_connect_failed", "spp_open_or_authentication_failed");
         break;
     case TIVOO_SPP_SESSION_DISCONNECT_FAILED:
-        s_target_valid = false;
         report_spp_error("spp_disconnect_failed", "spp_close_event_not_received");
         break;
     case TIVOO_SPP_SESSION_NOT_CONNECTED:
@@ -484,7 +638,6 @@ static void process_request(spp_request_t *queued)
             "spp_not_connected", "tivoo_frame_received_without_authenticated_peer");
         break;
     case TIVOO_SPP_SESSION_WRITE_FAILED:
-        s_target_valid = false;
         report_spp_error("spp_write_failed", "spp_chunk_write_or_completion_failed");
         break;
     case TIVOO_SPP_SESSION_INVALID_REQUEST:
@@ -499,12 +652,16 @@ static void spp_worker(void *context)
     (void)context;
     for (;;) {
         spp_request_t *request = NULL;
-        if (xQueueReceive(s_request_queue, &request, portMAX_DELAY) != pdTRUE ||
-            request == NULL) {
-            continue;
+        const BaseType_t received = xQueueReceive(
+            s_request_queue, &request, pdMS_TO_TICKS(SPP_WORKER_POLL_MS));
+        if (received == pdTRUE && request != NULL) {
+            if (request->type == REQUEST_FRAME) {
+                service_spp_reconnect();
+            }
+            process_request(request);
+            free(request);
         }
-        process_request(request);
-        free(request);
+        service_spp_reconnect();
     }
 }
 
@@ -533,7 +690,9 @@ static bool queue_request(
         memcpy(request->data, data, size);
     }
 
-    if (xQueueSend(s_request_queue, &request, 0) != pdTRUE) {
+    if (xQueueSend(
+            s_request_queue, &request,
+            pdMS_TO_TICKS(SPP_QUEUE_WRITE_TIMEOUT_MS)) != pdTRUE) {
         free(request);
         return false;
     }

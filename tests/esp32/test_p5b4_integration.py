@@ -229,6 +229,7 @@ def test_spp_queue_failure_is_reported_on_7778_without_blocking_diagnostics(
         _send_ack(diagnostic)
 
         firmware.command("fail_next_frame")
+        firmware.expect_event("COMMAND fail_next_frame")
         frame = _tivoo_frame(bytes.fromhex("44 69 96 00"))
         control.sendall(frame)
         _assert_closed(control)
@@ -280,3 +281,14 @@ def test_wifi_ip_loss_closes_both_ports_and_new_sessions_recover(
             if client is not None:
                 client.close()
         firmware.stop()
+
+
+def test_listener_receive_buffer_is_shared_outside_the_tcp_task_stack():
+    source = (FIRMWARE / "network_listeners.c").read_text()
+    assert "static uint8_t s_receive_buffer[TCP_RECV_BUFFER_SIZE];" in source
+
+    check_client = source.split("static void check_client(", 1)[1].split(
+        "\nstatic void poll_listeners", 1
+    )[0]
+    assert "uint8_t data[TCP_RECV_BUFFER_SIZE]" not in check_client
+    assert check_client.count("s_receive_buffer") == 6
