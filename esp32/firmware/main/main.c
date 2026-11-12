@@ -3,6 +3,7 @@
 #include "esp_system.h"
 
 #include "diagnostics.h"
+#include "device_status.h"
 #include "hardware_memory.h"
 #include "network_listeners.h"
 #include "tivoo_spp.h"
@@ -15,6 +16,7 @@ static const char *TAG = "tivoo_main";
 
 void app_main(void)
 {
+    tivoo_diagnostics_set_message_handler(tivoo_device_status_handle_message);
     esp_err_t err = tivoo_diagnostics_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Diagnostics worker did not start (error %d)", (int)err);

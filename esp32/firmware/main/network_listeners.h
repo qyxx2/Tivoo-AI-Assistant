@@ -13,5 +13,8 @@ typedef int esp_err_t;
 #endif
 
 esp_err_t network_listeners_start(uint16_t control_port, uint16_t diagnostic_port);
-void network_listeners_set_ip_available(bool available);
+bool network_listeners_set_ip_available(bool available);
+bool network_listeners_get_ip_available(void);
+void network_listeners_get_client_status(
+    bool *control_connected, bool *diagnostic_connected);
 void network_listeners_stop(void);

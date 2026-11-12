@@ -111,10 +111,12 @@ async def test_config_entry_starts_and_stops_both_connections(
     control_clients = []
     diagnostic_clients = []
     control_macs = []
+    control_mac_received = asyncio.Event()
 
     async def control_handler(reader, writer):
         control_clients.append(writer)
         control_macs.append(await reader.readexactly(7))
+        control_mac_received.set()
         await reader.read()
 
     async def diagnostic_handler(reader, writer):
@@ -149,6 +151,7 @@ async def test_config_entry_starts_and_stops_both_connections(
         adapter = hass.data[DOMAIN][entry.entry_id]["connection_adapter"]
         await _wait_for_state(adapter, "control", "connected")
         await _wait_for_state(adapter, "diagnostic", "connected")
+        await asyncio.wait_for(control_mac_received.wait(), 1)
         assert control_macs == [bytes.fromhex("69 11 75 58 97 49 98")]
 
         assert await hass.config_entries.async_unload(entry.entry_id)
@@ -184,6 +187,17 @@ async def _read_tvio_message(reader):
     assert (magic, version, flags) == (b"TVIO", 1, 0)
     payload = await reader.readexactly(payload_length)
     return message_type, sequence, json.loads(payload)
+
+
+async def _read_tvio_frame(reader):
+    import struct
+
+    header = await reader.readexactly(16)
+    magic, version, message_type, flags, payload_length, sequence = struct.unpack(
+        "<4sBBHII", header
+    )
+    assert (magic, version, flags) == (b"TVIO", 1, 0)
+    return message_type, sequence, await reader.readexactly(payload_length)
 
 
 async def _wait_for_log(caplog, expected):
@@ -227,6 +241,9 @@ async def test_diagnostic_handshake_and_device_messages_use_standard_logger(
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
         await writer.drain()
         acknowledgements.append(await _read_tvio_message(reader))
+        status_request = await _read_tvio_message(reader)
+        assert status_request[0:2] == (0x10, 1)
+        assert status_request[2]["request_id"]
         events = [
             {
                 "level": "WARNING",
@@ -399,6 +416,8 @@ async def test_invalid_diagnostic_json_is_ignored_without_losing_connection(
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
         await writer.drain()
         acknowledgements.append(await _read_tvio_message(reader))
+        status_request = await _read_tvio_message(reader)
+        assert status_request[0:2] == (0x10, 1)
         valid = {
             "level": "INFO",
             "module": "wifi_station",
@@ -627,6 +646,7 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
 
     from custom_components.tivoo.diagnostics import (
         TYPE_DEVICE_STATUS,
+        TYPE_GET_STATUS,
         TYPE_MIC_CAPTURE_STOP,
         DiagnosticMessage,
     )
@@ -634,6 +654,7 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
     handled = asyncio.Event()
     received = []
     sent = []
+    status_requests = []
 
     async def handler(message: DiagnosticMessage):
         received.append(message)
@@ -658,7 +679,22 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
         await writer.drain()
         assert await _read_tvio_message(reader) == (0x02, 0, {"accepted": True})
-        writer.write(_tvio_message(TYPE_DEVICE_STATUS, 1, b'{"request_id":"status-1"}'))
+        status_request = await _read_tvio_message(reader)
+        assert status_request[0:2] == (TYPE_GET_STATUS, 1)
+        status_requests.append(status_request)
+        status_payload = {
+            "request_id": status_request[2]["request_id"],
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "uptime_ms": 10,
+            "wifi": {"state": "disconnected"},
+            "tcp": {"7777": "connected", "7778": "connected"},
+            "spp": {"state": "disconnected"},
+            "audio_resource": {"state": "idle", "playback_id": None},
+        }
+        writer.write(
+            _tvio_message(TYPE_DEVICE_STATUS, 1, json.dumps(status_payload).encode())
+        )
         await writer.drain()
         sent.append(await _read_tvio_message(reader))
         await reader.read()
@@ -691,10 +727,14 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
                 break
             await asyncio.sleep(0.01)
 
-        assert received == [
-            DiagnosticMessage(TYPE_DEVICE_STATUS, 0, 1, b'{"request_id":"status-1"}')
-        ]
-        assert sent == [(TYPE_MIC_CAPTURE_STOP, 1, {"session_id": "s1"})]
+        assert len(received) == 1
+        assert received[0].message_type == TYPE_DEVICE_STATUS
+        assert received[0].sequence == 1
+        assert (
+            json.loads(received[0].payload)["request_id"]
+            == status_requests[0][2]["request_id"]
+        )
+        assert sent == [(TYPE_MIC_CAPTURE_STOP, 2, {"session_id": "s1"})]
         assert adapter.states["diagnostic"] == "connected"
     finally:
         await adapter.async_stop()
@@ -856,3 +896,404 @@ async def test_control_tcp_reader_forwards_raw_spp_data_to_registered_consumer(
         diagnostic_server.close()
         await control_server.wait_closed()
         await diagnostic_server.wait_closed()
+
+
+class _FakeHeartbeatClock:
+    def __init__(self):
+        self.now = 0.0
+        self.waiters = []
+
+    def time(self):
+        return self.now
+
+    async def sleep(self, delay):
+        if delay <= 0:
+            await asyncio.sleep(0)
+            return
+        future = asyncio.get_running_loop().create_future()
+        self.waiters.append((self.now + delay, future))
+        await future
+
+    def advance(self, seconds):
+        self.now += seconds
+        remaining = []
+        for deadline, future in self.waiters:
+            if deadline <= self.now and not future.done():
+                future.set_result(None)
+            else:
+                remaining.append((deadline, future))
+        self.waiters = remaining
+
+
+async def _flush_asyncio():
+    for _ in range(8):
+        await asyncio.sleep(0)
+
+
+async def test_diagnostic_heartbeat_sends_get_status_and_reconnects_only_7778(
+    monkeypatch, socket_enabled
+):
+    import json
+
+    from custom_components.tivoo.diagnostics import TYPE_GET_STATUS, TYPE_PING
+
+    clock = _FakeHeartbeatClock()
+    control_clients = []
+    diagnostic_clients = []
+    pings = asyncio.Queue()
+    status_requests = []
+    diagnostic_disconnected = asyncio.Event()
+
+    async def control_handler(reader, writer):
+        control_clients.append(writer)
+        await reader.read()
+
+    async def diagnostic_handler(reader, writer):
+        diagnostic_clients.append(writer)
+        hello = {
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "protocol_version": 1,
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
+            "reset_reason": "ESP_RST_POWERON",
+        }
+        writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        assert await _read_tvio_message(reader) == (0x02, 0, {"accepted": True})
+        status_requests.append(await _read_tvio_message(reader))
+        try:
+            while True:
+                message = await _read_tvio_frame(reader)
+                if message[0] == TYPE_PING:
+                    await pings.put(message)
+        except (asyncio.IncompleteReadError, ConnectionError):
+            diagnostic_disconnected.set()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1",
+        "11:75:58:97:49:98",
+        retry_interval=5,
+        clock=clock.time,
+        heartbeat_sleep=clock.sleep,
+    )
+    await adapter.async_start()
+    try:
+        await _wait_for_state(adapter, "control", "connected")
+        await _wait_for_state(adapter, "diagnostic", "connected")
+        for _ in range(100):
+            if status_requests:
+                break
+            await asyncio.sleep(0.01)
+        assert len(status_requests) == 1
+        status_type, status_sequence, request = status_requests[0]
+        assert status_type == TYPE_GET_STATUS
+        assert status_sequence == 1
+        assert isinstance(request["request_id"], str) and request["request_id"]
+
+        clock.advance(15)
+        await _flush_asyncio()
+        assert await asyncio.wait_for(pings.get(), 1) == (TYPE_PING, 2, b"")
+        diagnostic_clients[0].write(_tvio_message(0x04, 1, b""))
+        await diagnostic_clients[0].drain()
+        await _flush_asyncio()
+        assert adapter._diagnostic_last_pong_at == 15.0
+
+        clock.advance(14)
+        await _flush_asyncio()
+        assert pings.empty()
+        clock.advance(1)
+        await _flush_asyncio()
+        assert await asyncio.wait_for(pings.get(), 1) == (TYPE_PING, 3, b"")
+
+        clock.advance(29)  # 44 seconds since the valid PONG.
+        await _flush_asyncio()
+        assert adapter.states["diagnostic"] == "connected"
+        clock.advance(1)  # 45 seconds since the valid PONG.
+        await asyncio.wait_for(diagnostic_disconnected.wait(), 1)
+        await _wait_for_state(adapter, "diagnostic", "disconnected")
+        assert adapter.states["control"] == "connected"
+        assert len(control_clients) == 1
+        for _ in range(700):
+            if len(status_requests) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        assert (
+            len(status_requests) == 2
+        )  # 7778 reconnected and requested a fresh snapshot.
+        assert len(control_clients) == 1
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await _close_clients(control_clients + diagnostic_clients)
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_invalid_pong_does_not_refresh_diagnostic_liveness(
+    monkeypatch, socket_enabled
+):
+    import json
+
+    from custom_components.tivoo.diagnostics import TYPE_PING
+
+    clock = _FakeHeartbeatClock()
+    diagnostic_clients = []
+    pings = asyncio.Queue()
+    closed = asyncio.Event()
+    initial_status_received = asyncio.Event()
+
+    async def control_handler(reader, writer):
+        await reader.read()
+
+    async def diagnostic_handler(reader, writer):
+        diagnostic_clients.append(writer)
+        hello = {
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "protocol_version": 1,
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
+            "reset_reason": "ESP_RST_POWERON",
+        }
+        writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        await _read_tvio_message(reader)
+        await _read_tvio_message(reader)  # Initial GET_STATUS.
+        initial_status_received.set()
+        try:
+            while True:
+                message = await _read_tvio_frame(reader)
+                if message[0] == TYPE_PING:
+                    await pings.put(message)
+        except (asyncio.IncompleteReadError, ConnectionError):
+            closed.set()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1",
+        "11:75:58:97:49:98",
+        retry_interval=5,
+        clock=clock.time,
+        heartbeat_sleep=clock.sleep,
+    )
+    await adapter.async_start()
+    try:
+        await _wait_for_state(adapter, "diagnostic", "connected")
+        await asyncio.wait_for(initial_status_received.wait(), 1)
+        clock.advance(15)
+        await _flush_asyncio()
+        assert await asyncio.wait_for(pings.get(), 1) == (TYPE_PING, 2, b"")
+        diagnostic_clients[0].write(_tvio_message(0x04, 1, b"not-empty"))
+        await diagnostic_clients[0].drain()
+        clock.advance(30)
+        await _flush_asyncio()
+        await asyncio.wait_for(closed.wait(), 1)
+        await _wait_for_state(adapter, "diagnostic", "disconnected")
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await _close_clients(diagnostic_clients)
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_device_status_and_event_validation_updates_only_known_state(
+    monkeypatch, socket_enabled
+):
+    import json
+
+    from custom_components.tivoo.diagnostics import (
+        TYPE_DEVICE_EVENT,
+        TYPE_DEVICE_STATUS,
+    )
+
+    handled = []
+    status_requests = []
+
+    async def handler(message):
+        handled.append(message)
+
+    async def control_handler(reader, writer):
+        await reader.read()
+
+    async def diagnostic_handler(reader, writer):
+        hello = {
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "protocol_version": 1,
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
+            "reset_reason": "ESP_RST_POWERON",
+        }
+        writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        await _read_tvio_message(reader)
+        status_request = await _read_tvio_message(reader)  # Initial GET_STATUS.
+        status_requests.append(status_request)
+        request_id = status_request[2]["request_id"]
+        messages = [
+            (TYPE_DEVICE_STATUS, {"request_id": "bad", "uptime_ms": True}),
+            (
+                TYPE_DEVICE_STATUS,
+                {
+                    "request_id": request_id,
+                    "device_id": "tivoo-esp32",
+                    "firmware_version": "0.1.0+abcdef0",
+                    "uptime_ms": 10,
+                    "wifi": {
+                        "state": "connected",
+                        "ip": "192.168.3.28",
+                        "unknown": "drop",
+                    },
+                    "tcp": {"7777": "connected", "7778": "connected"},
+                    "spp": {"state": "connected", "mac": "11:75:58:97:49:98"},
+                    "audio_resource": {"state": "idle", "playback_id": None},
+                    "unknown": "drop",
+                },
+            ),
+            (
+                TYPE_DEVICE_EVENT,
+                {"event": "not_a_contract_event", "uptime_ms": 11, "data": {}},
+            ),
+            (TYPE_DEVICE_EVENT, {"event": "spp_connected", "uptime_ms": 11}),
+            (
+                TYPE_DEVICE_EVENT,
+                {"event": "spp_disconnected", "uptime_ms": 12, "data": {}},
+            ),
+        ]
+        for sequence, (message_type, payload) in enumerate(messages, start=1):
+            writer.write(
+                _tvio_message(message_type, sequence, json.dumps(payload).encode())
+            )
+        await writer.drain()
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
+    adapter.register_message_handler(TYPE_DEVICE_STATUS, handler)
+    adapter.register_message_handler(TYPE_DEVICE_EVENT, handler)
+    await adapter.async_start()
+    try:
+        for _ in range(100):
+            if len(handled) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert [message.message_type for message in handled] == [
+            TYPE_DEVICE_STATUS,
+            TYPE_DEVICE_EVENT,
+        ]
+        assert (
+            adapter.device_status["request_id"] == status_requests[0][2]["request_id"]
+        )
+        assert "unknown" not in adapter.device_status
+        assert "unknown" not in adapter.device_status["wifi"]
+        assert adapter.device_status["spp"]["state"] == "disconnected"
+        assert adapter.last_device_event["event"] == "spp_disconnected"
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_p6_error_codes_are_accepted_and_sensitive_diagnostic_text_is_redacted(
+    caplog,
+):
+    import logging
+
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    caplog.set_level(logging.DEBUG)
+    for code in (
+        "audio_busy",
+        "audio_http_failed",
+        "audio_http_status",
+        "audio_content_type_mismatch",
+        "operation_cancelled",
+    ):
+        adapter._log_error(
+            {
+                "error_code": code,
+                "module": "audio_resource",
+                "message": "request failed",
+                "uptime_ms": 1,
+            }
+        )
+    adapter._log_error(
+        {
+            "error_code": "audio_http_failed",
+            "module": "audio_resource",
+            "message": (
+                "GET https://nas.local/audio?token=url-secret "
+                "Bearer bearer-secret password=wifi-secret pcm=01020304"
+            ),
+            "uptime_ms": 2,
+        }
+    )
+    adapter._log_diagnostic(
+        {
+            "level": "INFO",
+            "module": "audio_resource",
+            "message": "resource https://nas.local/audio?token=log-secret",
+            "uptime_ms": 3,
+        }
+    )
+
+    for secret in (
+        "url-secret",
+        "bearer-secret",
+        "wifi-secret",
+        "01020304",
+        "log-secret",
+    ):
+        assert secret not in caplog.text
+    assert caplog.text.count("audio_http_failed") >= 2

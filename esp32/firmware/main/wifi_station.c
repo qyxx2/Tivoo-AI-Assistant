@@ -9,9 +9,11 @@
 #include "nvs_flash.h"
 
 #include "diagnostics.h"
+#include "device_status.h"
 #include "network_listeners.h"
 
 static const char *TAG = "tivoo_wifi";
+static esp_netif_t *s_station_netif;
 static esp_event_handler_instance_t s_wifi_event_handler;
 static esp_event_handler_instance_t s_got_ip_handler;
 static esp_event_handler_instance_t s_lost_ip_handler;
@@ -36,7 +38,9 @@ static void station_event_handler(
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         TIVOO_LOGW(TAG, "station_disconnected");
-        network_listeners_set_ip_available(false);
+        if (network_listeners_set_ip_available(false)) {
+            (void)tivoo_device_status_report_event("wifi_disconnected", NULL);
+        }
         esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
             tivoo_report_error(
@@ -47,13 +51,17 @@ static void station_event_handler(
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         TIVOO_LOGI(TAG, "station_connected");
-        network_listeners_set_ip_available(true);
+        if (network_listeners_set_ip_available(true)) {
+            (void)tivoo_device_status_report_event("wifi_connected", NULL);
+        }
         return;
     }
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
         TIVOO_LOGW(TAG, "station_ipv4_lost");
-        network_listeners_set_ip_available(false);
+        if (network_listeners_set_ip_available(false)) {
+            (void)tivoo_device_status_report_event("wifi_disconnected", NULL);
+        }
     }
 }
 
@@ -85,7 +93,8 @@ esp_err_t tivoo_wifi_station_start(void)
         return err;
     }
 
-    if (esp_netif_create_default_wifi_sta() == NULL) {
+    s_station_netif = esp_netif_create_default_wifi_sta();
+    if (s_station_netif == NULL) {
         return ESP_FAIL;
     }
 
@@ -145,4 +154,31 @@ esp_err_t tivoo_wifi_station_start(void)
     }
 
     return esp_wifi_start();
+}
+
+
+bool tivoo_wifi_station_get_status(tivoo_wifi_status_t *status)
+{
+    if (status == NULL) {
+        return false;
+    }
+    memset(status, 0, sizeof(*status));
+    status->connected = network_listeners_get_ip_available();
+    if (!status->connected || s_station_netif == NULL) {
+        return true;
+    }
+
+    esp_netif_ip_info_t ip_info = {0};
+    if (esp_netif_get_ip_info(s_station_netif, &ip_info) == ESP_OK &&
+        ip_info.ip.addr != 0U &&
+        esp_ip4addr_ntoa(&ip_info.ip, status->ip, sizeof(status->ip)) != NULL) {
+        status->ip_available = true;
+    }
+
+    wifi_ap_record_t ap_info = {0};
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        status->rssi_available = true;
+        status->rssi_dbm = ap_info.rssi;
+    }
+    return true;
 }

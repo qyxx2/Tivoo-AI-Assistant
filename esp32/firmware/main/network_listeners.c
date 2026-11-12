@@ -46,6 +46,8 @@ static listener_endpoint_t s_endpoints[2];
 static uint8_t s_receive_buffer[TCP_RECV_BUFFER_SIZE];
 static atomic_bool s_running = ATOMIC_VAR_INIT(false);
 static atomic_bool s_ip_available = ATOMIC_VAR_INIT(false);
+static atomic_bool s_control_client_connected = ATOMIC_VAR_INIT(false);
+static atomic_bool s_diagnostic_client_connected = ATOMIC_VAR_INIT(false);
 static atomic_bool s_worker_running = ATOMIC_VAR_INIT(false);
 
 #ifdef ESP_PLATFORM
@@ -82,7 +84,11 @@ static void close_endpoint(listener_endpoint_t *endpoint)
         if (endpoint == &s_endpoints[0]) {
             tivoo_control_client_disconnected(endpoint->client_fd);
         } else {
+            atomic_store(&s_diagnostic_client_connected, false);
             tivoo_diagnostics_client_disconnected(endpoint->client_fd);
+        }
+        if (endpoint == &s_endpoints[0]) {
+            atomic_store(&s_control_client_connected, false);
         }
         close_fd(&endpoint->client_fd);
     }
@@ -137,8 +143,10 @@ static void accept_one_client(listener_endpoint_t *endpoint)
     endpoint->client_fd = client_fd;
     if (endpoint == &s_endpoints[0]) {
         tivoo_control_client_connected(client_fd);
+        atomic_store(&s_control_client_connected, true);
     } else {
         tivoo_diagnostics_client_connected(client_fd);
+        atomic_store(&s_diagnostic_client_connected, true);
     }
 }
 
@@ -317,6 +325,8 @@ esp_err_t network_listeners_start(uint16_t control_port, uint16_t diagnostic_por
         .client_fd = -1,
     };
     atomic_store(&s_ip_available, false);
+    atomic_store(&s_control_client_connected, false);
+    atomic_store(&s_diagnostic_client_connected, false);
     atomic_store(&s_worker_running, true);
 
 #ifdef ESP_PLATFORM
@@ -337,9 +347,26 @@ esp_err_t network_listeners_start(uint16_t control_port, uint16_t diagnostic_por
     return ESP_OK;
 }
 
-void network_listeners_set_ip_available(bool available)
+bool network_listeners_set_ip_available(bool available)
 {
-    atomic_store(&s_ip_available, available);
+    const bool previous = atomic_exchange(&s_ip_available, available);
+    return previous != available;
+}
+
+bool network_listeners_get_ip_available(void)
+{
+    return atomic_load(&s_ip_available);
+}
+
+void network_listeners_get_client_status(
+    bool *control_connected, bool *diagnostic_connected)
+{
+    if (control_connected != NULL) {
+        *control_connected = atomic_load(&s_control_client_connected);
+    }
+    if (diagnostic_connected != NULL) {
+        *diagnostic_connected = atomic_load(&s_diagnostic_client_connected);
+    }
 }
 
 void network_listeners_stop(void)

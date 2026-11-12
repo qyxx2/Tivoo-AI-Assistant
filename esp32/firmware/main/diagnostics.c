@@ -278,6 +278,12 @@ static bool valid_error_code(const char *code)
         "protocol_invalid_header",
         "protocol_invalid_payload",
         "protocol_unsupported_message",
+        "reverse_queue_full",
+        "audio_busy",
+        "audio_http_failed",
+        "audio_http_status",
+        "audio_content_type_mismatch",
+        "operation_cancelled",
     };
     if (code == NULL) {
         return false;

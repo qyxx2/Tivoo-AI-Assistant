@@ -175,20 +175,20 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 
 **Interfaces:**
 - HA `Esp32ConnectionAdapter` stores latest validated DEVICE_STATUS; message handlers receive validated `DiagnosticMessage`.
-- Device status read interfaces return actual Wi-Fi/IP/RSSI, 7777/7778 client state, SPP state/peer and HTTP resource idle/fetching. Missing optional observations are omitted.
+- Device status read interfaces return actual Wi-Fi/IP/RSSI, 7777/7778 client state, SPP state/peer and HTTP resource idle/fetching. Missing optional observations are omitted. `tivoo_device_status_set_audio_resource()` is the small current-state seam for P6b5; this batch leaves it idle unless a producer explicitly marks an active fetch.
 - `tivoo_device_status_handle_message(type, payload, size)` handles PING and GET_STATUS; PING queues empty PONG, GET_STATUS replies with DEVICE_STATUS and the exact request_id.
 - `tivoo_device_status_report_event(event, data)` emits only state transitions through the shared TVIO sender.
 
 **Tasks:**
-- [ ] HA transport tests with fake clock: PING every 15 seconds; each valid PONG refreshes liveness; 45 seconds without valid PONG closes only 7778 and starts its existing reconnect loop; 7777 writer stays open and SPP control remains connected.
-- [ ] Write tests for HELLO_ACK → exactly one GET_STATUS; DEVICE_STATUS request_id echo; malformed status rejection; unknown optional values omitted rather than filled with guessed values.
-- [ ] Add device status test stubs for Wi-Fi/IP, listener fd states, SPP peer and resource fetching; assert snapshot reflects injected state only.
-- [ ] Add event transition tests: wifi_connected/disconnected and spp_connecting/connected/disconnected emit once per actual transition; repeated identical state emits nothing.
-- [ ] Extend ESP32 dispatcher to answer PING and GET_STATUS using the state getters; Wi-Fi/SPP callbacks report events after the state change, not before.
-- [ ] Expose SPP status from the existing SPP session/event state; do not create a second SPP state machine. Expose TCP client status from existing listener endpoint fds.
-- [ ] HA parses PONG, DEVICE_STATUS, DEVICE_EVENT and P6 ERROR codes; keeps standard P5 logger mapping and redacts URL/token/PCM.
-- [ ] Run `.venv/bin/python -m pytest tests/esp32/test_p6_device_status.py tests/esp32/test_p5b1_network_listeners.py tests/esp32/test_p5b2_diagnostics.py -q` and `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_diagnostics.py -q`.
-- [ ] Run ESP-IDF v6.1 build and inspect that 7778 reset path never calls SPP disconnect or 7777 reset.
+- [x] HA transport tests with fake clock: PING every 15 seconds; each valid PONG refreshes liveness; 45 seconds without valid PONG closes only 7778 and starts its existing reconnect loop; 7777 writer stays open and SPP control remains connected.
+- [x] Write tests for HELLO_ACK → exactly one GET_STATUS; DEVICE_STATUS request_id echo; malformed status rejection; unknown optional values omitted rather than filled with guessed values.
+- [x] Add device status test stubs for Wi-Fi/IP, listener fd states, SPP peer and resource fetching; assert snapshot reflects injected state only.
+- [x] Add event transition tests: wifi_connected/disconnected and spp_connecting/connected/disconnected emit once per actual transition; repeated identical state emits nothing.
+- [x] Extend ESP32 dispatcher to answer PING and GET_STATUS using the state getters; Wi-Fi/SPP callbacks report events after the state change, not before.
+- [x] Expose SPP status from the existing SPP session/event state; do not create a second SPP state machine. Expose TCP client status from existing listener endpoint fds.
+- [x] HA parses PONG, DEVICE_STATUS, DEVICE_EVENT and P6 ERROR codes; keeps standard P5 logger mapping and redacts URL/token/PCM.
+- [x] Run `.venv/bin/python -m pytest tests/esp32/test_p6_device_status.py tests/esp32/test_p5b1_network_listeners.py tests/esp32/test_p5b2_diagnostics.py -q` and `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_diagnostics.py -q`.
+- [x] Run ESP-IDF v6.1 build and inspect that 7778 reset path never calls SPP disconnect or 7777 reset.
 
 **Exit gate:** C07–C10/C17 pass; 15s/45s timing is deterministic under fake clock; status snapshot has no synthetic fields; independent reconnect and P5 logger regression pass.
 

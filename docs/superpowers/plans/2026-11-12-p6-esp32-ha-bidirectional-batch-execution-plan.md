@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** P6b0 已完成；P6b1 代码、POSIX/HA 回归、ESP-IDF build、NAS app-only flash、真实设备启动/HELLO、SPP Bond 认证、7777/7778 生命周期隔离及 HA 侧 P6b0/P6b1 transport 部署验证完成；真实 SPP DATA_IND 原始回传已通过亮度状态回显实机验证；P6b2–P6b6 未开始。
+> **状态：** P6b0、P6b1、P6b2 已完成。P6b1 真实 SPP DATA_IND 原始回传已通过亮度状态回显实机验证；P6b2 完成 7778 心跳/独立重连、状态快照与事件、P6 ERROR 解析、HA/ESP32 POSIX 回归及 ESP-IDF v6.1 构建。P6b3–P6b6 未开始。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -83,11 +83,15 @@ P6b1 与 P6b2 在技术上可独立，但为了减少跨批次接口变动和并
 
 ### P6b2 — TCP 7778 心跳、状态和事件
 
-**完成：** HA 15 秒 PING、45 秒无有效 PONG 时仅重连 7778；设备应答 PONG/GET_STATUS；Wi-Fi/TCP/SPP/HTTP resource 状态快照和固定 DEVICE_EVENT；P6 error_code 扩展。
+**状态：** 已完成；报告：[P6b2 执行报告](../reports/2026-11-12-p6b2-tcp-diagnostic-heartbeat-device-status.md)。
 
-**验收门：** fake clock 覆盖 heartbeat 边界；状态快照值来自实际 getter；事件只在状态变化时发送；7778 断开期间 7777/SPP 仍正常；P5 logger 和错误脱敏回归通过。
+**实现：** HA 在 HELLO_ACK 后仅发送一次 GET_STATUS，按 15 秒节奏发送 PING，仅空 PONG 更新存活时间；连续 45 秒无有效 PONG 时关闭并复用原有 7778 独立重连循环，不触碰 7777 或 SPP。DEVICE_STATUS 回显 request_id，并通过现有 Wi-Fi/netif、listener client flags、SPP 原状态/peer getter 生成真实快照。HTTP resource 仅增加当前 idle/fetching 状态写入 seam，本批没有实现 HTTP GET。Wi-Fi 与 SPP 固定事件只在真实状态变化后发送；HA 校验并缓存状态/事件。P6 ERROR allow-list 扩展，标准日志 URL/token/凭据/PCM 字段脱敏。
 
-**禁止提前实现：** 设备重启、因 7778 失联而断开 SPP、未实现的电池/麦克风/播放状态。
+**自动化验证：** HA transport/diagnostics、P6 device status simulator、P5b1 listener 和 P5b2 diagnostics 联合回归 73 passed；新增 ESP32 目标子集 22 passed。fake clock 覆盖 15s PING、有效/无效 PONG、45s 超时、7778 重连及 7777 连接保持；POSIX 模拟器覆盖 GET_STATUS、真实 getter 注入、idle/fetching 状态、Wi-Fi/SPP transition 去重和 P6 ERROR codes。
+
+**构建：** ESP-IDF v6.1 / ESP32 target build 通过，生成 `esp32/firmware/build/tivoo_firmware.bin`。没有刷写 ESP32，也没有部署 NAS。
+
+**范围：** 仅 P6b2；未实现 MIC session、TTS/HTTP GET、AUDIO_STOP、decoder/playback、设备重启或后续 P6b3–P6b6。未 push、未 merge。
 
 ### P6b3 — MIC session 传输接口
 

@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "device_status.c"
         "hardware_memory.c"
         "wifi_station.c"
         "network_listeners.c"
