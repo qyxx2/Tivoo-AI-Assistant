@@ -1,0 +1,15 @@
+menu "Tivoo Wi-Fi"
+
+config TIVOO_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+    help
+        Local 2.4 GHz Wi-Fi network name. Stored in the local sdkconfig.
+
+config TIVOO_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+    help
+        Local Wi-Fi password. Stored in the local sdkconfig and never logged.
+
+endmenu

@@ -19,3 +19,15 @@ milliseconds unless an explicit frame-time override is supplied.
 The Android Bluetooth Bridge client, RFCOMM/SPP transport, CLI, device identity,
 and external-workspace runtime imports are intentionally excluded. Retain this
 attribution and upstream notices with the adapted files.
+
+
+## Raw Tivoo protocol encoding
+
+The P5b3 `protocol.py` encoder also adapts the pure display-protocol portions of the same pinned Tivoo SDK source set:
+
+- `tivoo/tivoo.py::_build_packet()`: outer Tivoo length/checksum/frame wrapper.
+- `tivoo/tivoo.py::encode_image()` and `build_image_frame()`: 16×16 RGB palette and packed pixel encoding.
+- `tivoo/tivoo.py::_send_animation()`: 200-byte `0x49` animation chunk format.
+- `tivoo/commands.py::volume_payload()` and `countdown_payload()`: audio volume and countdown payload values.
+
+Only the pure Python byte/pixel encoding behavior is adapted. The CLI, Android Bluetooth Bridge, RFCOMM/SPP client, and device connection lifecycle are not imported into Home Assistant. The ESP32 receives complete frames from HA and forwards them unchanged; it does not encode pixels or reimplement payload generation.

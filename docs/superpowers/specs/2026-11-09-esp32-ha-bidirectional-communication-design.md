@@ -2,7 +2,7 @@
 
 > 状态：设计规格，待用户审阅  
 > 日期：2026-11-09  
-> 最近修订：2026-11-11（单 I²S 全双工、AEC 与全局音频打断基线）
+> 最近修订：2026-11-11（P5 最小网络/日志边界；单 I²S、AEC 与全局音频打断基线）
 >
 > 适用项目：Tivoo AI Assistant  
 > 范围：ESP32-WROVER-E-N16R8 自定义固件与 Home Assistant Tivoo 自定义集成之间的双向通信
@@ -18,6 +18,7 @@
 - 7777 控制通道与 7778 音频/设备事件通道分离，避免持续 PCM 流阻塞图片、动画和控制命令。
 - TTS 使用 HA 提供的音频资源 URL；ESP32 通过 HTTP 分块下载、解码为 PCM 并播放，不由 HA 再额外推送一份 PCM。
 - 本规格只面向用户现有的 Divoom Tivoo，不将其他 Divoom 型号的键盘灯、背光或 BLE 灯控能力移植进来。
+- **阶段边界：** P5 先实现 Wi-Fi、最小 7777 SPP 控制通路和 7778 诊断日志子集；P6 再完成双向控制、完整设备/音频消息及 HTTP 音频资源。P5 使用最终协议的子集，不另建临时端口或第二套日志协议，也不代表 P6 完成。
 
 不在本规格范围：AstrBot 内部对话协议、HA Assist Pipeline 的 STT/TTS 算法实现、ESP32 GPIO 最终分配及供电/模拟线路电路细节、其他 Divoom 型号兼容、A2DP 主路线实现。麦克风与 DAC 模块及其数字音频接口基线见 §2.2–§2.3。
 
@@ -29,10 +30,10 @@
 
 | 设备身份 | 类型 | 当前已知用途 |
 |---|---|---|
-| `Tivoo-light` | BLE | 设备发现/广播身份 |
+| `Tivoo-light` | BLE | 设备广播身份；不是本项目的屏幕控制地址 |
 | `Tivoo-audio` | Bluetooth Classic RFCOMM | 实际控制通道，当前记录的 RFCOMM 通道为 1 |
 
-当前图形、文字、动画、亮度和已确认的内置功能命令均通过 Tivoo Classic SPP 控制。
+当前图形、文字、动画、亮度和已确认的内置功能命令均通过 Tivoo Classic SPP 控制。用户使用手机蓝牙扫描并人工确认 `Tivoo-audio` 的 Classic MAC，再将其填写到 HA Tivoo 集成的 `tivoo_bluetooth_mac` Config Entry 字段。该字段是整个系统唯一的 Tivoo SPP 目标地址来源；不得使用 `Tivoo-light` 的 BLE 地址。更换 Tivoo 时只修改 HA 该字段并重新加载集成，不修改或重刷 ESP32 固件。HA 不扫描/自动选择设备，ESP32 也不执行 Classic peer inquiry 或 BLE scan。
 
 **BLE GATT 灯光控制不属于本项目实现目标。** 现有本地协议记录没有给出适用于该 Tivoo 的 GATT 服务/特征 UUID、可写特征或灯控命令；现有 `esp32-divoom` 代码也没有实现 BLE GATT Client。仅观察到 `Tivoo-light` BLE 身份存在，不足以证明它提供可用的 GATT 灯控接口。
 
@@ -134,8 +135,8 @@ AEC（Acoustic Echo Cancellation）和播放打断属于首期语音交互的必
 
 | 通道 | 默认端口 | HA 角色 | ESP32 角色 | 主要用途 |
 |---|---:|---|---|---|
-| Tivoo 控制桥 | 7777 | TCP Client | TCP Server | 复用 esp32-divoom 既有协议，SPP 连接/断开、屏幕命令、图片/动画、SPP 返回数据 |
-| 设备与音频 | 7778 | TCP Client | TCP Server | 设备握手/状态、AEC 后麦克风 PCM 上行、全局音频输出通知/停止/状态、打断事件、错误与心跳 |
+| Tivoo 控制桥 | 7777 | TCP Client | TCP Server | 复用 esp32-divoom 既有协议；P5 先实现 HA→ESP32→SPP 的单向命令子集，P6 补齐 SPP 返回数据及完整连接/结果处理 |
+| 设备与音频 | 7778 | TCP Client | TCP Server | P5 先实现最终消息封装、HELLO/ACK 和诊断日志/错误；P6 补齐设备状态、音频上行/下行、事件与心跳 |
 | 音频资源获取 | HA 配置的 HTTP(S) 地址 | HTTP Server | HTTP Client | ESP32 收到 URL 后 GET TTS/其他明确指定的音频资源，流式获取音频数据并解码 |
 
 另有独立的 HTTP 资源通道，它是本通信层的必要组成部分，不取代两个 TCP 通道：
@@ -198,7 +199,7 @@ ESP32 HTTP Client ── GET 音频 URL ──> HA HTTP Resource（TTS / 预录�
 - `TcpInput`：TCP Server、接收缓冲、数据队列及数据解析入口。
 - `appendFrames()` / `getFrameSize()` / `isFramePending()`：从 TCP 字节流中组装完整 Tivoo 帧，处理 TCP 分段和粘连。
 - `BluetoothSpp`：Classic Bluetooth 初始化、SPP 连接、发送队列、拥塞处理、发送完成事件、SDP RFCOMM 通道发现。
-- `BluetoothHandler`：连接状态、断线重连、设备发现和 SPP 接收事件。
+- `BluetoothHandler`：连接状态、按上层明确给定的远端 MAC 执行连接/断线重连，以及 SPP 事件回调；不移植其 Classic peer inquiry 自动发现流程。
 - `BluetoothOutput`：将收到的 Tivoo 原始二进制数据写入 SPP，并将设备返回数据转发回 TCP。
 
 原仓库采用 Arduino/AsyncTCP 等平台层封装，而本项目固件基于 ESP-IDF。应复用协议逻辑和蓝牙实现思路，按 ESP-IDF 环境适配；不得为了复用而把整套 Arduino 网络运行时强行引入固件。
@@ -244,7 +245,16 @@ ESP32 HTTP Client ── GET 音频 URL ──> HA HTTP Resource（TTS / 预录�
 00 <MAC 的 6 个原始字节> <name_length> <UTF-8 name bytes>
 ```
 
-实际项目固定使用已配置的 Tivoo 地址，不要求 AI 每次重新发现设备；设备发现事件可用于诊断和首次配网。
+实际项目只使用 HA Config Entry 中由用户确认的 `tivoo_bluetooth_mac`。上面的 `0x00` 发现帧格式仅保留为上游协议兼容记录；本项目不通过 ESP32 设备扫描产生/消费首次配网选择，也不允许该帧自动修改 HA Config Entry。手机扫描和人工录入是唯一设备确认流程。
+
+### 4.2.1 Classic SPP 配对与 Bond Key 持久化
+
+- HA 配置的 Classic MAC 只标识目标 peer；它本身不是配对凭据。ESP32 发起 SPP 连接后，由 Bluedroid 安全管理器完成首次认证/配对。
+- ESP32 在连接前显式配置 `ESP_BT_SP_IOCAP_MODE = ESP_BT_IO_CAP_NONE`，声明自身没有可用于配对交互的显示器或键盘。Legacy `ESP_BT_GAP_PIN_REQ_EVT` 沿用上游行为：`min_16_digit=true` 时回复 16 个 ASCII `0`，否则回复 ASCII `1234`；如实际 Tivoo 要求固定 PIN，再通过本地未跟踪的 Kconfig 覆写。
+- SSP 在双方协商为无需用户交互的 Just Works 等支持路径时可自动完成。数值比较 `ESP_BT_GAP_CFM_REQ_EVT`、要求输入的 passkey 或需要用户查看 passkey 的路径不能由当前 ESP32 硬件完成；不允许无条件自动确认，也不伪造用户输入/确认。遇到不支持的交互请求应拒绝并报告原因。
+- 继续以 `ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT` 作为上游复用基线，但不能据此预先断言 Tivoo 一定能用 Just Works 完成配对：IDF v6.1 的 SSP 安全级别可能要求 MITM，而 NoInputNoOutput 的 Just Works 不提供 MITM。P5b4 必须用当前 Tivoo 实测；认证失败时记录 `ESP_BT_GAP_AUTH_CMPL_EVT` 的状态和 link-key type，并根据证据调整，不得静默关闭认证或加密。
+- GAP 回调记录 `AUTH_CMPL` 的远端地址、成功/失败状态和 link-key type。认证失败的目标不得标记为已认证/可用，也不得继续发送 Tivoo 帧；不得记录 Link Key、PIN 或 passkey。
+- 成功配对的 Link Key 由 Bluedroid 原生存储机制写入 NVS。NVS 必须在 Bluetooth Controller/Bluedroid 初始化前成功初始化；运行时不能因 `ESP_ERR_NVS_NO_FREE_PAGES` 或 `ESP_ERR_NVS_NEW_VERSION_FOUND` 自动清空整个 NVS，因为这会一并删除已配对设备的密钥。ESP32 重启或断电后，Bluedroid 从 NVS 恢复 Bond Key，同一 Tivoo 应能直接重新连接，无需再次通过手机配对或重新输入 PIN。应用层不另存一份 Link Key。
 
 ### 4.3 图形、图片与动画
 
@@ -284,7 +294,7 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | 5 | 1 | Message Type | 消息类型枚举 |
 | 6 | 2 | Flags | 小端；v1 暂保留为 0 |
 | 8 | 4 | Payload Length | 小端无符号长度 |
-| 12 | 4 | Sequence | 小端消息序号，按连接递增 |
+| 12 | 4 | Sequence | 小端消息序号；每个发送方向独立计数，每条 TCP 连接从 0 开始递增 |
 | 16 | N | Payload | JSON UTF-8 或指定二进制格式 |
 
 接收方必须按 Payload Length 组装完整消息，不得假定一次 `recv()` 恰好返回一条消息。允许 TCP 拆包和粘包。
@@ -301,7 +311,7 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | Type | 名称 | 方向 | Payload |
 |---:|---|---|---|
 | `0x01` | HELLO | ESP32 → HA | JSON：设备 ID、固件版本、协议版本、能力列表 |
-| `0x02` | HELLO_ACK | HA → ESP32 | JSON：接受状态、会话参数、心跳间隔 |
+| `0x02` | HELLO_ACK | HA → ESP32 | JSON：接受/拒绝状态；P5 只要求 `accepted`，P6 再加入会话参数和心跳间隔 |
 | `0x03` | PING | HA → ESP32 | 空或 JSON 时间戳 |
 | `0x04` | PONG | ESP32 → HA | 空或 JSON 时间戳 |
 | `0x10` | GET_STATUS | HA → ESP32 | JSON：可选状态查询范围 |
@@ -316,36 +326,39 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | `0x33` | AUDIO_INTERRUPTED | ESP32 → HA | JSON：中断 ID、活动音频 ID（可空）、来源、近端语音打断原因 |
 | `0x40` | DEVICE_EVENT | ESP32 → HA | JSON：状态变化事件 |
 | `0x41` | ERROR | 双向 | JSON：错误代码、关联消息/会话 ID、简短说明 |
+| `0x42` | DIAGNOSTIC_LOG | ESP32 → HA | JSON：日志级别、模块、事件/简短消息、设备运行时间及可选关联 ID/丢弃计数 |
 
 未知消息类型不得导致连接进程崩溃；记录协议错误并忽略该消息。协议版本不兼容时，HELLO_ACK 返回不支持原因并关闭连接。
 
 ### 5.4 握手与连接状态
 
-1. ESP32 开机后启动 TCP 7777 与 7778 Server，并尝试连接 Wi-Fi。
+1. ESP32 开机后初始化 NVS/事件/Wi-Fi Station；取得 WLAN IP 后再启动 TCP 7777 与 7778 Server。
 2. HA 根据配置的 ESP32 地址分别建立两个 TCP Client 连接。
-3. 7777 连接建立后，HA 按需发送 `0x69 + MAC + channel` 建立 SPP。
+3. 7777 连接建立后，HA 发送 `0x69 + 6-byte MAC` 请求 SPP 连接；P5 省略可选通道字节，由 ESP32 使用 SDP 发现 RFCOMM SCN，失败时回退至本机协议记录的通道 1。
 4. 7778 建立后，ESP32 发送 HELLO；HA 校验协议版本并回复 HELLO_ACK。
 5. 完成握手后，双方可在 7778 双向发送消息。
 6. HA 使用 PING/PONG 判断 7778 是否仍可用；控制与音频通道的连接状态分别维护。
 7. 任一通道断开时，HA 单独重连该通道。7778 重连不得重置仍正常工作的 SPP 连接；7777 重连后按需恢复 SPP 连接。
 8. ESP32 网络断开时，停止新的网络音频会话；正在播放的受控音频按本地策略完成缓冲播放或由全局输出管理器停止，并上报可用的最终状态。
 
-建议 HELLO Payload：
+**P5 只实现上述最终协议的最小子集：**
+
+- 7777：HA 下发 Tivoo 原始帧，ESP32 转交 SPP；P5 不要求 SPP 返回数据回传、完整结果语义或设备 ACK。HA TCP 连接断开后可重新建立连接，并重新发送 `0x69 + MAC` 恢复 SPP 控制通道；P5 不实现额外的 SPP 自动状态同步/回执协议。
+- 7778：使用相同的 16 字节 TVIO 头部，完成 HELLO/HELLO_ACK，并支持 DIAGNOSTIC_LOG 与 ESP32→HA ERROR；Sequence 每个发送方向独立计数、每条连接从 0 开始。P5 HELLO/ACK JSON 结构和日志队列行为见 §5.5。连接断开后允许 HA 客户端做基础重连并重新握手，以恢复日志回传。P5 不实现心跳、完整 DEVICE_STATUS、MIC、TTS、AUDIO 或 HTTP 音频资源。
+- P6 在同一端口和封装上扩展其余消息及双向行为，不重新设计或替换 P5 已通过的基础通路。
+
+P5 HELLO Payload：
 
 ```json
 {
   "device_id": "tivoo-esp32",
-  "firmware_version": "0.1.0",
+  "firmware_version": "0.1.0+<git-short-sha>",
   "protocol_version": 1,
   "capabilities": [
     "spp_control",
-    "mic_pcm_upload",
-    "aec_playback_reference",
-    "voice_barge_in",
-    "audio_output_global_stop",
-    "tts_url_playback",
-    "i2s_dac_output"
-  ]
+    "remote_diagnostics"
+  ],
+  "reset_reason": "<ESP-IDF reset reason name>"
 }
 ```
 
@@ -361,6 +374,15 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 - 音频欠载/溢出计数和可用内存（用于诊断，不要求高频上报）。
 
 不要虚构电池电量、屏幕实际显示状态等没有可靠硬件/协议来源的数据。
+
+### 5.5 日志与诊断
+
+- 项目模块通过 `TIVOO_LOGE/W/I/D` 分级宏记录日志；宏同时调用对应 ESP-IDF `ESP_LOG*` 保留 UART/console 输出，并将明确的级别、TAG 和消息放入网络诊断队列。第三方组件内部日志仍保留本地 UART，不通过解析全局格式化日志字符串推断级别。DIAGNOSTIC_LOG JSON 字段为 `level`、`module`、`message`、`uptime_ms`，可选 `correlation_id`、`dropped_count`；`level` 为 DEBUG/INFO/WARNING/ERROR。HELLO 报告设备 ID、固件版本（含 Git 短 SHA）、协议版本、能力列表及 `esp_reset_reason()` 的实际原因。具体 P5 JSON schema 以 `2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md` §7.3 为准。
+- 网络日志进入有界 RAM 队列，由低优先级发送任务上传；日志宏只做有界格式化/入队，不调用 socket、不等待发送。P5 默认队列深度 16 条，单条 `message` 最多 384 UTF-8 bytes，序列化 JSON 最大 1 KiB；达到上限时丢弃新记录并累计 `dropped_count`，不阻塞调用者。
+- 仅在 7778 HELLO_ACK `accepted=true` 后发送 DIAGNOSTIC_LOG；未连接时保留有限近期记录，重连并重新握手后按入队顺序补发。队列满时丢弃新记录并累计 `dropped_count`；该计数随下一条成功日志上报后清零。队列只在 RAM，设备重启后不保留普通日志；不将每条日志写入 Flash。P5 ERROR 使用项目合同矩阵 §7.3 定义的错误码集合。
+- 普通日志不逐条写 Flash；P5 不要求持久日志数据库或 Core Dump 导出，确有现场故障证据需求时再单独评估。
+- HA 将设备日志映射到 `custom_components.tivoo` 标准 Python logger，INFO 为常规基线、DEBUG 按需开启，并按级别写入 HA 主日志（Container 默认文件为 `/config/home-assistant.log`）。部署时确保 `/config` 挂载到 NAS 持久化目录；ESP32 不直接连接 NAS，也不另建日志存储服务。
+- 日志不得包含 Wi-Fi 密码、Authorization/API Token、短时音频 URL 凭据、原始 PCM、完整转写或回答正文。可记录模块、事件、错误码、耗时和内部关联 ID。
 
 ## 6. 麦克风音频上行：ESP32 → HA
 
@@ -520,6 +542,7 @@ HA 自定义集成是所有上层功能的唯一入口：
 - 管理 7777 Tivoo 控制桥，并把 HA 服务调用编码成 Tivoo 二进制帧。
 - 复用现有 Python Tivoo 协议/图片编码能力，不在 ESP32 重复图片编码。
 - 管理 7778 握手、消息解析、音频队列和状态更新。
+- P5 接收 DIAGNOSTIC_LOG/ERROR，按设备日志级别映射到 Tivoo 集成标准 logger；使用 HA 现有日志配置持久化，不直接写入自建文件或另开 NAS 接收服务。
 - 将 MIC_PCM 流交给 Assist Satellite Pipeline。
 - 监听 Pipeline 事件：在 `run-start` 保存 TTS URL、Token、MIME 和 `stream_response`；流式路径在 `intent-progress` 的 `tts_start_streaming=true` 时发送 TTS_PLAY，短回答/非流式路径在 `tts-end` 时发送 TTS_PLAY。
 - 确保下发 URL 是 ESP32 可直接访问的 HA LAN 地址，并在需要时提供短时 HTTP 访问凭据。
@@ -537,8 +560,10 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 
 固件以 ESP-IDF 为基础，按模块划分：
 
-- **network_control**：TCP 7777 Server，兼容上游 raw Tivoo bridge 协议。
-- **network_audio**：TCP 7778 Server、消息封装解析、HELLO/心跳、状态事件及音频消息。
+- **wifi_station**：Wi-Fi Station 配置、连接状态及基础重连。
+- **network_control**：TCP 7777 Server，兼容上游 raw Tivoo bridge 协议；P5 先支持单向 SPP 控制，P6 扩展完整双向行为。
+- **network_audio**：TCP 7778 Server 和统一消息封装；P5 先支持 HELLO/ACK、DIAGNOSTIC_LOG、ERROR，P6 扩展完整状态/音频消息。
+- **diagnostics_log**：封装 ESP-IDF 日志、启动/Reset Reason 记录和有界异步网络发送队列。
 - **tivoo_spp**：复用/适配 esp32-divoom 的 Classic Bluetooth SPP、SDP channel discovery、发送队列和连接管理。
 - **audio_capture**：共享全双工 I²S Controller 的 RX channel/DMA、INMP441 左 Slot 24-bit 提取、32 kHz → 16 kHz 转换、麦克风 M 通道准备和持续采集。
 - **audio_frontend**：对齐播放参考 R 通道、构造 AFE M/R 交错输入、运行 ESP-SR 经典 ESP32 target 的 AEC/VAD，并输出唯一的 16 kHz 增强 Mono PCM 供预录与网络发送。
@@ -603,7 +628,7 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 | `BluetoothBridgeTest/esp32-divoom/components/divoom/input_tcp.cpp` | TCP 7777 接入、命令识别、反向数据发送 | 保留协议兼容，按 ESP-IDF 适配网络层 |
 | `esp32-divoom/components/divoom/util.cpp` | Tivoo 帧拆分/组装、TCP 拆包与粘包处理 | 优先复用 `appendFrames` 和帧长度校验 |
 | `esp32-divoom/components/divoom/bluetooth_spp.cpp` | SPP 连接、SDP、发送队列、拥塞处理 | 作为 ESP-IDF SPP 模块主要实现参考 |
-| `esp32-divoom/components/divoom/hardware_bluetoothctl.cpp` | 设备发现、连接/重连和 SPP 事件回调 | 复用状态机和回调职责 |
+| `esp32-divoom/components/divoom/hardware_bluetoothctl.cpp` | 设备发现、连接/重连和 SPP 事件回调 | 只复用按指定 MAC 连接/重连的状态机和回调职责；不复用 Classic peer inquiry 自动发现流程 |
 | `esp32-divoom/components/divoom/output_bluetooth.cpp` | 原始数据向 SPP 转发 | 沿用简单转发边界 |
 | `BluetoothBridgeTest/tivoo/tivoo.py` | 图片缩放、像素编码、帧构建、外层校验 | HA 侧复用，不在 ESP32 重写 |
 | `BluetoothBridgeTest/tivoo/commands.py` | 常见 Tivoo 命令 Payload Builder | HA 端按需复用/移植 |
@@ -619,9 +644,18 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 - 不在 ESP32 实现 PNG/JPG/GIF 图片量化和调色板编码。
 - 不新建与 `appendFrames` 功能重复的 TCP 帧解析器，除非 ESP-IDF 适配测试证明现有实现不适用。
 - 不重写 SPP 发送拥塞队列、SDP 通道发现等已有能力。
-- 新增代码限于 ESP-IDF 适配、7778 消息协议、音频采集/播放及 HA Assist Satellite 对接。
+- 新增代码限于 ESP-IDF 适配、Wi-Fi/既定 7777/7778 通信、诊断日志及音频采集/播放与 HA Assist Satellite 对接；Tivoo 协议和图片编码仍优先复用现有实现。
 
 ## 12. 验收标准
+
+### 12.0 P5 最小固件
+
+- ESP32 可连接配置的 Wi-Fi，并向 HA 提供 TCP 7777/7778；不要求配网门户或复杂网络管理功能。
+- HA 通过 7777 下发一条现有 Tivoo 原始命令，ESP32 能经 Classic SPP 发送并在 Tivoo 实机观察到效果；P5 不验收 SPP 反向数据。
+- HA 通过 7778 完成 HELLO/HELLO_ACK，并接收 DIAGNOSTIC_LOG/ERROR；日志按级别写入 HA 日志，并随 NAS 的 `/config` 持久化挂载保存。
+- HELLO 报告设备 ID、固件版本和已实现能力；启动后上报 Reset Reason。诊断日志包含模块/级别及 uptime，不得出现凭据、原始音频或完整对话正文。
+- 7778 断开、队列满或 HA 不可用时，日志发送不会阻塞 SPP；重连后补发队列中保留的记录并报告丢弃数。
+- P5 不以 SPP 返回数据、完整 DEVICE_STATUS/心跳、MIC_PCM、TTS、HTTP 音频资源、I²S、AEC/VAD 或 Core Dump 导出作为验收条件。
 
 ### 12.1 控制桥
 
@@ -663,6 +697,14 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 ## 13. 测试策略
 
 优先使用现有测试，不为已有逻辑重复建立平行测试框架：
+
+### P5 网络与日志基线
+
+- 验证 Wi-Fi、7778 HELLO/ACK 和诊断日志进入 HA 主日志。
+- 验证 7777 单向 SPP 控制能在 Tivoo 实机生效。
+- 覆盖 7778 断线、有限队列溢出、重连补发和 Reset Reason 上报，确认日志发送不阻塞 SPP。
+
+### 后续阶段验证
 
 1. **协议 Golden 测试**：沿用 `esp32-divoom/test/goldens` 思路和本地 Tivoo 协议测试，检查命令/图像编码字节不发生意外变化。
 2. **TCP 帧测试**：复用 `util.cpp` 的拆包/粘包用例，补充 ESP-IDF TCP 收包边界测试。

@@ -201,7 +201,7 @@ async def test_set_brightness_rejects_out_of_range_or_non_integer_values(
     assert adapter.commands == []
 
 
-async def test_new_services_propagate_unavailable_adapter_errors(
+async def test_new_services_propagate_missing_control_channel_errors(
     hass, enable_custom_integrations
 ):
     await _loaded_entry(hass)
@@ -212,5 +212,5 @@ async def test_new_services_propagate_unavailable_adapter_errors(
         ("set_brightness", {"value": 50}),
     ]
     for service, data in cases:
-        with pytest.raises(HomeAssistantError, match="unavailable"):
+        with pytest.raises(HomeAssistantError, match="control channel"):
             await hass.services.async_call(DOMAIN, service, data, blocking=True)
