@@ -37,7 +37,7 @@
 - 不实现或修改 `homeassistant/custom_components/tivoo/` 的生产模块。
 - 不修改 HA Core 源码，不通过 monkey patch 或调用 HA 私有方法实现生产取消。
 - 不改 P3 AstrBot API/session 合同或 P7A Wyoming Provider；只有测试证据明确指出缺陷时，才在后续独立任务中安排对应修复。
-- 不接真实 ESP32、INMP441、AEC、DAC/AUX 或 TCP 7778 硬件链路；这些仍属于 P6/P7/P8 的相应验收。
+- 不接真实 ESP32、INMP441、AEC、DAC/AUX 或执行 TCP 7778 硬件联调。P6 已完成 7778 双向通信及 HTTP 资源获取；真实 I²S/AFE/VAD/MIC_PCM 与 Assist Satellite 接入属于 P7，解码和 DAC/AUX 播放属于 P8。
 
 ## 3. 测试批次
 

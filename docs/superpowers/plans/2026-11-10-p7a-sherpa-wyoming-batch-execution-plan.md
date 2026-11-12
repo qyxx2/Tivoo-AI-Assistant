@@ -1,6 +1,6 @@
 # P7A Sherpa Wyoming — Batch Execution Plan
 
-> 状态：P7Ab0–P7Ab8 批次已完成；NAS Sherpa 容器已部署并 healthy；生产 HA 已持久化唯一 Wyoming Config Entry，同 Entry 下 KWS/STT/TTS 三实体可用；C01–C39 全部 PASS，允许进入 P5/P6；C40–C43 DEFERRED，C44 N/A/禁止新增。
+> 状态：P7Ab0–P7Ab8 批次已完成；NAS Sherpa 容器已部署并 healthy；生产 HA 已持久化唯一 Wyoming Config Entry，同 Entry 下 KWS/STT/TTS 三实体可用；C01–C39 全部 PASS，允许进入 P5/P6。后续阶段复验状态：C40 留给 P7；C41 的 P6 通信部分已 PASS、P7 物理麦克风/Satellite 部分 DEFERRED；C42 的 P6 HTTP 获取部分已 PASS、P8 解码/播放部分 DEFERRED；C43 的 P5/P6 通信路径已完成、P10 硬件并发 DEFERRED；C44 N/A/禁止新增。
 > 工作分支：`feature/p7a-sherpa-wyoming-service`
 > 基线提交：`aeef5183fef17e53bafbdda0e55f7de2300a8fdd`
 > 实施计划：[P7A Implementation Plan](2026-11-10-p7a-sherpa-wyoming-implementation-plan.md)
@@ -338,7 +338,7 @@ P7Ab2、P7Ab3、P7Ab4 在代码职责上可独立测试，但本工作区按一�
 - [x] 在 NAS 同一个容器/进程测量三模型总加载时间、常驻/峰值 RSS、CPU、KWS 实时处理 lag、STT RTF、TTS 首块时间/队列水位；与旧单模型基准分开报告。
 - [x] 验证模型缺失/哈希错误导致启动失败；容器重启时模型不重新下载；重启后 HA 三 Provider 恢复；健康检查能识别 Info 不完整。
 - [x] 检查日志无 PCM、完整 Transcript、TTS 整段文字、Token 或短时 URL 凭据；保留模型版本/哈希、错误类别和性能数据。
-- [x] 建立报告逐项追踪 P7A-C01 至 C44：C01–C39 MUST 每项给出验收状态和证据；C40–C43 保持 DEFERRED；C44 明确 N/A/禁止新增。
+- [x] 建立报告逐项追踪 P7A-C01 至 C44：C01–C39 MUST 每项给出验收状态和证据；P7A 阶段当时将 C40–C43 标记为后续阶段工作；C44 明确 N/A/禁止新增。后续 P5/P6 交付后的拆分状态见当前文档顶部和 §13。
 - [x] 已检查停止条件：C01–C39 全部通过，因此按计划完成阶段状态更新并放行 P5/P6。
 - [x] 仅全部 MUST 通过时，更新矩阵验收状态及 README 阶段状态；明确 P7A 已完成并允许进入 P5/P6，但不声称 P7 真实麦克风/设备播报完成。
 - [x] ARM Ubuntu 最终运行全套 Python 3.11 服务测试、HA/P3 回归、Ruff、compileall、pip check、Markdown/link 校验、合同 ID 追踪和 git diff --check；GitHub CI 负责最终 Dockerfile/build/Compose 验收，按事实引用 run 链接。
@@ -348,7 +348,7 @@ P7Ab2、P7Ab3、P7Ab4 在代码职责上可独立测试，但本工作区按一�
 - [x] C01–C39 所有 MUST 都有可复现 PASS 证据，不以开发机 fake 测试代替 NAS 组合资源/HA 真正集成证据。
 - [x] Dockerfile/linux/amd64 image/Compose CLI 验收由 GitHub Actions 完成；NAS 只 pull/run CI 镜像。
 - [x] 三模型组合 RSS/CPU/KWS lag/STT RTF/TTS 首块数据来自 NAS 同进程实测。
-- [x] C40–C43 明确延后，C44 不实现；不把 P7A 完成扩大成 P7/P8 完成。
+- [x] P7A 阶段不提前实现 C40–C43，C44 不实现；不把 P7A 完成扩大成 P7/P8 完成。C40–C43 后续阶段状态以文档顶部及合同追踪表为准。
 - [x] README/矩阵的阶段状态与最终报告一致。
 
 **Commit:** test(p7a): verify Sherpa Wyoming deployment and HA pipeline
@@ -399,9 +399,9 @@ P7Ab2、P7Ab3、P7Ab4 在代码职责上可独立测试，但本工作区按一�
 | P7A-C38 | P7Ab8 | STT transcript → P3、KWS miss 不触发 Agent |
 | P7A-C39 | P7Ab8 | P5/P6 阶段门 |
 | P7A-C40 | P7 / DEFERRED | 实际麦克风、噪声、误唤醒/漏唤醒、距离 |
-| P7A-C41 | P6/P7 / DEFERRED | ESP32 I2S/AFE/TCP 7778/Satellite |
-| P7A-C42 | P6/P8 / DEFERRED | HTTP TTS Proxy、解码和 DAC 播放 |
-| P7A-C43 | P5/P6/P10 / DEFERRED | 屏幕、SPP 和硬件并发 |
+| P7A-C41 | P6 PASS / P7 DEFERRED | P6 的 TCP 7778 MIC 协议、HA 有界 session dispatch 已完成；ESP32 I²S RX/AFE/VAD、真实 MIC_PCM producer 和 Assist Satellite 会话由 P7 实现/验收 |
+| P7A-C42 | P6 PASS / P8 DEFERRED | P6 的 TTS_PLAY、HA TTS Proxy URL 与 ESP32 HTTP 流式读取已完成；解码、PCM 缓冲、I²S DAC/AUX 和播放状态由 P8 实现/验收 |
+| P7A-C43 | P5/P6 PASS / P10 DEFERRED | SPP、屏幕命令与双向通信路径已完成；长时间屏幕/SPP/Wi-Fi/音频硬件并发由 P10 实测 |
 | P7A-C44 | N/A / 禁止新增 | 不直接连接 AstrBot、不持有 session_id |
 
 ## 14. 每批完成报告字段

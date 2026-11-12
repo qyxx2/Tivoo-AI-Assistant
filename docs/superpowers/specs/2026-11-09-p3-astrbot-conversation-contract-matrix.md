@@ -448,8 +448,9 @@ P3 冻结：
 
 - P4：HA MCP Server 和 Tivoo LLM Tools；本阶段不依赖它们，也不把它们混入 Conversation Agent。
 - P5：Wyoming TTS 逐句输入与 PCM 分块输出；只有 P3 Agent 与 P5 Provider 均支持流式时，HA 才能流式 TTS。
-- P6：Tivoo Assist Satellite 和 ESP32 音频通道；P3 的 Conversation Entity 不依赖 ESP32 存在。
-- P7：中文 Wake Word Provider 与实际语音端到端。
+- P6：ESP32 ↔ HA 双向通信传输层（TCP 7777/7778、MIC 消息分发接口、TTS HTTP 资源获取）；不创建 Assist Satellite。P3 的 Conversation Entity 不依赖 ESP32 存在。
+- P6.5：HA Assist Pipeline/TTS Proxy/Wyoming/AstrBot 取消传播前置验证。
+- P7：Tivoo Assist Satellite、ESP32 麦克风/AEC/VAD 上行及中文 Wake Word/STT 与真实语音端到端联调。
 - 后续多用户：重新设计 HA user_id → AstrBot username/session_id 的映射表；不得通过把当前固定 username 临时替换成 context.user_id 来“顺便支持”。
 
 ## 14. 官方文档和源码

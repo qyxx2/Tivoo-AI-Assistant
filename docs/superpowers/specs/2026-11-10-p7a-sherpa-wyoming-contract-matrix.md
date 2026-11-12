@@ -104,8 +104,9 @@ P7A 是完整 P7 的前置阶段，先交付一个可被 HA 原生 Wyoming 集�
 | Wyoming TTS Provider | 接收 HA 文本/文本流，分句调用 Matcha，输出 PCM AudioChunk | 不直接向 ESP32 传音频，不生成 HA Proxy URL |
 | HA 原生 Wyoming Integration | Describe/Info、建立同一个 Config Entry、创建 wake_word/stt/tts 三类实体 | 不加载 Sherpa 模型 |
 | HA Assist Pipeline | WAKE_WORD → STT → Conversation Agent → TTS；维护 VAD、端点、会话和音频生命周期 | 不自行实现 KWS/STT/TTS 模型 |
+| Tivoo Assist Satellite（P7） | 接收 P6 `AudioSessionManager` 提供的 PCM iterator；通过 `async_accept_pipeline_from_satellite()` 启动 Pipeline；关联音频会话、响应事件及播报收尾 | 不实现 KWS/STT/TTS 模型；不绕过 Satellite 另建同一会话的 `assist_pipeline/run` 生命周期 |
 | P3 AstrBot Conversation Agent | 接收最终 STT 文本，调用 AstrBot HTTP/SSE，将回复增量写入 ChatLog | 不直接调用 Sherpa 或输出 PCM |
-| ESP32/Tivoo | P7A 不参与；P6/P7 后续接收 HA 音频/设备通路 | 不连接 Sherpa 服务 |
+| ESP32/Tivoo | P7A 不参与；P6 提供 HA 音频/设备传输通路，P7 将真实麦克风 PCM 与 Assist Satellite 接入该通路 | 不连接 Sherpa 服务 |
 
 ### 3.2 语音处理顺序
 
@@ -489,9 +490,9 @@ HA Core 2026.11.0 的 Wyoming TTS Provider 在流式请求中依次发送：
 | P7A-C38 | HA Pipeline → P3 Agent | 语音对话链路回归 | 使用测试音频验证最终 Transcript 进入现有 P3 Conversation Agent，真实 AstrBot SSE 回复继续进入 HA TTS；KWS 未命中不得触发 Agent | MUST |
 | P7A-C39 | P7A → P5/P6 | 阶段依赖 | P7A 服务和 HA Provider 验收完成后，P5/P6 才以其作为稳定语音服务依赖 | MUST |
 | P7A-C40 | Tivoo 实际麦克风 → KWS | 真实声学验收 | INMP441 位置、噪声、误唤醒率、漏唤醒率、距离和回声 | DEFERRED：P7 |
-| P7A-C41 | ESP32 → HA | 物理音频传输 | I2S RX、AFE VAD、TCP 7778 MIC_PCM、Satellite 音频会话 | DEFERRED：P6/P7 |
-| P7A-C42 | HA TTS Proxy → ESP32 | 设备音频播放 | HA Proxy URL 获取及 MP3 全量解码已有 C38 生产 E2E 证据；ESP32 获取/解码、PCM 缓冲、I2S DAC/AUX、TTS_STATE | DEFERRED：P6/P8 |
-| P7A-C43 | ESP32 ↔ Tivoo | 屏幕/SPP 和硬件并发 | TCP 7777、SPP、显示控制、设备回执 | DEFERRED：P5/P6/P10 |
+| P7A-C41 | ESP32 → HA | 物理音频传输 | P6 已完成 TCP 7778 MIC 消息协议与 HA 有界 session dispatch；I²S RX、AFE VAD、真实 MIC_PCM producer 和 Satellite 音频会话由 P7 接入 | P6 PASS / DEFERRED：P7 |
+| P7A-C42 | HA TTS Proxy → ESP32 | 设备音频播放 | P6 已完成 TTS_PLAY、HA Proxy URL 通知与 ESP32 HTTP 流式资源获取；解码、PCM 缓冲、I²S DAC/AUX、TTS_STATE 由 P8 接入 | P6 PASS / DEFERRED：P8 |
+| P7A-C43 | ESP32 ↔ Tivoo | 屏幕/SPP 和硬件并发 | P5/P6 已完成 TCP 7777、SPP、显示命令与双向通信基础；长期屏幕/SPP/Wi-Fi/音频硬件并发由 P10 验证 | P5/P6 PASS / DEFERRED：P10 |
 | P7A-C44 | P7A 容器 → AstrBot | 直接模型调用 | P7A 不直接连接 AstrBot、不持有 session_id、不调用 TTS 模型的 OpenAI API | N/A：禁止新增 |
 
 ## 13. P7A 验收标准

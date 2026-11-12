@@ -64,7 +64,7 @@ HA Assist Pipeline
 13. **重试边界：** Chat POST 不自动重发。只有明确识别为 session owner 不匹配时，才可创建新 UUIDv4 并重试一次；不得把网络错误、超时或任意 4xx/5xx 当成 owner 冲突。
 14. **失败不伪装成功：** HTTP JSON error、认证失败、SSE error、未知事件、非法 JSON、无 end 的 EOF 或只有元数据没有可见文本，都不能生成成功回答。意外 EOF / 协议异常在请求已发出后按合同尝试 stop。
 15. **凭据保护：** API Key secret 只保存在 HA config entry；不得写入日志、测试 fixture、URL、query string、计划文档或 Git。错误日志只保留不含密钥的状态、事件类型和必要关联信息。
-16. **范围隔离：** 不改 Tivoo 集成、不做 P4 MCP Tools、不做 P5 Wyoming STT/TTS、不做 P6 Assist Satellite、不做 P7 唤醒词、不改 AstrBot 插件和 ESP32 固件。
+16. **范围隔离：** 不改 Tivoo 集成、不做 P4 MCP Tools、不做 P5 Wyoming STT/TTS、不做 P7 Assist Satellite/麦克风音频接入与唤醒词、不改 AstrBot 插件和 ESP32 固件。P6 只负责 ESP32 ↔ HA 通信传输层，P6.5 负责取消传播前置验证。
 17. **批次规则：** 每个 Batch 先写并运行 RED 测试，再做最小实现并达到 GREEN；完成规定回归、diff 检查和边界审查后独立本地提交。未获另行授权不推送、不合并。
 
 ## Planned source layout

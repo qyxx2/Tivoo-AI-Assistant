@@ -97,7 +97,7 @@ esptool 完成串口写入及 flash read-back 校验，结果为 **verify OK (di
 
 1. **Wi-Fi AP 实际关闭/恢复测试：NOT RUN。** 当前 NAS 设备连接条件不具备安全地控制 AP 开关的途径；未通过停 NAS 网络来模拟 Wi-Fi 故障。已有 P5 用户实测 ESP32 断电过夜后重新通电能自动重连 Wi-Fi，且本批真实 GET_STATUS 验证了当前 Wi-Fi 信息。
 2. **当前工作区 HA 集成部署与运行时联通 smoke：PASS；HA 主动 TTS 消息实机联调：NOT RUN。** 按用户授权部署 P6 分支的 `__init__.py`、`transport.py`、`audio_resource.py`、`audio_session.py` 四个文件，其他集成文件未覆盖。部署前完整备份位于 NAS `/volume1/docker/tivoo-backups/tivoo-pre-p6-20261112-235942.tar.gz`。HA Core 2026.11.0 / Python 3.14.10 容器内 `compileall` 与 P6 模块 import 通过；仅重启 `homeassistant` 容器后 HTTP 200，Tivoo 配置版本 2、ESP32 地址和配对 MAC 均保留，7777/7778 均重新 ESTABLISHED，其他容器持续运行，未发现 Tivoo import/setup 错误。该 smoke 证明当前分支集成可部署、启动和建立双通道连接，不代替主动 TTS_PLAY 的实机消息验证。
-3. **真实 HA Pipeline/TTS Proxy 事件到新固件的完整语音链路：NOT RUN。** 当前 P6 只在 runtime 暴露 `pipeline_event_callback_factory`，没有 Assist Satellite/Pipeline caller 将它传入 `event_callback`；P6 实施计划明确把 Satellite 留给后续阶段。HA TTS Proxy URL builder、流式/非流式事件处理和 TTS_PLAY 编码由 P6b4 自动化测试覆盖；ESP32 HTTP reader 则由本批 NAS HTTP fixture 实机验证。要验证真实 Pipeline 自动触发，需待 Satellite 调用者接入后再做；本阶段没有将合成事件或手动 TTS_PLAY 说成真实 Pipeline 验收。
+3. **真实 HA Pipeline/TTS Proxy 事件到新固件的完整语音链路：NOT RUN / P7。** 当前 P6 只在 runtime 暴露 `pipeline_event_callback_factory`，没有 Assist Satellite/Pipeline caller 将它传入 `event_callback`；Assist Satellite、音频会话到 Pipeline 的接入及 callback 的实际调用者由 P7 实现。HA TTS Proxy URL builder、流式/非流式事件处理和 TTS_PLAY 编码由 P6b4 自动化测试覆盖；ESP32 HTTP reader 则由本批 NAS HTTP fixture 实机验证。要验证真实 Pipeline 自动触发，需待 Satellite 调用者接入后再做；本阶段没有将合成事件或手动 TTS_PLAY 说成真实 Pipeline 验收。
 4. **生产 HTTPS endpoint 的 TLS 握手：NOT RUN。** 实机 HTTP 使用内网 LAN HTTP；ESP-IDF 标准 CA bundle 配置、证书验证路径和 clean build 已检查，未为验收专门引入自签证书设施。
 5. **真实 MIC_SESSION/MIC_PCM producer：NOT RUN / P7。** P6 没有 I²S microphone producer；INMP441 未参与 P6 验收。P6b3 的 schema、binary PCM 和有界 HA dispatch 通过自动化/mock receiver 测试。
 6. **音频解码、DAC 输出与播放完成状态：NOT RUN / P8。** P6 只将 HTTP 字节交给 reader；resource_ready 不代表音频已经播放。没有连接 DAC 也不影响 P6b6。
@@ -109,7 +109,7 @@ esptool 完成串口写入及 flash read-back 校验，结果为 **verify OK (di
 
 ## Review 与交付状态
 
-- 已自审新增 golden test、报告和阶段文档；确认没有改变 P6 协议、固件业务逻辑、NAS HA 集成或 P6.5/P7/P8 范围。
+- 已自审新增 golden test、报告和阶段文档；P6 协议、固件业务逻辑及 P6.5/P7/P8 阶段边界未改变。P6 完成后，按用户另行授权将当前分支 HA Tivoo 集成的四个差异文件部署到 NAS；部署前备份、容器编译/import、重启、配置保留与双 TCP 重连 smoke 见本报告 §未运行项第 2 条。
 - 未使用独立 reviewer/subagent；本报告记录的是作者自审。
-- NAS 的 HA component 未部署；HA 容器与持久 esptool 容器均恢复运行。
-- P6b6 变更仅本地提交；不 push、不 merge。
+- NAS HA 与持久 esptool 容器均恢复运行；HA 已运行当前 P6 集成版本。
+- P6 原始交付提交为本地提交；后续部署 smoke 文档修订另有提交记录。

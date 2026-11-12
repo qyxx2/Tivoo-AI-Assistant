@@ -2,7 +2,7 @@
 
 > 状态：设计规格，待用户审阅  
 > 日期：2026-11-09  
-> 最近修订：2026-11-11（P5 最小网络/日志边界；单 I²S、AEC 与全局音频打断基线）
+> 最近修订：2026-11-13（统一 P6 通信层、P6.5 取消前置验证、P7 Assist Satellite/麦克风接入及 P8 音频输出的阶段归属）
 >
 > 适用项目：Tivoo AI Assistant  
 > 范围：ESP32-WROVER-E-N16R8 自定义固件与 Home Assistant Tivoo 自定义集成之间的双向通信
@@ -18,7 +18,7 @@
 - 7777 控制通道与 7778 音频/设备事件通道分离，避免持续 PCM 流阻塞图片、动画和控制命令。
 - TTS 使用 HA 提供的音频资源 URL；ESP32 通过 HTTP 分块下载、解码为 PCM 并播放，不由 HA 再额外推送一份 PCM。
 - 本规格只面向用户现有的 Divoom Tivoo，不将其他 Divoom 型号的键盘灯、背光或 BLE 灯控能力移植进来。
-- **阶段边界：** P5 先实现 Wi-Fi、最小 7777 SPP 控制通路和 7778 诊断日志子集；P6 再完成双向控制、完整设备/音频消息及 HTTP 音频资源。P5 使用最终协议的子集，不另建临时端口或第二套日志协议，也不代表 P6 完成。
+- **阶段边界：** P5 实现 Wi-Fi、最小 7777 SPP 控制通路和 7778 诊断日志子集；P6 在同一协议上完成双向 7777/7778、状态/事件/MIC 消息分发、HA 音频资源通知及 ESP32 HTTP 流式获取（P6 已完成）；P6.5 单独验证 HA Pipeline/TTS Proxy/Wyoming/AstrBot 取消传播；P7 实现 I²S RX、AFE/AEC/VAD、真实 MIC_PCM producer、Tivoo Assist Satellite 与 HA Pipeline/KWS/STT 接入；P8 实现解码、SRC、I²S TX、DAC/AUX 和最终播放管理。P5 使用最终协议的子集，不另建临时端口或第二套日志协议。
 
 不在本规格范围：AstrBot 内部对话协议、HA Assist Pipeline 的 STT/TTS 算法实现、ESP32 GPIO 最终分配及供电/模拟线路电路细节、其他 Divoom 型号兼容、A2DP 主路线实现。麦克风与 DAC 模块及其数字音频接口基线见 §2.2–§2.3。
 
@@ -85,7 +85,8 @@
 | 模块/服务源格式 | INMP441：24-bit I²S 数据 | Sherpa Matcha：22,050 Hz / Mono / S16LE PCM（Wyoming 到 HA） |
 | ESP32 内部处理 | 左 Slot 提取/低通/32→16 kHz 得 M；最终输出 PCM 32→16 kHz 得 R；AFE AEC 输出增强 S16LE Mono | HTTP 解码 → 按解码器实际输出采样率重采样至 32 kHz → 全局输出管理器 → I²S TX；TX PCM 同时生成 AEC R 参考 |
 | ESP32 ↔ HA 边界 | TCP 7778：16 kHz / Mono / S16LE PCM | TCP 7778 只发送 TTS_PLAY URL/Token/MIME；HTTP GET 获取编码音频资源 |
-| HA / P7A 边界 | Assist Satellite / KWS / STT：16 kHz / Mono / S16LE | Sherpa Wyoming TTS：22,050 Hz / Mono / S16LE PCM；HA TTS Proxy 再封装/编码为 HTTP 音频资源 |
+| HA / P7 | Tivoo Assist Satellite、麦克风会话接入和 Assist Pipeline：16 kHz / Mono / S16LE | 接收 P6 的 MIC_PCM 有界迭代器、管理 Pipeline 生命周期与事件；由 P7A Provider 提供 KWS/STT/TTS 能力 |
+| HA / P7A | Sherpa Wyoming KWS/STT/TTS Provider：STT/KWS 输入为 16 kHz / Mono / S16LE，TTS 输出为 22,050 Hz / Mono / S16LE PCM | 只提供独立推理服务，不创建 Tivoo Assist Satellite、不接收 ESP32 TCP/HTTP 音频通路 |
 
 因此，32 kHz 只规定 ESP32 的本地 I²S 硬件时钟，不向 HA 上传 32 kHz 音频，也不要求 P7A 修改 16 kHz STT/KWS 输入或 22.05 kHz TTS Provider 输出。
 

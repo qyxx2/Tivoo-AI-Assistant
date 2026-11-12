@@ -37,7 +37,7 @@
 - 日志只保留请求类型、关联 ID、耗时、错误类别、模型版本和资源指标；不记录 PCM、完整 Transcript、完整 TTS 回答、Token 或短时 URL 凭据。
 - Wyoming 10400 只通过独立 `internal=true`、`attachable=false` bridge 提供；无 host/LAN/WAN 端口发布、不接共享/不可信容器网络。若 HA 使用 host 网络，HA 通过 NAS host 路由访问容器 IP；接受 NAS host 进程可访问这一残余边界，不新增应用层认证。
 - 优先直接复用固定上游已有实现；只剔除与合同冲突的代码并补足缺失行为。不得因单个上游模块不合适就拒绝整个上游，也不得重新编写 Wyoming 协议栈或 Sherpa 推理算法。
-- P7A 只交付独立语音服务及 HA Provider 验收；真实 INMP441 收音/声学性能属于 P7，ESP32 音频传输属于 P6/P7，TTS 下载播放属于 P6/P8，SPP/屏幕控制属于 P5/P6。
+- P7A 只交付独立语音服务及 HA Provider 验收；真实 INMP441 收音/声学性能、I²S/AEC/VAD、HA Assist Satellite 与 MIC_PCM 实时会话属于 P7。P6 已完成 ESP32 ↔ HA 双向传输（含 MIC 消息分发接口和 TTS HTTP 资源流读取）；设备解码、PCM 缓冲、I²S DAC/AUX 播放属于 P8。P5/P6 已完成 SPP/屏幕命令及通信基础，长时间硬件并发稳定性留给 P10。
 
 ## 2. 文件与模块规划
 
@@ -407,7 +407,7 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 | C32、C37 | P7Ab6 | 并发隔离、执行队列及日志隐私 |
 | C33–C34 | P7Ab1/P7Ab7 | 模型持久化、启动失败和健康检查 |
 | C35、C38–C39 | P7Ab8 | 组合资源、P3 回归和 P5/P6 阶段门 |
-| C40–C43 | 不属于 P7A 实施批次 | 分别留给 P7、P6/P7、P6/P8、P5/P6/P10 |
+| C40–C43 | 不属于 P7A 实施批次 | C40 留给 P7；C41 的 P6 通信接口已通过、物理采集与 Satellite 留给 P7；C42 的 P6 HTTP 获取已通过、解码和 DAC/AUX 留给 P8；C43 的 P5/P6 通信路径已完成、长期硬件并发留给 P10 |
 | C44 | 禁止新增 | P7A 不直接调用 AstrBot、不持有 session_id、不提供 OpenAI API |
 
 P7A 交付只意味着独立语音服务已经可供 HA 使用，不意味着 Tivoo 真机已能采音、唤醒、播放或控制屏幕。

@@ -293,7 +293,7 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - [x] 实机长文本滚动传输压力：复用 renderer/encoder 发送 3 组内容、394 个协议块/82,429 bytes；两端口与 SPP 持续连接且无 ERROR。Tivoo 屏幕视觉连续性未采集，单独保留 NOT RUN。
 - [x] 实机验收 7778：HELLO、GET_STATUS、SPP transition DEVICE_EVENT 和 ERROR 已观察；心跳/45s timeout/reconnect 由 P6b2 设备记录及自动化覆盖。
 - [x] 按用户授权部署当前工作区 HA Tivoo 集成（仅 `__init__.py`、`transport.py`、`audio_resource.py`、`audio_session.py` 四个差异文件），完成 HA Core 2026.11.0 容器内 compile/import 检查、单容器重启、HTTP 200、Tivoo 配置保留及 7777/7778 重连 smoke；部署前完整备份位于 NAS `/volume1/docker/tivoo-backups/tivoo-pre-p6-20261112-235942.tar.gz`。详见 P6 最终验收报告。
-- [ ] 完整 HA Pipeline/TTS Proxy → 当前工作区 HA transport → 实机链路：NOT RUN；P6b4 event/URL/TTS_PLAY 自动化 PASS，本批 ESP32 HTTP reader/STOP 实机 PASS。P6 当前仅导出 `pipeline_event_callback_factory`，仓库没有 Assist Satellite/Pipeline caller 将其接入 `event_callback`；该调用者留待后续阶段，不以手动构造事件或直接发送 TTS_PLAY 代替真实 Pipeline 联调。
+- [ ] 完整 HA Pipeline/TTS Proxy → 当前工作区 HA transport → 实机链路：NOT RUN；P6b4 event/URL/TTS_PLAY 自动化 PASS，本批 ESP32 HTTP reader/STOP 实机 PASS。P6 当前仅导出 `pipeline_event_callback_factory`，仓库没有 Assist Satellite/Pipeline caller 将其接入 `event_callback`；该调用者由 P7 Assist Satellite 实现接入，不以手动构造事件或直接发送 TTS_PLAY 代替真实 Pipeline 联调。
 - [ ] Wi-Fi AP 关闭/恢复后的自动重连：NOT RUN（当前没有可控 AP 管理入口）；7777/7778 TCP 独立断线证据已由自动化与真实设备 7777 disconnect test 覆盖。
 - [x] 实机仅更新 app image 0x10000，esptool read-back verify OK，未写入 NVS。
 - [x] Ruff、HA、ESP32、IDF clean build、Markdown link 与 diff 检查通过；C01–C20 逐项记录在验收报告。

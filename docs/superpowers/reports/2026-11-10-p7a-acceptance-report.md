@@ -162,9 +162,9 @@ HA 使用 host 网络、当前没有 HA bridge。Sherpa 使用独立 internal-on
 | C38 | PASS（Mock 阶段门 + 生产 E2E） | 既有 KWS hit/miss 自动化阶段门使用 Mock SSE；另有生产 HA Pipeline 从 STT 起始，经 Paraformer、真实 `conversation.astrbot` HTTP/SSE、Matcha TTS 和 HA TTS Proxy 完成两轮连续对话，音频全量解码通过，详见 §3.5 和补充报告。 |
 | C39 | PASS | C01–C38 MUST 均有 PASS 证据；生产 HA 已保存唯一 Wyoming Entry 并注册同 Entry 下 KWS/STT/TTS 三实体；P7A 服务可作为 P5/P6 的稳定语音依赖。 |
 | C40 | DEFERRED | 实际 INMP441 安装位置、噪声、误唤醒/漏唤醒和距离由 P7 验收。 |
-| C41 | DEFERRED | ESP32 I2S RX、AFE/VAD、TCP 7778 和 Satellite 音频会话由 P6/P7 验收。 |
-| C42 | DEFERRED | §3.5 已验证生产 HA TTS Proxy URL HTTP GET 返回 MP3 且 FFmpeg 全量解码通过；ESP32 侧获取/解码、PCM 缓冲、I2S DAC/AUX 和 TTS_STATE 仍由 P6/P8 验收。 |
-| C43 | DEFERRED | 屏幕、SPP、ESP32 双向通信及硬件并发由 P5/P6/P10 验收。 |
+| C41 | P6 部分 PASS / P7 DEFERRED | P6 已完成 TCP 7778 MIC 消息协议及 HA 有界 session dispatch；ESP32 I²S RX、AFE/VAD、真实 MIC_PCM producer 和 Assist Satellite 音频会话由 P7 验收。 |
+| C42 | P6 部分 PASS / P8 DEFERRED | §3.5 已验证生产 HA TTS Proxy URL HTTP GET 返回 MP3 且 FFmpeg 全量解码通过；P6 已完成 ESP32 HTTP 流式资源获取，解码、PCM 缓冲、I²S DAC/AUX 和 TTS_STATE 由 P8 验收。 |
+| C43 | P5/P6 部分 PASS / P10 DEFERRED | P5/P6 已完成屏幕/SPP 命令和双向通信基础；长时间屏幕/SPP/Wi-Fi/音频硬件并发由 P10 验收，屏幕视觉帧连续性仍需实测。 |
 | C44 | N/A（禁止新增） | P7A 不直连 AstrBot、不持有 session_id、不提供 OpenAI API。 |
 
 ## 6. ARM64 开发机组合模型 Smoke 与代码级验证
@@ -214,7 +214,7 @@ C38 原有自动化阶段门仍使用本地 Mock SSE，以隔离验证 KWS hit/m
 
 ### 7.4 明确不属于 P7Ab8 / P7A 完成的内容
 
-- C40–C43 继续 DEFERRED，须分别在 P7、P6/P7、P6/P8、P5/P6/P10 真实硬件阶段验收。
+- 后续阶段复验：C40 由 P7 验收；C41 的 P6 通信部分已完成、P7 物理麦克风/Satellite 部分待验收；C42 的 P6 HTTP 获取部分已完成、P8 解码/播放部分待验收；C43 的 P5/P6 通信路径已完成、P10 长时间硬件并发仍待验收。
 - C44 继续 N/A / 禁止新增：P7A 不接入 AstrBot API、不持有 P3 session_id、不暴露 OpenAI API。
 - 本次阶段收尾更新 P7A 验收记录、合同状态、实施/批次计划追踪和 README 阶段标记；没有修改 P3 合同、AstrBot 或 ESP32 实现。P5/P6 现在具备开始依赖该服务的前置条件，但其自身批次尚未因此自动完成。
 

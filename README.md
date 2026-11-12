@@ -98,7 +98,7 @@ Home Assistant 不作为另一个独立聊天机器人，也不在普通语音�
 
 **识别文本不能靠 AstrBot 调用 HA MCP 工具来“接收”。** MCP 的工具调用方向是 MCP Client 调用 MCP Server：本项目中 AstrBot 是 Client、HA 是 Server。因此，HA 得到 STT 文本后，应由自定义 Conversation Agent 通过 AstrBot HTTP API 把文本交给 AstrBot；反方向上，AstrBot 才通过 HA MCP 工具调用 HA 的设备和 Tivoo 服务。
 
-普通语音回复不需要 AstrBot 再调用一个“转语音”MCP 工具：AstrBot 返回文本给 HA Conversation Agent 后，HA Assist Pipeline 执行 TTS。Assist Satellite 集成通过 Pipeline 事件取得音频 URL、Token 和 MIME 类型，再通知 ESP32 获取音频并播放；不是由 HA 直接通过 ESP32 音频通道推送原始 PCM。主动播报时，AstrBot 才调用 HA 提供的 announce/start-conversation 工具或动作。
+普通语音回复不需要 AstrBot 再调用一个“转语音”MCP 工具：AstrBot 返回文本给 HA Conversation Agent 后，HA Assist Pipeline 执行 TTS。P7 实现的 Assist Satellite 集成通过 Pipeline 事件取得音频 URL、Token 和 MIME 类型，再通知 ESP32 获取音频并播放；不是由 HA 直接通过 ESP32 音频通道推送原始 PCM。主动播报时，AstrBot 才调用 HA 提供的 announce/start-conversation 工具或动作。
 
 语音链路（采用 ESP32 本地 VAD、HA 服务端唤醒词检测）：
 
@@ -118,7 +118,7 @@ Home Assistant 不作为另一个独立聊天机器人，也不在普通语音�
 HA 作为语音和设备中枢，负责：
 
 - Assist Pipeline：HA 唤醒词检测、STT、Conversation Agent 调度和 TTS。
-- Tivoo Assist Satellite：接收设备音频流、启动和维护 Pipeline、处理 Pipeline 事件及播报/主动对话生命周期。
+- P7 Tivoo Assist Satellite：接收设备音频流、启动和维护 Pipeline、处理 Pipeline 事件及播报/主动对话生命周期。
 - Wake Word Provider：通过 P7A Sherpa Wyoming 服务提供中英文 KWS；与同一服务中的 STT/TTS Provider 保持独立的协议处理和请求状态。HA Pipeline 在 WAKE_WORD 阶段先检测唤醒词，命中后才进入 STT；Provider 接入与真实收音验收分别按 P7A/P7 阶段完成。
 - Tivoo 自定义设备集成：屏幕模式、音频状态和内置工具。
 - 家庭设备实体、Timer Helper、脚本和自动化。
@@ -143,7 +143,7 @@ AstrBot 负责：
 
 集成目录：`homeassistant/custom_components/tivoo/`
 
-该集成是 ESP32 与 HA 之间唯一的应用层入口。它负责管理 ESP32 连接、接收实时 PCM 音频并提供给 Assist Satellite；由 Satellite 调用 `async_accept_pipeline_from_satellite()` 启动 Pipeline，并在 `on_pipeline_event()` 中处理事件和转发 TTS 音频信息。不要再为同一条会话同时实现独立的 `assist_pipeline/run` 生命周期。它不让 AstrBot 或其他容器直接访问 ESP32。
+该集成是 ESP32 与 HA 之间唯一的应用层入口。当前 P6 已实现 ESP32 连接、双向消息、MIC session 有界 PCM iterator、TTS Pipeline event callback factory 和 HTTP 资源传输。P7 在此基础上新增 Tivoo Assist Satellite：接收 PCM iterator，通过 `async_accept_pipeline_from_satellite()` 启动 Pipeline，并在 Pipeline event callback 中转发 TTS 资源信息；同时维护 Satellite/响应生命周期。不要再为同一条会话同时实现独立的 `assist_pipeline/run` 生命周期。解码和实际播放由 P8 接入。它不让 AstrBot 或其他容器直接访问 ESP32。
 
 ### 4.1 设备实体
 
@@ -211,7 +211,7 @@ MCP 是工具调用协议，不是 HA 向 AstrBot 推送用户文本的消息通
 
 - **P5 最小固件必须实现：** Wi-Fi Station 基础联网；TCP 7777 最小单向控制入口，接收 HA 下发的现有 Tivoo 原始帧并交给 SPP；TCP 7778 只实现最终消息封装、HELLO/ACK、诊断日志和错误上报。ESP-IDF 基础日志、固件/启动信息及 Reset Reason 需能回传 HA。HA 通过 Tivoo 集成接收并写入 HA 标准日志。P5 不实现 SPP 返回数据、完整设备状态、音频消息、HTTP 音频资源或 I²S/AEC/VAD。
 - **P6 补齐：** 在 P5 的同一端口和消息封装上完成双向 7777、完整 7778 状态/事件/音频消息与连接管理，以及 TTS 音频 HTTP GET。P5 的基础通路是后续实现的子集，不代表 P6 完成。
-- **P7/P8：** P7 实现 I²S 麦克风、AEC/VAD 和 Assist Satellite 音频上行；P8 实现 I²S TX、DAC、音频解码/采样率转换及统一输出/停止。不得把这些能力提前并入 P5 验收。
+- **P6：** 已完成 ESP32 ↔ HA 双向通信、MIC 消息协议/有界分发接口及 TTS HTTP 资源流读取；不包含 Satellite 或真实麦克风运行时。**P6.5：** 在实现 Satellite 取消逻辑前，独立验证 Pipeline/TTS Proxy/Wyoming/AstrBot 的取消传播。**P7：** 实现 I²S 麦克风、AEC/VAD、真实 MIC_PCM 生产、HA Assist Satellite 和 Pipeline 音频会话接入。**P8：** 实现 I²S TX、DAC、音频解码/采样率转换及统一输出/停止。
 
 **P5 合同与实施顺序：**按[P5 ESP32 最小固件合同矩阵](docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md)执行；B0 首先锁定 ESP-IDF/组件版本并完成跨 P5/P6/P7/P8 的兼容性 smoke build，通过后依次完成 Wi-Fi、7778 HELLO/ACK 与日志、7777 单向 SPP，最后通过 HA → ESP32 → Tivoo 完成实机闭环。
 
@@ -473,8 +473,8 @@ python3 -m venv .venv
 | P4 | HA MCP Server 暴露 Tivoo/设备工具，AstrBot 调用 | AI 能通过 MCP 控制 HA 设备 |
 | P7A | 独立 Sherpa Wyoming 容器：一个 TCP 入口提供 KWS、STT、TTS 三个 Provider | HA 用一个 Wyoming Config Entry 发现三类 Provider；完成模型、KWS、STT、非流式/流式 TTS 和容器验收 |
 | P5 | ESP32 最小固件：Wi-Fi、最小 TCP 7777 SPP 控制、TCP 7778 诊断日志子集及基础故障日志 | HA 可经局域网控制 Tivoo；设备日志和错误可回传并进入 HA 日志 |
-| P6 | **已完成**。ESP32 ↔ HA 双向通信（TCP 7777/7778 + HTTP 资源读取）；详见 [P6 合同矩阵](docs/superpowers/specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)、[详细实施计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-implementation-plan.md)、[分批执行计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-batch-execution-plan.md) 和 [P6 最终验收报告](docs/superpowers/reports/2026-11-12-p6-acceptance-report.md)。 | C01–C20 有自动化、构建、源代码审查或真实设备证据；AP 故障切换、生产 HTTPS、真实麦克风/播放及 P6.5 取消传播未运行项已在报告列明 |
-| P6.5 | [HA Assist Pipeline / TTS Proxy 取消链路前置验证](docs/superpowers/patches/2026-11-11-p6-5-ha-cancellation-preflight.patch.md) | 验证 Satellite Pipeline 取消能否终止 TTS Proxy 后台生成、HA Wyoming 请求与 P7A TTS 任务，并确认 P3 AstrBot SSE/session Stop 的取消传播；形成模块职责与缺口报告，作为 P7/P8 取消实现依据 |
+| P6 | **已完成**。ESP32 ↔ HA 双向通信（TCP 7777/7778 + HTTP 资源读取）；详见 [P6 合同矩阵](docs/superpowers/specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)、[详细实施计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-implementation-plan.md)、[分批执行计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-batch-execution-plan.md) 和 [P6 最终验收报告](docs/superpowers/reports/2026-11-12-p6-acceptance-report.md)。 | C01–C20 有自动化、构建、源代码审查或真实设备证据；AP 故障切换、生产 HTTPS、P7 真实麦克风/Satellite、P8 解码播放及 P6.5 取消传播的未运行项已在报告列明 |
+| P6.5 | [HA Assist Pipeline / TTS Proxy 取消链路前置验证](docs/superpowers/patches/2026-11-11-p6-5-ha-cancellation-preflight.patch.md) | 在 P7 实现生产 Satellite 取消逻辑前，验证 HA Pipeline、TTS Proxy、Wyoming 请求和 P3 AstrBot SSE/session Stop 的实际取消传播；形成模块职责与缺口报告，作为 P7/P8 实现依据 |
 | P7 | I2S 麦克风采集、WROVER-E ESP-SR AFE AEC/VAD、HA Assist Satellite 与 P7A KWS/STT、AstrBot Conversation Agent 联调 | 空闲时不上传音频；AEC 后近端人声触发后由 HA WAKE_WORD 阶段检测唤醒词；播放期间维持 AEC/VAD 并验证近端语音打断，打断新会话从 STT 阶段进入 |
 | P8 | I2S TX + PCM5102 → AUX 输出、全局音频输出管理器及端到端取消联调 | AI 回复和其他受控音频通过统一输出管理器播放；验证 AUDIO_STOP、本地 barge-in、HA Pipeline/TTS Proxy/AstrBot 取消和 SPP 并发；Tivoo 端 AUX + SPP 已实测通过 |
 | P9 | AstrBot 表情工具与主动对话 | AI 能根据情绪显示表情，并主动播报 |

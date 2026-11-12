@@ -129,7 +129,7 @@ ESP32 diagnostics 增加 MIC_CAPTURE_STOP JSON/session_id/reason 校验与非阻
 
 **执行结果：** 完成。HA/P3 regression 288 passed；ESP32/P5/P6 suite 52 passed；ESP-IDF v6.1 clean build PASS；新增 C/Python golden frame test PASS。已在真实 ESP32 上完成 app-only flash 和 read-back verify，并验证真实 GET_STATUS、SPP DEVICE_EVENT、ERROR、7777 单独断线不影响 7778、HTTP reader/STOP，以及 394 个动画协议块/82,429 bytes 的长文本传输压力。C01–C20 证据索引及 NOT RUN 项见 [P6 最终验收报告](../reports/2026-11-12-p6-acceptance-report.md)。
 
-**保留的 NOT RUN：** Wi-Fi AP 关闭/恢复、生产 HTTPS 握手、真实 HA Pipeline 事件经 `event_callback` 触发 TTS Proxy 并通知真实板卡；当前 P6 只导出 `pipeline_event_callback_factory`，尚无 Assist Satellite/Pipeline caller 接入。当前工作区 HA 集成部署、重启和 7777/7778 联通 smoke 已 PASS，详见验收报告；完整 Pipeline 链路仍待 caller 接入后验收。真实 MIC producer 与 decoder/playback 分别属于 P7/P8，P6.5 取消传播仍是独立阶段。
+**保留的 NOT RUN：** Wi-Fi AP 关闭/恢复、生产 HTTPS 握手、真实 HA Pipeline 事件经 `event_callback` 触发 TTS Proxy 并通知真实板卡；当前 P6 只导出 `pipeline_event_callback_factory`，尚无 Assist Satellite/Pipeline caller 接入。当前工作区 HA 集成部署、重启和 7777/7778 联通 smoke 已 PASS，详见验收报告；完整 Pipeline 链路待 P7 Assist Satellite caller 接入后验收。真实 MIC producer 与 decoder/playback 分别属于 P7/P8，P6.5 取消传播仍是独立阶段。
 
 
 **验收范围：** P5 全回归、P6 自动化测试、跨语言 golden tests、ESP-IDF clean build、必要真实设备链路、逐合同验收报告和 README 阶段状态；未运行的扩展物理测试单独列出。

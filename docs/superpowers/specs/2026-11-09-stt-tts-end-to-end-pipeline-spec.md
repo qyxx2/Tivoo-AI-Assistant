@@ -2,7 +2,7 @@
 
 > 状态：架构规格，待实现与端到端验收  
 > 适用范围：NAS 语音服务、Home Assistant Assist Pipeline、AstrBot Conversation Agent，以及 ESP32/Tivoo 语音输入输出链路。  
-> 本文定义 STT/TTS 处理服务的职责和端到端行为。P7A 对 KWS、单容器三 Provider、模型部署与 Wyoming 事件的完整合同见 [P7A Sherpa Wyoming 合同矩阵](2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)。已有的设备通信字段、HA 事件字段、模型实测数值和底层协议不在此重复，均引用项目现有文档。
+> 本文定义 STT/TTS 处理服务的职责和端到端行为。阶段归属为：P6 提供 ESP32 ↔ HA 双向通信、MIC 消息有界分发接口和 TTS HTTP 资源获取；P6.5 验证取消传播；P7 实现物理麦克风/AEC/VAD、Tivoo Assist Satellite 及 HA Pipeline 音频会话接入；P8 实现解码和实际播放。P7A 对 KWS、单容器三 Provider、模型部署与 Wyoming 事件的完整合同见 [P7A Sherpa Wyoming 合同矩阵](2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)。已有的设备通信字段、HA 事件字段、模型实测数值和底层协议不在此重复，均引用项目现有文档。
 
 ## 1. 设计目标与边界
 
