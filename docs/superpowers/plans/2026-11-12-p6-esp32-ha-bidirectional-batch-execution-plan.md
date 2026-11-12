@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** 已完成分批拆解；P6b0 已完成；P6b1 代码实现、POSIX/HA 回归及 ESP-IDF v6.1 build 完成；真实 SPP 硬件验收未执行；P6b2–P6b6 未开始。
+> **状态：** P6b0 已完成；P6b1 代码、POSIX/HA 回归、ESP-IDF build、NAS app-only flash、真实设备启动/HELLO、SPP Bond 认证、7777/7778 生命周期隔离及 HA 侧 P6b0/P6b1 transport 部署验证完成；真实 SPP DATA_IND 原始上行字节尚未观测，保留硬件验收缺口；P6b2–P6b6 未开始。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -69,13 +69,13 @@ P6b1 与 P6b2 在技术上可独立，但为了减少跨批次接口变动和并
 
 ### P6b1 — TCP 7777 SPP 原始反向通道
 
-**状态：** 代码实现、host/HA 验证及 ESP-IDF v6.1 编译完成，本地提交；真实板卡/Tivoo SPP 验收仍未执行，详见 [P6b1 执行报告](../reports/2026-11-12-p6b1-tcp-control-spp-reverse-channel.md)。
+**状态：** 代码实现、host/HA 验证、ESP-IDF v6.1 编译、NAS app-only flash、真实设备 HELLO/SPP Bond 认证、7777/7778 生命周期隔离及 HA 侧 P6b0/P6b1 transport 部署验证完成；真实 SPP DATA_IND 原始字节回传尚未实测，详见 [P6b1 执行报告](../reports/2026-11-12-p6b1-tcp-control-spp-reverse-channel.md)。
 
 **实现：** SPP DATA_IND 数据只复制到 8 KiB 固定容量 reverse queue，经 7777 当前 TCP client 原始返回；socket 发送由 listener writable path 承担；上游发送状态语义按单字节 0x69/0x96 hint 表示。HA 侧 7777 reader 独立消费 hint 或 opaque raw bytes。
 
 **已验证：** POSIX simulator 覆盖有序数据、EAGAIN/待发数据保留、超容量拒绝、client disconnect、无 client 时不缓存给新 client；P5b1/P5b2/P5b3/P5b4 回归 31 passed；HA transport/services 29 passed；Ruff、format、diff check 通过。
 
-**未验证：** 使用本机既有 /home/Gold/.espressif/tools/activate_idf_v6.1.sh 激活 venv 和工具链后，ESP-IDF v6.1 build 已成功；未刷写固件、未连接真实 Tivoo 验证 Bluedroid DATA_IND。上游 BluetoothBridgeTest/esp32-divoom 三个参考源文件也不在本工作区，语义按 P6 合同矩阵执行。
+**未验证：** 已使用本机既有 /home/Gold/.espressif/tools/activate_idf_v6.1.sh 完成 ESP-IDF v6.1 build，并通过 NAS 持久 esptool 容器仅刷写 app image 到 0x10000。真实设备 HELLO、SPP Bond 认证以及 7777 disconnect 不影响 SPP/7778 均已验证；20 秒真实 raw capture 未观察到 Tivoo 上行数据，因此 DATA_IND 到 7777 原始字节仍 NOT RUN/BLOCKED。上游 BluetoothBridgeTest/esp32-divoom 三个参考源文件也不在本工作区，未完成逐行对照。
 
 **明确语义：** frame 提交时 connecting 返回 0x69、disconnected 返回 0x96；不将无连接时的 frame 排队到下一次连接后补发。hint 不是命令 ACK，也不是 authoritative SPP status；7778 状态快照才是权威来源。
 
