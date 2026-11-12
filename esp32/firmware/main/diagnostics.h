@@ -24,6 +24,9 @@ typedef enum {
 
 typedef bool (*tivoo_diagnostics_message_handler_t)(
     uint8_t type, const uint8_t *payload, size_t size);
+/* Called on the diagnostics receive worker; keep this callback non-blocking. */
+typedef void (*tivoo_diagnostics_mic_capture_stop_handler_t)(
+    const char *session_id, const char *reason);
 
 esp_err_t tivoo_diagnostics_start(void);
 void tivoo_diagnostics_stop(void);
@@ -32,6 +35,8 @@ bool tivoo_diagnostics_send_message(
     uint8_t type, const uint8_t *payload, size_t size);
 void tivoo_diagnostics_set_message_handler(
     tivoo_diagnostics_message_handler_t handler);
+void tivoo_diagnostics_set_mic_capture_stop_handler(
+    tivoo_diagnostics_mic_capture_stop_handler_t handler);
 
 void tivoo_diagnostics_client_connected(int fd);
 bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size);

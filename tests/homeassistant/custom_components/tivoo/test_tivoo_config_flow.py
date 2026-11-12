@@ -87,8 +87,19 @@ async def test_config_flow_rejects_a_second_instance(hass, socket_enabled):
 
 
 async def test_config_entry_setup_and_unload_follow_service_lifecycle(
-    hass, enable_custom_integrations
+    hass, enable_custom_integrations, monkeypatch
 ):
+    import json
+
+    from custom_components.tivoo.diagnostics import TYPE_MIC_CAPTURE_STOP
+    from custom_components.tivoo.transport import Esp32ConnectionAdapter
+
+    sent_messages = []
+
+    async def send_message(self, message_type, payload):
+        sent_messages.append((message_type, payload))
+
+    monkeypatch.setattr(Esp32ConnectionAdapter, "async_send_message", send_message)
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Tivoo",
@@ -114,6 +125,22 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
         "play_animation",
     }
     runtime = hass.data[DOMAIN][entry.entry_id]
+    manager = runtime["audio_session_manager"]
+    session_id = "11111111-1111-4111-8111-111111111111"
+    await manager.async_start_session(
+        {
+            "session_id": session_id,
+            "sample_rate": 16000,
+            "channels": 1,
+            "sample_format": "s16le",
+            "frame_duration_ms": 20,
+            "preroll_ms": 500,
+            "trigger_source": "idle_vad",
+        }
+    )
+    iterator = manager.async_audio_iterator(session_id)
+    await manager.async_push_pcm(session_id, b"pending!")
+    assert manager.active_session_id == session_id
     assert runtime["media_directory"] == hass.config.path(DEFAULT_MEDIA_DIRECTORY)
     assert runtime["connection_adapter"].states == {
         "control": "unavailable",
@@ -128,11 +155,22 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
         "diagnostic": "unavailable",
     }
     assert entry.state is ConfigEntryState.NOT_LOADED
+    assert manager.active_session_id is None
+    assert [chunk async for chunk in iterator] == []
     assert not hass.services.has_service(DOMAIN, "stop_countdown")
     assert not hass.services.has_service(DOMAIN, "set_volume")
     assert not hass.services.has_service(DOMAIN, "show_image")
     assert not hass.services.has_service(DOMAIN, "play_animation")
     assert DOMAIN not in hass.data
+    assert sent_messages == [
+        (
+            TYPE_MIC_CAPTURE_STOP,
+            json.dumps(
+                {"session_id": session_id, "reason": "ha_unload"},
+                separators=(",", ":"),
+            ).encode("utf-8"),
+        )
+    ]
 
 
 @pytest.mark.parametrize(

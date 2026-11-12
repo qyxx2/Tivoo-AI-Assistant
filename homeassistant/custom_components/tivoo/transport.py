@@ -10,11 +10,13 @@ from collections.abc import Awaitable, Callable
 
 from homeassistant.exceptions import HomeAssistantError
 
+from .audio_session import AudioSessionManager
 from .commands import TivooCommand
 from .diagnostics import (
     ESP32_TO_HA_MESSAGE_TYPES,
     HA_TO_ESP32_MESSAGE_TYPES,
     SUPPORTED_MESSAGE_TYPES,
+    TYPE_AUDIO_INTERRUPTED,
     TYPE_DEVICE_EVENT,
     TYPE_DEVICE_STATUS,
     TYPE_DIAGNOSTIC_LOG,
@@ -22,6 +24,9 @@ from .diagnostics import (
     TYPE_GET_STATUS,
     TYPE_HELLO,
     TYPE_HELLO_ACK,
+    TYPE_MIC_PCM,
+    TYPE_MIC_SESSION_END,
+    TYPE_MIC_SESSION_START,
     TYPE_PING,
     TYPE_PONG,
     DiagnosticFrameStream,
@@ -47,6 +52,8 @@ _ERROR_CODES = {
     "spp_write_failed",
     "tcp_control_malformed",
     "tivoo_frame_malformed",
+    "protocol_invalid_header",
+    "protocol_invalid_payload",
     "protocol_unsupported_message",
     "reverse_queue_full",
     "audio_busy",
@@ -217,6 +224,39 @@ class Esp32ConnectionAdapter:
                 await self._spp_reverse_handler(data)
             except Exception:  # noqa: BLE001 — isolate the registered consumer.
                 _LOGGER.warning("Tivoo SPP reverse consumer failed")
+
+    def register_audio_session_manager(self, manager: AudioSessionManager) -> None:
+        """Connect P6 MIC and interruption messages to one session manager."""
+
+        async def handle_session_start(message: DiagnosticMessage) -> None:
+            await manager.async_start_session(self._decode_json(message.payload))
+
+        async def handle_pcm(message: DiagnosticMessage) -> None:
+            session_id = manager.active_session_id
+            if session_id is not None:
+                # MIC_PCM is an opaque binary payload; session association comes
+                # from the single active session and TCP message ordering.
+                await manager.async_push_pcm(session_id, message.payload)
+
+        async def handle_session_end(message: DiagnosticMessage) -> None:
+            payload = self._decode_json(message.payload)
+            session_id = payload.get("session_id")
+            reason = payload.get("reason")
+            if not isinstance(session_id, str) or not session_id:
+                raise ValueError("MIC_SESSION_END requires session_id")
+            if not isinstance(reason, str) or not reason:
+                raise ValueError("MIC_SESSION_END requires reason")
+            await manager.async_end_session(session_id, reason)
+
+        async def handle_audio_interrupted(message: DiagnosticMessage) -> None:
+            await manager.async_handle_audio_interrupted(
+                self._decode_json(message.payload)
+            )
+
+        self.register_message_handler(TYPE_MIC_SESSION_START, handle_session_start)
+        self.register_message_handler(TYPE_MIC_PCM, handle_pcm)
+        self.register_message_handler(TYPE_MIC_SESSION_END, handle_session_end)
+        self.register_message_handler(TYPE_AUDIO_INTERRUPTED, handle_audio_interrupted)
 
     def register_message_handler(
         self,

@@ -82,6 +82,7 @@ static size_t s_message_head;
 static size_t s_message_count;
 static bool s_prefer_message = true;
 static tivoo_diagnostics_message_handler_t s_message_handler;
+static tivoo_diagnostics_mic_capture_stop_handler_t s_mic_capture_stop_handler;
 static atomic_uint_fast32_t s_dropped_count = ATOMIC_VAR_INIT(0);
 static atomic_bool s_running = ATOMIC_VAR_INIT(false);
 static atomic_bool s_worker_alive = ATOMIC_VAR_INIT(false);
@@ -671,6 +672,75 @@ void tivoo_diagnostics_set_message_handler(
     }
 }
 
+void tivoo_diagnostics_set_mic_capture_stop_handler(
+    tivoo_diagnostics_mic_capture_stop_handler_t handler)
+{
+    if (!s_started) {
+        s_mic_capture_stop_handler = handler;
+        return;
+    }
+    if (mutex_take(true)) {
+        s_mic_capture_stop_handler = handler;
+        mutex_give();
+    }
+}
+
+static bool is_hex_char(char value)
+{
+    return (value >= '0' && value <= '9') ||
+           (value >= 'a' && value <= 'f') ||
+           (value >= 'A' && value <= 'F');
+}
+
+static bool valid_uuid(const char *value)
+{
+    if (value == NULL || strlen(value) != 36U) {
+        return false;
+    }
+    for (size_t i = 0U; i < 36U; i++) {
+        if (i == 8U || i == 13U || i == 18U || i == 23U) {
+            if (value[i] != '-') {
+                return false;
+            }
+        } else if (!is_hex_char(value[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void dispatch_mic_capture_stop(
+    tivoo_diagnostics_mic_capture_stop_handler_t handler,
+    const uint8_t *payload,
+    size_t size)
+{
+    cJSON *root = payload == NULL || size == 0U
+        ? NULL
+        : cJSON_ParseWithLength((const char *)payload, size);
+    const cJSON *session_item = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "session_id")
+        : NULL;
+    const cJSON *reason_item = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "reason")
+        : NULL;
+    const char *session_id = cJSON_IsString(session_item)
+        ? cJSON_GetStringValue(session_item)
+        : NULL;
+    const char *reason = cJSON_IsString(reason_item)
+        ? cJSON_GetStringValue(reason_item)
+        : NULL;
+    if (!valid_uuid(session_id) || reason == NULL || reason[0] == '\0' ||
+        strlen(reason) > 64U) {
+        tivoo_report_error(
+            "protocol_invalid_payload",
+            "diagnostics",
+            "invalid MIC_CAPTURE_STOP payload");
+    } else if (handler != NULL) {
+        handler(session_id, reason);
+    }
+    cJSON_Delete(root);
+}
+
 static void disconnect_client_locked(int fd)
 {
     if (s_client_fd != fd) {
@@ -997,21 +1067,28 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
         }
 
         tivoo_diagnostics_message_handler_t handler = NULL;
+        tivoo_diagnostics_mic_capture_stop_handler_t mic_stop_handler = NULL;
         uint8_t *payload_copy = NULL;
         bool unsupported = false;
         if (message_type != TVIO_TYPE_HELLO_ACK &&
             message_type != TVIO_TYPE_HELLO) {
             if (!supported_message_type(message_type)) {
                 unsupported = true;
-            } else if (s_message_handler != NULL && payload_size > 0U) {
+            } else if (message_type == TVIO_TYPE_MIC_CAPTURE_STOP) {
+                mic_stop_handler = s_mic_capture_stop_handler;
+            }
+            if (supported_message_type(message_type) &&
+                (message_type == TVIO_TYPE_MIC_CAPTURE_STOP ||
+                 s_message_handler != NULL || mic_stop_handler != NULL) &&
+                payload_size > 0U) {
                 payload_copy = malloc(payload_size);
                 if (payload_copy == NULL) {
                     mutex_give();
                     return false;
                 }
                 memcpy(payload_copy, &s_rx_buffer[TVIO_HEADER_SIZE], payload_size);
-                handler = s_message_handler;
-            } else if (s_message_handler != NULL) {
+            }
+            if (supported_message_type(message_type)) {
                 handler = s_message_handler;
             }
         }
@@ -1028,6 +1105,9 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
                 "protocol_unsupported_message",
                 "diagnostics",
                 "Unsupported TVIO message type");
+        }
+        if (message_type == TVIO_TYPE_MIC_CAPTURE_STOP) {
+            dispatch_mic_capture_stop(mic_stop_handler, payload_copy, payload_size);
         }
         bool handled = true;
         if (handler != NULL) {

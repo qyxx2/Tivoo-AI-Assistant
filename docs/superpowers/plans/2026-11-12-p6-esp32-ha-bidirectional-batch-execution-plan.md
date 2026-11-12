@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** P6b0、P6b1、P6b2 已完成。P6b1 真实 SPP DATA_IND 原始回传已通过亮度状态回显实机验证；P6b2 代码与自动化验收完成；实机已验证 app-only 刷写、HELLO/GET_STATUS/DEVICE_STATUS、15s PING/PONG，以及 7778 超时重连且 7777 保持；C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收。P6b3–P6b6 未开始。
+> **状态：** P6b0、P6b1、P6b2、P6b3 已完成。P6b3 已交付 HA 单活动 MIC session、有界 16×4 KiB PCM 队列/iterator、7778 消息分发和 ESP32 MIC_CAPTURE_STOP callback seam；HA Tivoo 全回归 210 passed、ESP32 tests 全量 49 passed、ESP-IDF v6.1 build 通过。P6b3 无物理 MIC producer，真实 MIC_SESSION/MIC_PCM 实机链路未运行，留待 P7 实现 producer 后验证。P6b2 的 C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收；P6b4–P6b6 未开始。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -95,11 +95,17 @@ P6b1 与 P6b2 在技术上可独立，但为了减少跨批次接口变动和并
 
 ### P6b3 — MIC session 传输接口
 
-**完成：** HA 一个活动 session、16 条消息的有界 PCM 队列、session_id 匹配、async iterator、MIC_CAPTURE_STOP 接口；AUDIO_INTERRUPTED 只验证并分发给后续阶段注册的 handler。
+**状态：** 完成；报告：[P6b3 MIC session implementation report](../reports/2026-11-12-p6b3-mic-session-bounded-dispatch.md)。
 
-**验收门：** 格式/长度/session 隔离/队列满/迟到消息测试通过；PCM bytes 不做 Base64、不丢序、不跨 session；HA unload 清理活动 iterator 与队列。
+**实现：** HA AudioSessionManager 只允许一个活动 session，PCM 队列固定 16 个元素、每个元素最大 4 KiB（最多 64 KiB）；只传递原始 S16LE bytes，并提供单一 async iterator。START 验证 UUID、16 kHz/Mono/S16LE/20 ms 和 trigger_source；barge-in 必须含 interrupt_id。重复/重叠 START 拒绝；迟到的旧 session END/STOP 不影响新 session；队列溢出清空当前队列、结束该 session 并向 ESP32 发送 MIC_CAPTURE_STOP。HA unload 结束活动 iterator、清理队列并发送 STOP。transport 注册 MIC_SESSION_START/MIC_PCM/MIC_SESSION_END/AUDIO_INTERRUPTED handler；AUDIO_INTERRUPTED 仅校验并交给后续 owner callback。
 
-**禁止提前实现：** I²S RX、INMP441 采集、AEC/VAD、真实 MIC_PCM producer、Assist Satellite、Pipeline cancel、AstrBot Stop。
+ESP32 diagnostics 增加 MIC_CAPTURE_STOP JSON/session_id/reason 校验与非阻塞注册 callback seam；没有 P7 producer/callback 时合法 STOP 被校验后幂等 no-op。模拟器覆盖 malformed payload 不触发 callback、合法 payload callback、无 callback no-op，以及后续 PING 仍通。
+
+**自动化验证：** HA Tivoo 全量 ./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo -q — 210 passed；ESP32 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests/esp32 -q — 49 passed；Ruff check/format、compileall、git diff --check 通过。ESP-IDF v6.1 / ESP32 target 增量 build 通过，生成 build/tivoo_firmware.bin，size 0x1360a0，app 分区仍有 85% 空间。
+
+**实机状态：** 未刷写/部署 NAS。P6 目前没有物理 MIC producer，真实 MIC_SESSION/MIC_PCM 数据只能待 P7 producer 实现后验证；本批通过 POSIX diagnostics 模拟器验证 STOP seam。P6b3 不实现 I²S RX、INMP441、AEC/VAD、Assist Satellite、Pipeline cancel 或 AstrBot Stop。
+
+**协议关联约定：** MIC_PCM 在 TVIO v1 中是无 session_id 的二进制帧，HA 按同一条 TCP 流中最近一次有效 MIC_SESSION_START 与其后的 MIC_SESSION_END 关联 PCM；明确携带 session_id 的迟到 END/STOP 按 ID 匹配。ESP32 producer 必须在 END 前完成该 session 的 PCM 发送，不能把旧 session PCM 排到新 START 之后。这个顺序约定沿用固定二进制消息格式，没有给 MIC_PCM 添加 Base64 或额外包装。
 
 ### P6b4 — HA TTS Proxy URL 与事件触发
 

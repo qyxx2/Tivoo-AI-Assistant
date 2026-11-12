@@ -208,16 +208,16 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - `MIC_CAPTURE_STOP` 由 HA 发往 ESP32，只请求停止对应 session 的网络上传。ESP32 提供一个可注册 stop callback；P6 尚无麦克风 producer，默认无活动 session 时按幂等 no-op 处理。
 
 **Tasks:**
-- [ ] 先写 manager RED tests：合法 start 后可消费 iterator；重复 start 不覆盖活动 session；第二条 session 明确拒绝；旧 session_id 的 PCM/END/STOP 不影响当前 session。
-- [ ] 写格式测试：只接受 16000 Hz / 1 channel / s16le；典型 20 ms 数据为 640 bytes；单 Payload 不超过 4096 bytes；trigger_source 只允许 idle_vad/barge_in；barge_in 缺少 interrupt_id 时拒绝。
-- [ ] 写 queue saturation 测试：16 个未消费块达到上限后，不扩大队列/占用内存；终止当前异常网络 session，清理队列并通过 MIC_CAPTURE_STOP 通知 ESP32；已结束 session 的后续消息幂等忽略。
-- [ ] 实现 `AudioSessionManager` 的 start/push/end/stop/iterator；queue 元素只存 PCM bytes，不做 Base64/JSON，不复制到第二份无界 buffer。
-- [ ] 在 `transport.py` 注册 MIC_SESSION_START/MIC_PCM/MIC_SESSION_END handler，将 TVIO binary Payload 原样送入 manager；错误 session 的数据不能关闭 transport 或覆盖新 session。
-- [ ] 注册 AUDIO_INTERRUPTED 的最小 handler，校验矩阵字段并把事件交给 P7 将来注册的 callback；当前 P6 不取消 Pipeline、TTS Proxy 或 AstrBot session。
-- [ ] 将 manager 纳入 HA config-entry runtime，unload 时关闭活动 iterator、队列和关联任务；不得留下 pending task。
-- [ ] ESP32 diagnostics 校验 MIC_CAPTURE_STOP JSON 和 session_id；通过注册 callback 提供给未来 P7 mic uploader。P6 没有物理 MIC uploader 时，收到已结束/不存在 session 按合同 no-op。
-- [ ] 写跨端模拟测试：模拟 ESP32 依次发送 START、多个 binary PCM、END；HA iterator 读取字节与发送内容完全一致；覆盖分段 TCP frame 和旧 session 消息。
-- [ ] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_audio_session.py tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_diagnostics.py -q`、对应 ESP32 protocol tests、P5 regression 和 IDF build。
+- [x] 先写 manager RED tests：合法 start 后可消费 iterator；重复 start 不覆盖活动 session；第二条 session 明确拒绝；旧 session_id 的 PCM/END/STOP 不影响当前 session。
+- [x] 写格式测试：只接受 16000 Hz / 1 channel / s16le；典型 20 ms 数据为 640 bytes；单 Payload 不超过 4096 bytes；trigger_source 只允许 idle_vad/barge_in；barge_in 缺少 interrupt_id 时拒绝。
+- [x] 写 queue saturation 测试：16 个未消费块达到上限后，不扩大队列/占用内存；终止当前异常网络 session，清理队列并通过 MIC_CAPTURE_STOP 通知 ESP32；已结束 session 的后续消息幂等忽略。
+- [x] 实现 `AudioSessionManager` 的 start/push/end/stop/iterator；queue 元素只存 PCM bytes，不做 Base64/JSON，不复制到第二份无界 buffer。
+- [x] 在 `transport.py` 注册 MIC_SESSION_START/MIC_PCM/MIC_SESSION_END handler，将 TVIO binary Payload 原样送入 manager；错误 session 的数据不能关闭 transport 或覆盖新 session。
+- [x] 注册 AUDIO_INTERRUPTED 的最小 handler，校验矩阵字段并把事件交给 P7 将来注册的 callback；当前 P6 不取消 Pipeline、TTS Proxy 或 AstrBot session。
+- [x] 将 manager 纳入 HA config-entry runtime，unload 时关闭活动 iterator、队列和关联任务；不得留下 pending task。
+- [x] ESP32 diagnostics 校验 MIC_CAPTURE_STOP JSON 和 session_id；通过注册 callback 提供给未来 P7 mic uploader。P6 没有物理 MIC uploader 时，收到已结束/不存在 session 按合同 no-op。
+- [x] 写跨端模拟测试：模拟 ESP32 依次发送 START、多个 binary PCM、END；HA iterator 读取字节与发送内容完全一致；覆盖分段 TCP frame 和旧 session 消息。
+- [x] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_audio_session.py tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_diagnostics.py -q`、对应 ESP32 protocol tests、P5 regression 和 IDF build。
 
 **Exit gate:** C11/C18 通过；HA 已有可由 P7 直接接入的单 session 有界 PCM iterator 和停止接口；不创建 Satellite、Pipeline、I²S、AEC 或 VAD runtime。
 

@@ -26,6 +26,12 @@ static bool decode_hex(
     return true;
 }
 
+static void mic_capture_stop_handler(const char *session_id, const char *reason)
+{
+    (void)printf("mic_capture_stop %s %s\n", session_id, reason);
+    (void)fflush(stdout);
+}
+
 static bool echo_message_handler(
     uint8_t type, const uint8_t *payload, size_t size)
 {
@@ -85,6 +91,7 @@ int main(int argc, char **argv)
     }
 
     tivoo_diagnostics_set_message_handler(echo_message_handler);
+    tivoo_diagnostics_set_mic_capture_stop_handler(mic_capture_stop_handler);
     if (tivoo_diagnostics_start() != ESP_OK) {
         return EXIT_FAILURE;
     }
@@ -148,6 +155,8 @@ int main(int argc, char **argv)
                 (void)snprintf(message, sizeof(message), "burst-%03lu", i);
                 tivoo_log_write(ESP_LOG_INFO, "host_test", "%s", message);
             }
+        } else if (strcmp(command, "mic_stop_off") == 0) {
+            tivoo_diagnostics_set_mic_capture_stop_handler(NULL);
         } else if (strcmp(command, "fail_after") == 0) {
             char *size_value = strtok_r(NULL, " \t\r\n", &save);
             if (size_value != NULL) {

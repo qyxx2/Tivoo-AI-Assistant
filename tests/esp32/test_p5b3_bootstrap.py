@@ -59,7 +59,7 @@ def test_firmware_has_no_fixed_tivoo_target_mac():
     assert "0x11, 0x75, 0x58, 0x97, 0x49, 0x98" not in combined
 
 
-def test_every_firmware_error_uses_the_closed_p5_error_code_set():
+def test_every_firmware_error_uses_the_p5_and_p6_error_code_sets():
     import re
 
     allowed = {
@@ -74,6 +74,15 @@ def test_every_firmware_error_uses_the_closed_p5_error_code_set():
         "spp_write_failed",
         "tcp_control_malformed",
         "tivoo_frame_malformed",
+        "protocol_invalid_header",
+        "protocol_invalid_payload",
+        "protocol_unsupported_message",
+        "reverse_queue_full",
+        "audio_busy",
+        "audio_http_failed",
+        "audio_http_status",
+        "audio_content_type_mismatch",
+        "operation_cancelled",
     }
     codes = set()
     for path in (FIRMWARE / "main").glob("*.c"):

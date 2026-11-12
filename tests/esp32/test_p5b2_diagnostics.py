@@ -1,6 +1,7 @@
 """POSIX simulation of the production ESP32 TVIO diagnostics module."""
 
 import json
+import select
 import socket
 import struct
 import subprocess
@@ -139,7 +140,7 @@ def _start_simulator(tmp_path: Path):
     process = subprocess.Popen(
         [str(binary), str(control_port), str(diagnostic_port)],
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
     )
@@ -158,6 +159,8 @@ def _stop(process: subprocess.Popen) -> None:
         process.wait(timeout=3)
     if process.stdin is not None:
         process.stdin.close()
+    if process.stdout is not None:
+        process.stdout.close()
 
 
 @pytest.mark.enable_socket
@@ -485,16 +488,22 @@ def test_c_dispatches_every_ha_to_esp32_message_type(tmp_path):
         time.sleep(0.1)
 
         incoming = [
-            (0x03, 0x04),
-            (0x10, 0x11),
-            (0x23, 0x32),
-            (0x30, 0x32),
-            (0x31, 0x32),
-            (0x41, 0x41),
+            (0x03, 0x04, b"{}"),
+            (0x10, 0x11, b'{"request_id":"status-1"}'),
+            (
+                0x23,
+                0x32,
+                (
+                    b'{"session_id":"11111111-1111-4111-8111-111111111111",'
+                    b'"reason":"pipeline_finished"}'
+                ),
+            ),
+            (0x30, 0x32, b"{}"),
+            (0x31, 0x32, b"{}"),
+            (0x41, 0x41, b"{}"),
         ]
         frames = []
-        for sequence, (message_type, _) in enumerate(incoming, start=1):
-            payload = b"{}"
+        for sequence, (message_type, _, payload) in enumerate(incoming, start=1):
             frames.append(
                 struct.pack(
                     "<4sBBHII",
@@ -517,9 +526,11 @@ def test_c_dispatches_every_ha_to_esp32_message_type(tmp_path):
             (message_type, sequence) for message_type, sequence, _ in responses
         ] == [
             (response_type, sequence)
-            for sequence, (_, response_type) in enumerate(incoming, start=1)
+            for sequence, (_, response_type, _) in enumerate(incoming, start=1)
         ]
-        assert all(payload == b"{}" for _, _, payload in responses)
+        assert [payload for _, _, payload in responses] == [
+            payload for _, _, payload in incoming
+        ]
     finally:
         if client is not None:
             client.close()
@@ -637,6 +648,88 @@ def test_c_json_payload_accepts_sixteen_kibibytes(tmp_path):
         assert len(payload) == 16 * 1024
         _send_frame(client, 0x10, 1, payload)
         assert _read_raw_frame(client) == (0x11, 1, payload)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_mic_capture_stop_validates_payload_and_dispatches_registered_callback(
+    tmp_path,
+):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    session_id = "11111111-1111-4111-8111-111111111111"
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+
+        _send_frame(
+            client,
+            0x23,
+            1,
+            b'{"session_id":"11111111-1111-4111-8111-111111111111"}',
+        )
+        assert process.stdout is not None
+        assert not select.select([process.stdout], [], [], 0.2)[0]
+
+        _send_frame(
+            client,
+            0x23,
+            2,
+            json.dumps(
+                {"session_id": session_id, "reason": "pipeline_finished"},
+                separators=(",", ":"),
+            ).encode(),
+        )
+        ready, _, _ = select.select([process.stdout], [], [], 2)
+        assert ready
+        assert process.stdout.readline().strip() == (
+            f"mic_capture_stop {session_id} pipeline_finished"
+        )
+
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_mic_capture_stop_without_registered_producer_is_an_idempotent_noop(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        _command(process, "mic_stop_off")
+        time.sleep(0.05)
+
+        session_id = "11111111-1111-4111-8111-111111111111"
+        _send_frame(
+            client,
+            0x23,
+            1,
+            json.dumps(
+                {"session_id": session_id, "reason": "pipeline_finished"},
+                separators=(",", ":"),
+            ).encode(),
+        )
+        assert process.stdout is not None
+        assert not select.select([process.stdout], [], [], 0.2)[0]
+
+        assert _read_raw_frame(client) == (
+            0x32,
+            1,
+            json.dumps(
+                {"session_id": session_id, "reason": "pipeline_finished"},
+                separators=(",", ":"),
+            ).encode(),
+        )
+        _send_frame(client, 0x03, 2, b"")
+        assert _read_raw_frame(client) == (0x04, 2, b"")
     finally:
         if client is not None:
             client.close()
