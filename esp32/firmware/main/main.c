@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
+#include "audio_resource.h"
 #include "diagnostics.h"
 #include "device_status.h"
 #include "hardware_memory.h"
@@ -11,13 +12,30 @@
 
 #define TIVOO_CONTROL_PORT 7777U
 #define TIVOO_DIAGNOSTIC_PORT 7778U
+#define TVIO_TYPE_TTS_PLAY 0x30U
+#define TVIO_TYPE_AUDIO_STOP 0x31U
 
 static const char *TAG = "tivoo_main";
 
+static bool app_message_handler(
+    uint8_t type, const uint8_t *payload, size_t size)
+{
+    if (type == TVIO_TYPE_TTS_PLAY || type == TVIO_TYPE_AUDIO_STOP) {
+        return tivoo_audio_resource_handle_message(type, payload, size);
+    }
+    return tivoo_device_status_handle_message(type, payload, size);
+}
+
 void app_main(void)
 {
-    tivoo_diagnostics_set_message_handler(tivoo_device_status_handle_message);
-    esp_err_t err = tivoo_diagnostics_start();
+    esp_err_t err = tivoo_audio_resource_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Audio resource manager initialization failed (%d)", (int)err);
+        return;
+    }
+
+    tivoo_diagnostics_set_message_handler(app_message_handler);
+    err = tivoo_diagnostics_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Diagnostics worker did not start (error %d)", (int)err);
         return;

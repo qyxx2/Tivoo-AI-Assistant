@@ -262,20 +262,22 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - HTTP 状态只报告 buffering/resource_ready/stopped/failed；P6 不报告 playing/completed/interrupted。
 
 **Tasks:**
-- [ ] 写 HTTP 测试用本地可控 server：提供 200 + audio/mpeg、非 2xx、错误 Content-Type、chunked transfer、无 Content-Length、响应中途断开和大于普通 RAM 缓冲区的响应体。
-- [ ] 在 `sdkconfig.defaults` 固定 ESP-IDF 标准 CA bundle 的默认开关，复用 IDF 内建证书；只用于 HA 内网地址确实配置为 HTTPS 的情况。HTTP 是当前局域网首选，不要求部署证书，不增加自签证书或逐设备证书配置。HTTPS 时通过 `crt_bundle_attach=esp_crt_bundle_attach` 使用标准 CA 验证，不得设置跳过验证。当前本机 sdkconfig 已启用该选项，但 tracked defaults 尚无，需补齐可复现默认值。
-- [ ] 在 `CMakeLists.txt` 添加 ESP-IDF 内置 `esp_http_client` 和 `mbedtls` 依赖（后者用于内置 CA bundle API）；不新增第三方 HTTP 库。
-- [ ] 写 URL/协议测试：只接受 HA 下发的绝对 HTTP(S) URL；拒绝空 URL、非 HTTP(S) scheme 和超长字段；不开放任意本地文件路径或 URL 自发现接口。错误日志不得包含 URL/token。只做协议所需校验，不增加 URL 白名单服务或通用鉴权框架。
-- [ ] 实现 `audio_resource.c/.h`：单一 active playback_id、独立 HTTP task、HTTP_EVENT_ON_DATA chunk callback、2xx 校验、Content-Type media type 比较（忽略大小写和参数）、未知长度流读取、reader callback、资源状态和错误回报。
-- [ ] Content-Length 不得用于预分配整段音频缓存；HTTP chunk 边界不得被解释为 MP3/WAV frame boundary；data callback 失败转为 failed 并清理 request。
-- [ ] 新的不同 playback_id 在活动 GET 期间到达，返回 ERROR `audio_busy`；不建立并发/等待队列。AUDIO_STOP 带 expected_audio_id 时只停止同 ID；ID 不匹配是 no-op；缺省 ID 停止当前唯一请求；重复 STOP 幂等。
-- [ ] HTTP 正常 EOF 后在所有 chunk 已交给 reader 的前提下发送 `resource_ready`；STOP 发送 `stopped`；状态码/MIME/连接错误发送 `failed` 和对应 error_code。实现并验证 `protocol_invalid_header`、`protocol_invalid_payload`、`protocol_unsupported_message`、`reverse_queue_full`、`audio_busy`、`audio_http_failed`、`audio_http_status`、`audio_content_type_mismatch`、`operation_cancelled`；正常用户 STOP 只报告 `stopped`，不把预期取消记成失败。禁止发送 completed。
-- [ ] diagnostics dispatcher 处理 TTS_PLAY/AUDIO_STOP，仅做 payload 校验和启动/停止请求，不在 7778 listener/select worker 内调用阻塞 HTTP perform。
-- [ ] 建立受控 HTTP server 与开发板联合测试：板卡从 HA/NAS 内网 HTTP 地址 GET，验证分块到达 reader、未知 Content-Length 持续传递、MIME/HTTP 状态校验、活动请求 STOP。若实际 HA internal_url 使用 HTTPS，再验证内建 CA bundle；不为测试专门引入自签证书设施。
-- [ ] 运行 ESP-IDF v6.1 build、P5/P6 protocol tests；检查编译配置中 `esp_http_client` 生效；HTTPS CA bundle 选项保持可用。
+- [x] 写 HTTP 测试用本地可控 server：提供 200 + audio/mpeg、非 2xx、错误 Content-Type、chunked transfer、无 Content-Length、响应中途断开和大于普通 RAM 缓冲区的响应体。
+- [x] 在 `sdkconfig.defaults` 固定 ESP-IDF 标准 CA bundle 的默认开关，复用 IDF 内建证书；只用于 HA 内网地址确实配置为 HTTPS 的情况。HTTP 是当前局域网首选，不要求部署证书，不增加自签证书或逐设备证书配置。HTTPS 时通过 `crt_bundle_attach=esp_crt_bundle_attach` 使用标准 CA 验证，不得设置跳过验证。当前本机 sdkconfig 已启用该选项，但 tracked defaults 尚无，需补齐可复现默认值。
+- [x] 在 `CMakeLists.txt` 添加 ESP-IDF 内置 `esp_http_client` 和 `mbedtls` 依赖（后者用于内置 CA bundle API）；不新增第三方 HTTP 库。
+- [x] 写 URL/协议测试：只接受 HA 下发的绝对 HTTP(S) URL；拒绝空 URL、非 HTTP(S) scheme 和超长字段；不开放任意本地文件路径或 URL 自发现接口。错误日志不得包含 URL/token。只做协议所需校验，不增加 URL 白名单服务或通用鉴权框架。
+- [x] 实现 `audio_resource.c/.h`：单一 active playback_id、独立 HTTP task、HTTP_EVENT_ON_DATA chunk callback、2xx 校验、Content-Type media type 比较（忽略大小写和参数）、未知长度流读取、reader callback、资源状态和错误回报。
+- [x] Content-Length 不得用于预分配整段音频缓存；HTTP chunk 边界不得被解释为 MP3/WAV frame boundary；data callback 失败转为 failed 并清理 request。
+- [x] 新的不同 playback_id 在活动 GET 期间到达，返回 ERROR `audio_busy`；不建立并发/等待队列。AUDIO_STOP 带 expected_audio_id 时只停止同 ID；ID 不匹配是 no-op；缺省 ID 停止当前唯一请求；重复 STOP 幂等。
+- [x] HTTP 正常 EOF 后在所有 chunk 已交给 reader 的前提下发送 `resource_ready`；STOP 发送 `stopped`；状态码/MIME/连接错误发送 `failed` 和对应 error_code。实现并验证 `protocol_invalid_header`、`protocol_invalid_payload`、`protocol_unsupported_message`、`reverse_queue_full`、`audio_busy`、`audio_http_failed`、`audio_http_status`、`audio_content_type_mismatch`、`operation_cancelled`；正常用户 STOP 只报告 `stopped`，不把预期取消记成失败。禁止发送 completed。
+- [x] diagnostics dispatcher 处理 TTS_PLAY/AUDIO_STOP，仅做 payload 校验和启动/停止请求，不在 7778 listener/select worker 内调用阻塞 HTTP perform。
+- [x] 建立受控 HTTP server 与开发板联合测试：板卡从 HA/NAS 内网 HTTP 地址 GET，验证分块到达 reader、未知 Content-Length 持续传递、MIME/HTTP 状态校验、活动请求 STOP。若实际 HA internal_url 使用 HTTPS，再验证内建 CA bundle；不为测试专门引入自签证书设施。
+- [x] 运行 ESP-IDF v6.1 build、P5/P6 protocol tests；检查编译配置中 `esp_http_client` 生效；HTTPS CA bundle 选项保持可用。
 
 **Exit gate:** C13–C16/C18 通过；GET 在独立 task 中流式工作，资源读取完成不被误报为播放完成；STOP 仅取消目标 HTTP request；未引入 decoder、SRC、I²S TX 或 AUX 输出。
 
+
+**执行报告：** [P6b5 ESP32 HTTP audio resource report](../reports/2026-11-12-p6b5-esp32-http-audio-resource.md)。自动化：ESP32 51 passed、HA Tivoo 225 passed；ESP-IDF v6.1 build PASS；真实板卡 chunked 256 KiB/10 MiB、busy、stale/matching/repeated STOP、MIME mismatch、HTTP 503 均 PASS。HTTPS TLS 握手未在本批实机单独测试。
 ### P6b6 — 全链路集成、回归和 P6 验收
 
 **Files:**

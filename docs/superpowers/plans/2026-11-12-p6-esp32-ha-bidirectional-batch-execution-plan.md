@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** P6b0–P6b4 已完成。P6b3 的真实 MIC_SESSION/MIC_PCM 硬件链路留待 P7 producer 实现后验证；P6b4 完成 HA 内网 TTS Proxy URL、Pipeline 流式/非流式事件时序、TTS_PLAY 下发及 7778 握手/Sequence 验证，报告见 [P6b4 执行报告](../reports/2026-11-12-p6b4-ha-tts-proxy-pipeline-events.md)。P6b2 的 C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收；P6b5–P6b6 未开始。
+> **状态：** P6b0–P6b5 已完成。P6b3 的真实 MIC_SESSION/MIC_PCM 硬件链路留待 P7 producer 实现后验证；P6b4 完成 HA 内网 TTS Proxy URL、Pipeline 流式/非流式事件时序、TTS_PLAY 下发及 7778 握手/Sequence 验证，报告见 [P6b4 执行报告](../reports/2026-11-12-p6b4-ha-tts-proxy-pipeline-events.md)。P6b2 的 C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收；P6b6 未开始。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -123,6 +123,8 @@ ESP32 diagnostics 增加 MIC_CAPTURE_STOP JSON/session_id/reason 校验与非阻
 
 **禁止提前实现：** MP3/WAV decoder、SRC、PCM queue、I²S TX、DAC/AUX、playing/completed 状态。resource_ready 只表示 HTTP 字节完整交给 reader。
 
+
+**执行结果：** P6b5 已完成；HTTP GET/reader/STOP 在 ESP32 实机通过（chunked 256 KiB 与 10 MiB 无 Content-Length、大流不缓存、busy、过期/匹配/重复 STOP、MIME 和 HTTP 状态错误）。自动化 ESP32 51 passed、HA Tivoo 225 passed，ESP-IDF v6.1 build PASS。报告：[P6b5 执行报告](../reports/2026-11-12-p6b5-esp32-http-audio-resource.md)。
 ### P6b6 — 最终集成与阶段验收
 
 **完成：** P5 全回归、P6 自动化测试、跨语言 golden tests、ESP-IDF clean build、必要真实设备链路、逐合同验收报告、README 阶段状态。

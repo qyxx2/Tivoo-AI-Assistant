@@ -193,3 +193,21 @@ A JTAG/OpenOCD GDB software restart invoking `esp_restart()` remains NOT RUN bec
 Finally, disable the Wi-Fi AP or remove the ESP32 from the network. Both TCP sessions should close; after network recovery, HA must reconnect, complete the 7778 HELLO/ACK exchange, restore the 7777 control session and deliver a fresh command.
 
 The P5b4 report records each physical item separately from host-test results.
+
+## P6b5 HTTP audio resource fetch
+
+P6b5 consumes `TTS_PLAY` (`playback_id`, absolute HTTP(S) `url`, and expected `mime_type`) on the accepted 7778 diagnostics session. Each resource GET runs in its own FreeRTOS task with a 1 KiB ESP-IDF HTTP receive buffer. `HTTP_EVENT_ON_DATA` forwards each bounded chunk to the registered `tivoo_audio_resource_reader_t`; the callback must consume or copy the bytes before it returns and must not retain the event buffer pointer. With no reader registered, bytes are drained and counted without being buffered.
+
+Only a 2xx response with a matching audio media type is forwarded. MIME comparison ignores case and parameters. Redirects are disabled. HTTP chunked responses are supported without a Content-Length header; no full response allocation or Content-Length-based preallocation is used. HTTPS attaches ESP-IDF's built-in CA bundle and does not disable server certificate verification.
+
+Only one resource request is active. A different playback arriving during a GET reports `audio_busy`; duplicate TTS_PLAY for the same playback ID is ignored. `AUDIO_STOP` must contain a UUID `request_id` and a reason; optional `expected_audio_id` only stops the matching active request. A missing expected ID stops the sole active request. Repeated and stale STOP requests are no-ops.
+
+P6 resource states are `buffering`, `resource_ready`, `stopped`, and `failed`. `resource_ready` means the complete HTTP body was delivered to the reader; it is not an audio-playback completion event. Decoder, SRC, PCM buffering, I2S TX, DAC/AUX output and `playing`/`completed` states belong to P8.
+
+P8 can register a reader and use the typed tivoo_audio_resource_start() /
+tivoo_audio_resource_stop() APIs directly; the existing TVIO 0x30/0x31
+dispatcher calls the same implementation. The reader context must remain valid
+until the active request has stopped or reached resource_ready/failed.
+For host/device testing, python3 tests/esp32/p6_audio_http_fixture.py serves
+/audio/ok, /audio/chunked, /audio/large, /audio/slow, /audio/status,
+/audio/mime, and /audio/disconnect.

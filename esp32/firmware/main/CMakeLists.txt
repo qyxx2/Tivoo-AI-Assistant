@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "audio_resource.c"
         "device_status.c"
         "hardware_memory.c"
         "wifi_station.c"
@@ -14,6 +15,8 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         esp_event
+        esp_http_client
+        mbedtls
         esp_netif
         esp_timer
         esp_wifi

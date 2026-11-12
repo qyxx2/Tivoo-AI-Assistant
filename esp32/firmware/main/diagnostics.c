@@ -16,6 +16,10 @@
 #include "cJSON.h"
 
 #ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#endif
+
+#ifdef ESP_PLATFORM
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -94,7 +98,11 @@ static atomic_bool s_ack_accepted = ATOMIC_VAR_INIT(false);
 static uint32_t s_tx_sequence;
 static uint32_t s_rx_sequence;
 static uint8_t s_rx_buffer[RX_BUFFER_SIZE];
+#ifdef ESP_PLATFORM
+EXT_RAM_BSS_ATTR static uint8_t s_tx_buffer[TVIO_HEADER_SIZE + TVIO_MAX_JSON_PAYLOAD];
+#else
 static uint8_t s_tx_buffer[TVIO_HEADER_SIZE + TVIO_MAX_JSON_PAYLOAD];
+#endif
 static size_t s_rx_size;
 
 #ifdef ESP_PLATFORM
