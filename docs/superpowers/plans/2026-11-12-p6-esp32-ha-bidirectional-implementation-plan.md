@@ -230,18 +230,18 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - Reference integration behavior: HA Core 2026.11.0 Assist Pipeline event payload and existing `tests/homeassistant/custom_components/astrbot/test_conversation.py` streaming bridge test
 
 **Interfaces:**
-- `async_handle_pipeline_event(event)` 接受 HA Pipeline event；run-start 保存 TTS Proxy 相对 URL、mime_type、stream_response；intent-progress 在 tts_start_streaming=true 时提前发送；tts-end 处理非流式/短回答。
+- `TtsResourceManager.async_handle_pipeline_event(event: PipelineEvent)` 接受 HA Pipeline event；`create_pipeline_event_callback(hass, adapter)` 返回同步 `PipelineEventCallback`，每次 factory 调用创建独立 run manager；runtime 暴露 `pipeline_event_callback_factory`，由 Pipeline caller 传入 HA 的 `event_callback`。
 - `build_internal_tts_url(hass, relative_url) -> str` 使用 HA `get_url()` 的 internal/LAN-only 参数；相对路径内已有 token，原样附加到内网 base URL。
-- 通过 `Esp32ConnectionAdapter.async_send_message(TYPE_TTS_PLAY, payload)` 下发 `{playback_id,url,mime_type}`；不得把 token 拆成第二个 payload 字段或 Authorization header。
+- 通过 `Esp32ConnectionAdapter.async_send_tts_play(playback_id, url, mime_type)` 下发 `{playback_id,url,mime_type}`；底层复用 `async_send_message(TYPE_TTS_PLAY, payload)` 的 handshake gate 和独立 outbound Sequence；不得把 token 拆成第二个 payload 字段或 Authorization header。
 
 **Tasks:**
-- [ ] 为 URL builder 写测试：配置 internal_url 时优先使用；没有 internal_url 时使用 HA Core LAN IP fallback；不返回 cloud/external URL；保留 `/api/tts_proxy/{token}` 完整 path；不可取得内网地址时明确失败且不发送 TTS_PLAY。
-- [ ] 为 Pipeline event handler 写 RED tests：run-start 保存资源 metadata，不立即发送；流式路径在 intent-progress 的 `tts_start_streaming=true` 发送 TTS_PLAY，必须早于 tts-end；非流式/短回答在 tts-end 发送。
-- [ ] 验证一个 Pipeline run 最多发送一次 TTS_PLAY；流式已经发送后到达的 tts-end 只结束输入，不重发；新 run 的 playback_id 不继承旧 URL。
-- [ ] 实现 `audio_resource.py` helper 和最小 playback metadata；不创建 Assist Satellite Entity，不在本批执行 Pipeline，不实现 TTS Proxy 取消逻辑。
-- [ ] 集成 adapter outbound TVIO sender，确认发送方向 Sequence 连续、与接收方向独立；7778 未完成握手时拒绝 TTS_PLAY，不排入脱离连接生命周期的缓存队列。
-- [ ] 测试日志、异常和诊断不包含完整短时 URL/token；测试数据只使用 opaque fake token，不快照生产凭据。
-- [ ] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_audio_resource.py tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_audio_session.py -q` 以及 HA Tivoo 全部回归。
+- [x] 为 URL builder 写测试：配置 internal_url 时优先使用；没有 internal_url 时使用 HA Core LAN IP fallback；不返回 cloud/external URL；保留 `/api/tts_proxy/{token}` 完整 path；不可取得内网地址时明确失败且不发送 TTS_PLAY。
+- [x] 为 Pipeline event handler 写 RED tests：run-start 保存资源 metadata，不立即发送；流式路径在 intent-progress 的 `tts_start_streaming=true` 发送 TTS_PLAY，必须早于 tts-end；非流式/短回答在 tts-end 发送。
+- [x] 验证一个 Pipeline run 最多发送一次 TTS_PLAY；流式已经发送后到达的 tts-end 只结束输入，不重发；新 run 的 playback_id 不继承旧 URL。
+- [x] 实现 `audio_resource.py` helper 和最小 playback metadata；不创建 Assist Satellite Entity，不在本批执行 Pipeline，不实现 TTS Proxy 取消逻辑。
+- [x] 集成 adapter outbound TVIO sender，确认发送方向 Sequence 连续、与接收方向独立；7778 未完成握手时拒绝 TTS_PLAY，不排入脱离连接生命周期的缓存队列。
+- [x] 测试日志、异常和诊断不包含完整短时 URL/token；测试数据只使用 opaque fake token，不快照生产凭据。
+- [x] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_audio_resource.py tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_audio_session.py -q` 以及 HA Tivoo 全部回归。
 
 **Exit gate:** C12 通过；真实 HA Pipeline event helper 可按流式/非流式规则下发 TTS_PLAY；不实现 Satellite 生命周期、Pipeline cancel、AstrBot Stop 或音频播放完成状态。
 

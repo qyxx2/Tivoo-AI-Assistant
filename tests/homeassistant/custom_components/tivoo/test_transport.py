@@ -148,7 +148,9 @@ async def test_config_entry_starts_and_stops_both_connections(
 
     try:
         assert await hass.config_entries.async_setup(entry.entry_id)
-        adapter = hass.data[DOMAIN][entry.entry_id]["connection_adapter"]
+        runtime = hass.data[DOMAIN][entry.entry_id]
+        adapter = runtime["connection_adapter"]
+        assert callable(runtime["pipeline_event_callback_factory"])
         await _wait_for_state(adapter, "control", "connected")
         await _wait_for_state(adapter, "diagnostic", "connected")
         await asyncio.wait_for(control_mac_received.wait(), 1)
@@ -596,7 +598,9 @@ async def test_config_entry_mac_change_reload_connects_the_new_peer(
 
     try:
         assert await hass.config_entries.async_setup(entry.entry_id)
-        adapter = hass.data[DOMAIN][entry.entry_id]["connection_adapter"]
+        runtime = hass.data[DOMAIN][entry.entry_id]
+        adapter = runtime["connection_adapter"]
+        assert callable(runtime["pipeline_event_callback_factory"])
         await _wait_for_state(adapter, "control", "connected")
         await _wait_for_state(adapter, "diagnostic", "connected")
         for _ in range(100):
@@ -648,6 +652,7 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
         TYPE_DEVICE_STATUS,
         TYPE_GET_STATUS,
         TYPE_MIC_CAPTURE_STOP,
+        TYPE_TTS_PLAY,
         DiagnosticMessage,
     )
 
@@ -697,6 +702,7 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
         )
         await writer.drain()
         sent.append(await _read_tvio_message(reader))
+        sent.append(await _read_tvio_message(reader))
         await reader.read()
 
     async def control_handler(reader, writer):
@@ -717,13 +723,24 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
     adapter.register_message_handler(TYPE_DEVICE_STATUS, handler)
     with pytest.raises(HomeAssistantError, match="handshake"):
         await adapter.async_send_message(TYPE_MIC_CAPTURE_STOP, b"{}")
+    with pytest.raises(HomeAssistantError, match="handshake"):
+        await adapter.async_send_tts_play(
+            "55555555-5555-4555-8555-555555555555",
+            "http://ha-internal.local:8123/api/tts_proxy/opaque-fake-token",
+            "audio/mpeg",
+        )
 
     await adapter.async_start()
     try:
         await asyncio.wait_for(handled.wait(), timeout=2)
         await adapter.async_send_message(TYPE_MIC_CAPTURE_STOP, b'{"session_id":"s1"}')
+        await adapter.async_send_tts_play(
+            "55555555-5555-4555-8555-555555555555",
+            "http://ha-internal.local:8123/api/tts_proxy/opaque-fake-token",
+            "audio/mpeg",
+        )
         for _ in range(100):
-            if sent:
+            if len(sent) == 2:
                 break
             await asyncio.sleep(0.01)
 
@@ -734,7 +751,18 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
             json.loads(received[0].payload)["request_id"]
             == status_requests[0][2]["request_id"]
         )
-        assert sent == [(TYPE_MIC_CAPTURE_STOP, 2, {"session_id": "s1"})]
+        assert sent == [
+            (TYPE_MIC_CAPTURE_STOP, 2, {"session_id": "s1"}),
+            (
+                TYPE_TTS_PLAY,
+                3,
+                {
+                    "playback_id": "55555555-5555-4555-8555-555555555555",
+                    "url": "http://ha-internal.local:8123/api/tts_proxy/opaque-fake-token",
+                    "mime_type": "audio/mpeg",
+                },
+            ),
+        ]
         assert adapter.states["diagnostic"] == "connected"
     finally:
         await adapter.async_stop()

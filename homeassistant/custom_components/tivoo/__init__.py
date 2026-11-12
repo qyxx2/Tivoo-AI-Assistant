@@ -5,6 +5,7 @@ import json
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .audio_resource import create_pipeline_event_callback
 from .audio_session import AudioSessionManager
 from .const import (
     CONF_ESP32_HOST,
@@ -41,6 +42,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "command_adapter": adapter,
         "connection_adapter": adapter,
         "audio_session_manager": audio_session_manager,
+        "pipeline_event_callback_factory": lambda: create_pipeline_event_callback(
+            hass, adapter
+        ),
         "media_directory": hass.config.path(media_directory),
         "tivoo_bluetooth_mac": entry.data.get(
             CONF_TIVOO_BLUETOOTH_MAC, DEFAULT_TIVOO_BLUETOOTH_MAC

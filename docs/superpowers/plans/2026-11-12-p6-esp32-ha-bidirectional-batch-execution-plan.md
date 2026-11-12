@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** P6b0、P6b1、P6b2、P6b3 已完成。P6b3 已交付 HA 单活动 MIC session、有界 16×4 KiB PCM 队列/iterator、7778 消息分发和 ESP32 MIC_CAPTURE_STOP callback seam；HA Tivoo 全回归 210 passed、ESP32 tests 全量 49 passed、ESP-IDF v6.1 build 通过。P6b3 无物理 MIC producer，真实 MIC_SESSION/MIC_PCM 实机链路未运行，留待 P7 实现 producer 后验证。P6b2 的 C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收；P6b4–P6b6 未开始。
+> **状态：** P6b0–P6b4 已完成。P6b3 的真实 MIC_SESSION/MIC_PCM 硬件链路留待 P7 producer 实现后验证；P6b4 完成 HA 内网 TTS Proxy URL、Pipeline 流式/非流式事件时序、TTS_PLAY 下发及 7778 握手/Sequence 验证，报告见 [P6b4 执行报告](../reports/2026-11-12-p6b4-ha-tts-proxy-pipeline-events.md)。P6b2 的 C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收；P6b5–P6b6 未开始。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -109,7 +109,7 @@ ESP32 diagnostics 增加 MIC_CAPTURE_STOP JSON/session_id/reason 校验与非阻
 
 ### P6b4 — HA TTS Proxy URL 与事件触发
 
-**完成：** 用 HA Core 2026.11.0 URL helper 生成内网 URL；run-start 保存资源信息；流式回答在 tts_start_streaming 时提前通知；非流式短回答在 tts-end 通知；每个 playback_id 只发送一次 TTS_PLAY。
+**状态：** 完成。HA Core 2026.11.0 `get_url()` 生成内网 TTS Proxy URL；run-start 保存资源信息；流式在 `intent-progress: tts_start_streaming=True` 时提前发送，非流式/短回答在 tts-end 发送；每个 playback_id 只发送一次 TTS_PLAY。Config Entry runtime 暴露 `pipeline_event_callback_factory`，由 Pipeline caller 传入 `event_callback`；sender 复用既有 7778 handshake gate 和 outbound Sequence。报告：[P6b4 执行报告](../reports/2026-11-12-p6b4-ha-tts-proxy-pipeline-events.md)。
 
 **验收门：** internal_url 优先、LAN IP fallback、无内网地址时报错；流式触发先于 tts-end；URL path token 保持原样；logger 不输出完整 URL/token。
 

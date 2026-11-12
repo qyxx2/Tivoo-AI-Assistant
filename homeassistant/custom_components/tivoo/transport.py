@@ -29,6 +29,7 @@ from .diagnostics import (
     TYPE_MIC_SESSION_START,
     TYPE_PING,
     TYPE_PONG,
+    TYPE_TTS_PLAY,
     DiagnosticFrameStream,
     DiagnosticMessage,
     encode_message,
@@ -291,6 +292,16 @@ class Esp32ConnectionAdapter:
             self._diagnostic_tx_sequence = (
                 self._diagnostic_tx_sequence + 1
             ) & 0xFFFFFFFF
+
+    async def async_send_tts_play(
+        self, playback_id: str, url: str, mime_type: str
+    ) -> None:
+        """Send one TTS resource descriptor over the accepted diagnostic channel."""
+        payload = json.dumps(
+            {"playback_id": playback_id, "url": url, "mime_type": mime_type},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        await self.async_send_message(TYPE_TTS_PLAY, payload)
 
     async def _connection_loop(self, channel: str, port: int) -> None:
         """Connect/reconnect one channel without coupling the other channel."""
