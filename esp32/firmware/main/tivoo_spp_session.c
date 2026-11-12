@@ -23,6 +23,21 @@ uint32_t tivoo_spp_connection_wait_mask(
     return missing;
 }
 
+bool tivoo_spp_connection_is_ready(
+    uint32_t current,
+    uint32_t event_open,
+    uint32_t event_auth_done,
+    uint32_t event_auth_ok,
+    uint32_t event_failed,
+    bool target_bonded)
+{
+    if ((current & event_failed) != 0 || (current & event_open) == 0) {
+        return false;
+    }
+    return target_bonded ||
+        ((current & event_auth_done) != 0 && (current & event_auth_ok) != 0);
+}
+
 void tivoo_spp_session_mark_disconnected(tivoo_spp_session_t *session)
 {
     if (session != NULL) {

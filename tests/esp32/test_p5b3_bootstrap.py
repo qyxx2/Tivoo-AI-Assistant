@@ -143,3 +143,16 @@ def test_spp_disconnect_reaches_worker_auto_reconnect_path():
     assert "EVENT_AUTO_RECONNECT" in failed_connect
     assert "s_reconnect_not_before" in failed_connect
     assert "SPP_RECONNECT_RETRY_MS" in failed_connect
+
+
+def test_spp_reuses_a_preexisting_bond_without_waiting_for_auth_complete():
+    source = (FIRMWARE / "main/tivoo_spp.c").read_text()
+    connect_peer = source.split("static bool connect_peer(", 1)[1].split(
+        "static bool write_chunk(", 1
+    )[0]
+    assert (
+        "const bool target_bonded_before_connect = bond_list_contains_target();"
+        in connect_peer
+    )
+    assert "wait_for_open_and_auth(target_bonded_before_connect)" in connect_peer
+    assert "spp_bond_reused_after_open" in source

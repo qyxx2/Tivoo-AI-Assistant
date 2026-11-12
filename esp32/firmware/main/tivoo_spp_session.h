@@ -52,6 +52,14 @@ uint32_t tivoo_spp_connection_wait_mask(
     uint32_t event_auth_done,
     uint32_t event_failed);
 
+bool tivoo_spp_connection_is_ready(
+    uint32_t current,
+    uint32_t event_open,
+    uint32_t event_auth_done,
+    uint32_t event_auth_ok,
+    uint32_t event_failed,
+    bool target_bonded);
+
 void tivoo_spp_session_mark_disconnected(tivoo_spp_session_t *session);
 
 tivoo_spp_session_result_t tivoo_spp_session_process(

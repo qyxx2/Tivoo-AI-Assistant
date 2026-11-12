@@ -68,6 +68,7 @@ int main(void)
     /* Wait only for events that have not arrived, plus the failure event. */
     const uint32_t EVENT_OPEN = 1U << 0;
     const uint32_t EVENT_AUTH_DONE = 1U << 1;
+    const uint32_t EVENT_AUTH_OK = 1U << 3;
     const uint32_t EVENT_FAILED = 1U << 2;
     assert(tivoo_spp_connection_wait_mask(
         0, EVENT_OPEN, EVENT_AUTH_DONE, EVENT_FAILED) ==
@@ -81,6 +82,23 @@ int main(void)
     assert(tivoo_spp_connection_wait_mask(
         EVENT_OPEN | EVENT_AUTH_DONE, EVENT_OPEN, EVENT_AUTH_DONE,
         EVENT_FAILED) == EVENT_FAILED);
+
+    /* Existing bonds do not emit AUTH_CMPL for successful key reuse. */
+    assert(tivoo_spp_connection_is_ready(
+        EVENT_OPEN, EVENT_OPEN, EVENT_AUTH_DONE, EVENT_AUTH_OK,
+        EVENT_FAILED, true));
+    assert(!tivoo_spp_connection_is_ready(
+        EVENT_OPEN | EVENT_FAILED, EVENT_OPEN, EVENT_AUTH_DONE,
+        EVENT_AUTH_OK, EVENT_FAILED, true));
+    assert(!tivoo_spp_connection_is_ready(
+        EVENT_OPEN, EVENT_OPEN, EVENT_AUTH_DONE, EVENT_AUTH_OK,
+        EVENT_FAILED, false));
+    assert(!tivoo_spp_connection_is_ready(
+        EVENT_OPEN | EVENT_AUTH_DONE, EVENT_OPEN, EVENT_AUTH_DONE,
+        EVENT_AUTH_OK, EVENT_FAILED, false));
+    assert(tivoo_spp_connection_is_ready(
+        EVENT_OPEN | EVENT_AUTH_DONE | EVENT_AUTH_OK, EVENT_OPEN,
+        EVENT_AUTH_DONE, EVENT_AUTH_OK, EVENT_FAILED, false));
 
     capture_t capture = {0};
     const tivoo_spp_session_backend_t backend = {

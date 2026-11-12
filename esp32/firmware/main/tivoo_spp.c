@@ -364,7 +364,7 @@ static bool disconnect_active_peer(void)
     return true;
 }
 
-static bool wait_for_open_and_auth(void)
+static bool wait_for_open_and_auth(bool target_bonded)
 {
     const TickType_t deadline =
         xTaskGetTickCount() + pdMS_TO_TICKS(SPP_OPERATION_TIMEOUT_MS);
@@ -379,9 +379,10 @@ static bool wait_for_open_and_auth(void)
                 (current & EVENT_AUTH_OK) != 0 ? 1U : 0U);
             return false;
         }
-        if ((current & (EVENT_OPEN | EVENT_AUTH_DONE)) ==
-            (EVENT_OPEN | EVENT_AUTH_DONE)) {
-            return (current & EVENT_AUTH_OK) != 0;
+        if (tivoo_spp_connection_is_ready(
+                current, EVENT_OPEN, EVENT_AUTH_DONE, EVENT_AUTH_OK,
+                EVENT_FAILED, target_bonded)) {
+            return true;
         }
 
         const TickType_t now = xTaskGetTickCount();
@@ -398,7 +399,8 @@ static bool wait_for_open_and_auth(void)
         }
         const TickType_t remaining = deadline - now;
         const EventBits_t wait_mask = (EventBits_t)tivoo_spp_connection_wait_mask(
-            current, EVENT_OPEN, EVENT_AUTH_DONE, EVENT_FAILED);
+            current, EVENT_OPEN,
+            target_bonded ? 0 : EVENT_AUTH_DONE, EVENT_FAILED);
         const EventBits_t observed = xEventGroupWaitBits(
             s_events, wait_mask, pdFALSE, pdFALSE, remaining);
         if ((observed & EVENT_FAILED) != 0) {
@@ -424,6 +426,9 @@ static bool connect_peer(const uint8_t peer[6])
     if (!tivoo_gap_security_init(&s_gap_security, s_target, &s_gap_callbacks)) {
         return false;
     }
+
+    /* Successful reuse of a stored BR/EDR link key does not emit AUTH_CMPL. */
+    const bool target_bonded_before_connect = bond_list_contains_target();
 
     xEventGroupClearBits(
         s_events,
@@ -465,7 +470,8 @@ static bool connect_peer(const uint8_t peer[6])
         s_target[5], (unsigned int)channel,
         (unsigned int)(ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT),
         esp_err_to_name(err));
-    if (err != ESP_OK || !wait_for_open_and_auth()) {
+    if (err != ESP_OK ||
+        !wait_for_open_and_auth(target_bonded_before_connect)) {
         if (s_handle != 0) {
             (void)disconnect_active_peer();
         }
@@ -480,6 +486,20 @@ static bool connect_peer(const uint8_t peer[6])
             s_target[4], s_target[5]);
         (void)disconnect_active_peer();
         return false;
+    }
+
+    if (target_bonded_before_connect) {
+        TIVOO_LOGI(
+            TAG,
+            "spp_bond_reused_after_open peer=%02X:%02X:%02X:%02X:%02X:%02X security=authenticate+encrypt",
+            s_target[0], s_target[1], s_target[2], s_target[3], s_target[4],
+            s_target[5]);
+    } else {
+        TIVOO_LOGI(
+            TAG,
+            "spp_bond_created_after_auth peer=%02X:%02X:%02X:%02X:%02X:%02X",
+            s_target[0], s_target[1], s_target[2], s_target[3], s_target[4],
+            s_target[5]);
     }
 
     vTaskDelay(pdMS_TO_TICKS(SPP_OPEN_SETTLE_MS));
