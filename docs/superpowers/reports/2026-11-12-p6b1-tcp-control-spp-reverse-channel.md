@@ -48,12 +48,16 @@ NAS 镜像：`/volume1/docker/tivoo-esptool/artifacts/p6b1/tivoo_firmware.bin`�
 - 7778 诊断日志确认 Classic SPP 初始化。首次连接尝试未成功，自动重试后通过已有 Bond 完成 `spp_bond_reused_after_open`、`authenticated_spp_peer_ready`、`spp_reconnected`；未重新配对。
 - 在已认证 SPP 会话下，7777 建连并发送重复 `0x69 + MAC`，设备返回 `spp_connect_duplicate_ignored`。关闭 7777 后 7778 仍保持连接；重新建立 7777 再发送同一请求，仍返回 duplicate ignored；再次关闭 7777 后 7778 仍保持连接。这验证了 7777 TCP 生命周期与现有 SPP session、7778 endpoint 的隔离。
 - 7778 在 7777 关闭期间保持连接；另一个观察窗口内，7777 已关闭时 7778 仍收到 SPP 自动重试与 Bond 认证诊断事件。没有观察到 ESP32 因 7777 disconnect 主动断开 SPP。
-- 使用真实 SPP 连接开启 20 秒 TCP 7777 raw capture，未收到 Tivoo 上行字节（0 bytes）。该窗口内未观测到可确认的设备端 DATA_IND payload，因此**真实板卡的 SPP DATA_IND → 7777 raw payload 实测仍为 NOT RUN/BLOCKED**；不能以 HELLO、SPP 已连接或模拟器通过替代该项验收。
+- 初次 20 秒空闲 raw capture 收到 0 bytes；随后根据 Divoom 状态回显协议选择亮度变更作为可控触发源。使用 HA 2026.11.0 镜像运行当前工作区的真实 `Esp32ConnectionAdapter`，经 `async_execute(TivooCommand("set_brightness", {"value": ...}))` 发送 50% 和 100% 亮度帧（等价于 HA `tivoo.set_brightness` service handler 调用同一 adapter 的路径；因 ESP32 每端口只接受一个 client，测试时暂时停止 HA 主进程以释放 TCP client，并非从 HA UI/REST service registry 直接触发）。adapter 的 7777 reverse handler 收到 3 个原始 TCP chunks，共 82 bytes：
+  - `01060004325532c30002`
+  - `011b000446550000000000ff320001013201ffffff01010000005500740502`
+  - `01060004325564f50002011b000446550000000000ff640001016401ffffff01010000005500d80502`
+  两次变化均收到 `0x04 0x46 0x55` 状态回显，payload 中亮度值依次为 `0x32`（50）和 `0x64`（100）。同时收到 `0x04 0x32 0x55` 响应帧。**真实设备 `ESP_SPP_DATA_IND_EVT → reverse queue → TCP 7777 → HA adapter raw handler` 全链路通过。** 测试结束亮度设为 100%。
 - NAS 原有 HA Tivoo 集成仍是 P5 版本：旧 `transport.py` 只接受 `spp_control`/`remote_diagnostics`，旧 `diagnostics.py` 缺少 P6b0 双向 codec 导出的消息类型常量。已先备份旧文件，再仅同步工作区 P6b0/P6b1 所需的 `diagnostics.py` 与 `transport.py`；备份位于 `/volume1/docker/tivoo-esptool/artifacts/p6b1/diagnostics.py.pre-p6b0`、`transport.py.pre-p6b1`。容器内两文件 SHA 与工作区一致，HA 容器内 `py_compile` 通过。重启 HA 后未再出现 `invalid HELLO payload` 或 Tivoo 组件导入错误，HA 进程同时保持到 ESP32 7777、7778 的 ESTABLISHED TCP 连接。
 - 上游 BluetoothBridgeTest/esp32-divoom 的 `output_bluetooth.cpp`、`input_tcp.cpp`、`hardware_bluetoothctl.cpp` 不在当前工作区，因此未完成这三份文件的逐行语义对照；具体限制不影响上述已执行的本地合同测试。
 
 ## 结论与范围边界
 
-P6b1 代码、自动化回归、ESP-IDF build、真实 app-only flash、设备启动/HELLO、SPP Bond 认证以及 7777/7778 生命周期隔离均已完成。真实设备主动产生 SPP 上行数据并由 7777 收到原始字节这一项尚无观测证据，保留为 P6b1 的唯一硬件数据路径验收缺口；上游源码对照也未执行。后续不能将这两项标记为 PASS。
+P6b1 代码、自动化回归、ESP-IDF build、真实 app-only flash、设备启动/HELLO、SPP Bond 认证、7777/7778 生命周期隔离以及真实 SPP DATA_IND 原始回传均已验证通过。唯一未完成的辅助工作是对照当前工作区中缺失的上游 `output_bluetooth.cpp`、`input_tcp.cpp`、`hardware_bluetoothctl.cpp` 三个源文件；P6b1 核心硬件数据路径不再有 NOT RUN/BLOCKED 项。
 
-本次仅做 P6b1 验证与报告更新；未开始 P6b2–P6b6，未修改固件代码，未 push、未 merge。NAS 的 Home Assistant 容器重启以加载同步的 P6b0/P6b1 依赖文件并清理旧 TCP socket；持久化 `tivoo-esptool` 容器一直运行，未重启。
+本次仅做 P6b1 验证与报告更新；未开始 P6b2–P6b6，未修改固件代码，未 push、未 merge。为释放 ESP32 单 client TCP 端口，测试时临时停止 HA，再用相同 HA 镜像和当前 P6b1 集成 adapter 执行验证；结束后已启动常驻 HA，并确认 7777/7778 均重新 ESTABLISHED。持久化 `tivoo-esptool` 容器一直运行，未重启。
