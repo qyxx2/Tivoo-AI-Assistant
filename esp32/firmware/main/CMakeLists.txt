@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "hardware_memory.c"
         "wifi_station.c"
         "network_listeners.c"
         "diagnostics.c"
@@ -17,6 +18,9 @@ idf_component_register(
         esp_wifi
         bt
         espressif__cjson
+        esp_psram
+        heap
+        spi_flash
         lwip
         nvs_flash
 )

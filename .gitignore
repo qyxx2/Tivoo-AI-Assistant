@@ -62,3 +62,5 @@ Thumbs.db
 
 # Local Superpowers execution state (plans remain under docs/superpowers/)
 .superpowers/
+
+tests/testing_config/

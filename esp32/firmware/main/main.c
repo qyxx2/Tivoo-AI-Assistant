@@ -3,6 +3,7 @@
 #include "esp_system.h"
 
 #include "diagnostics.h"
+#include "hardware_memory.h"
 #include "network_listeners.h"
 #include "tivoo_spp.h"
 #include "wifi_station.h"
@@ -21,6 +22,7 @@ void app_main(void)
     }
 
     TIVOO_LOGI(TAG, "Reset reason: %d", (int)esp_reset_reason());
+    tivoo_hardware_memory_report();
 
     err = tivoo_wifi_station_init_nvs();
     if (err != ESP_OK) {
