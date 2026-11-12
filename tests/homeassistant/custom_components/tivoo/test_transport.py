@@ -769,3 +769,90 @@ async def test_unknown_message_is_reported_once_and_next_frame_is_processed(
         diagnostic_server.close()
         await control_server.wait_closed()
         await diagnostic_server.wait_closed()
+
+
+async def test_control_reverse_consumer_receives_raw_bytes_unchanged():
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    received = asyncio.Queue()
+    adapter.register_spp_reverse_handler(received.put)
+    adapter.spp_hint = "unknown"
+
+    await adapter._handle_control_data(b"\x01\x69\x96\x02")
+
+    assert await received.get() == b"\x01\x69\x96\x02"
+    assert adapter.spp_hint == "unknown"
+
+
+async def test_control_single_byte_status_hints_are_not_raw_payloads():
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    received = asyncio.Queue()
+    adapter.register_spp_reverse_handler(received.put)
+    adapter.spp_hint = "unknown"
+
+    await adapter._handle_control_data(b"\x69")
+    assert adapter.spp_hint == "connecting"
+    await adapter._handle_control_data(b"\x96")
+    assert adapter.spp_hint == "disconnected"
+    assert received.empty()
+
+    await adapter._handle_control_data(b"\x69\x96")
+    assert await received.get() == b"\x69\x96"
+    assert adapter.spp_hint == "disconnected"
+
+
+async def test_reverse_queue_full_error_code_is_accepted(caplog):
+    import logging
+
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    caplog.set_level(logging.ERROR)
+    adapter._log_error(
+        {
+            "error_code": "reverse_queue_full",
+            "module": "control_bridge",
+            "message": "SPP reverse queue full",
+            "uptime_ms": 123,
+        }
+    )
+
+    assert "reverse_queue_full" in caplog.text
+
+
+async def test_control_tcp_reader_forwards_raw_spp_data_to_registered_consumer(
+    monkeypatch, socket_enabled
+):
+    received = asyncio.Queue()
+
+    async def control_handler(reader, writer):
+        await reader.readexactly(7)
+        writer.write(bytes.fromhex("10 69 96 00 FE"))
+        await writer.drain()
+        await reader.read()
+
+    async def diagnostic_handler(reader, writer):
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
+    adapter.register_spp_reverse_handler(received.put)
+    try:
+        await adapter.async_start()
+        await _wait_for_state(adapter, "control", "connected")
+        assert await asyncio.wait_for(received.get(), 1) == bytes.fromhex(
+            "10 69 96 00 FE"
+        )
+        assert adapter.spp_hint == "unknown"
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()

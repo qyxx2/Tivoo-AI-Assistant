@@ -181,7 +181,9 @@ static void check_client(listener_endpoint_t *endpoint)
 static void poll_listeners(void)
 {
     fd_set readable;
+    fd_set writable;
     FD_ZERO(&readable);
+    FD_ZERO(&writable);
     int max_fd = -1;
 
     for (size_t i = 0; i < 2; i++) {
@@ -194,6 +196,10 @@ static void poll_listeners(void)
         }
         if (endpoint->client_fd >= 0) {
             FD_SET(endpoint->client_fd, &readable);
+            if (i == 0 &&
+                tivoo_control_client_has_pending(endpoint->client_fd)) {
+                FD_SET(endpoint->client_fd, &writable);
+            }
             if (endpoint->client_fd > max_fd) {
                 max_fd = endpoint->client_fd;
             }
@@ -209,7 +215,8 @@ static void poll_listeners(void)
         .tv_sec = 0,
         .tv_usec = SELECT_TIMEOUT_MS * 1000,
     };
-    int ready = select(max_fd + 1, &readable, NULL, NULL, &timeout);
+    tivoo_control_report_pending_errors();
+    int ready = select(max_fd + 1, &readable, &writable, NULL, &timeout);
     if (ready <= 0) {
         return;
     }
@@ -223,6 +230,11 @@ static void poll_listeners(void)
         if (endpoint->client_fd >= 0 &&
             FD_ISSET(endpoint->client_fd, &readable)) {
             check_client(endpoint);
+        }
+        if (i == 0 && endpoint->client_fd >= 0 &&
+            FD_ISSET(endpoint->client_fd, &writable) &&
+            !tivoo_control_client_send_pending(endpoint->client_fd)) {
+            close_endpoint(endpoint);
         }
     }
 }

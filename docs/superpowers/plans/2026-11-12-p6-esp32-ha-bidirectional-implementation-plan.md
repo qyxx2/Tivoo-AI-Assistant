@@ -137,6 +137,7 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - Modify: `esp32/firmware/main/tivoo_spp.c`, `tivoo_spp.h`
 - Modify: `homeassistant/custom_components/tivoo/transport.py`
 - Modify: `esp32/tests/p5b3_control_simulator/control_bridge_host_stub.c` and existing listener simulator
+- Modify: `esp32/tests/p5b4_integration_simulator/tivoo_spp_host_stub.c` to keep the changed queue result signature consistent across existing host test targets
 - Test: add `tests/esp32/test_p6_reverse_channel.py`; extend `tests/homeassistant/custom_components/tivoo/test_transport.py`
 
 **Interfaces:**
@@ -145,20 +146,21 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - HA control reader handles received bytes without terminating the existing independent 7777 connection loop; raw payload bytes are delivered unchanged to the registered SPP reverse consumer. 只有单独收到的 0x69/0x96 单字节 read 才作为 best-effort hint 更新提示态；合并/分段场景不尝试重组猜测，真实 SPP 状态以 7778 为准。
 
 **Tasks:**
-- [ ] 在 POSIX simulator 中先写 SPP DATA_IND 注入接口和 TCP client 断线测试：从 SPP 注入任意多段 bytes，HA socket 必须按原顺序、原内容收到。
-- [ ] 为 bounded reverse queue 写 RED 测试：SPP callback 不调用 socket send；队列容量满时返回失败/记录 `reverse_queue_full`，不等待消费者；队列内不产生半包覆盖。
-- [ ] 为发送状态 hint 写 RED 测试：SPP 正在 connecting 时提交 frame 只回 0x69；SPP 已 disconnected 时只回 0x96；connected 时按 FIFO 提交原始 frame；检查 P5 当前发送队列不会在无连接状态把 frame 延迟到未来连接后发送。
-- [ ] 为 TCP sender 写测试：socket partial send/EAGAIN 后保留 offset，writable 恢复后继续发送，最终字节流不丢失、不重排、不重复。
-- [ ] 为 disconnect 写测试：7777 client 断开会清掉该 client 的待回传 bytes；不调用 SPP disconnect，也不影响 7778。
-- [ ] 将 `tivoo_spp_queue_frame` 的结果细分为 QUEUED/CONNECTING/DISCONNECTED/QUEUE_FULL：connected 时按原 FIFO 入队；connecting 时不保存该 frame、返回 0x69 hint；disconnected 时不保存该 frame、返回 0x96 hint；queue full 保持现有错误上报。
-- [ ] 在 `tivoo_spp.c` 的 `ESP_SPP_DATA_IND_EVT` 中复制数据并投递给 control bridge queue；不得在 Bluedroid callback 中执行 socket 操作或阻塞等待。
-- [ ] 在 `control_bridge.c` 实现固定容量 reverse queue；没有当前 7777 client 时立即丢弃该 session 的 SPP 返回数据，不缓存给下一个 client；在 `network_listeners.c` 的 select 中只对有 pending data 的 7777 client 注册 writable fd，发送成功后消费队列数据。
-- [ ] 对照本地 `BluetoothBridgeTest/esp32-divoom` 的 `output_bluetooth.cpp`、`input_tcp.cpp` 和 `hardware_bluetoothctl.cpp` 实现 0x69（connecting）/0x96（not connected）原始状态提示；不增加消息包装、command_id 或 per-command ACK。
-- [ ] 在 HA 7777 reader 中识别上游单字节状态提示并更新提示状态；其他返回字节保持 opaque raw bytes，不记录其内容，不把写入 TCP buffer 当成显示确认。
-- [ ] 运行 `.venv/bin/python -m pytest tests/esp32/test_p6_reverse_channel.py tests/esp32/test_p5b1_network_listeners.py tests/esp32/test_p5b3_control_bridge.py -q`。
-- [ ] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_transport.py tests/homeassistant/custom_components/tivoo/test_services.py -q` 及 ESP-IDF v6.1 build。
+- [x] 在 POSIX simulator 中先写 SPP DATA_IND 注入接口和 TCP client 断线测试：从 SPP 注入任意多段 bytes，HA socket 必须按原顺序、原内容收到。
+- [x] 为 bounded reverse queue 写 RED 测试：SPP callback 不调用 socket send；队列容量满时返回失败/记录 `reverse_queue_full`，不等待消费者；队列内不产生半包覆盖。
+- [x] 为发送状态 hint 写 RED 测试：SPP 正在 connecting 时提交 frame 只回 0x69；SPP 已 disconnected 时只回 0x96；connected 时按 FIFO 提交原始 frame；检查 P5 当前发送队列不会在无连接状态把 frame 延迟到未来连接后发送。
+- [x] 为 TCP sender 写测试：socket partial send/EAGAIN 后保留 offset，writable 恢复后继续发送，最终字节流不丢失、不重排、不重复。
+- [x] 为 disconnect 写测试：7777 client 断开会清掉该 client 的待回传 bytes；不调用 SPP disconnect，也不影响 7778。
+- [x] 将 `tivoo_spp_queue_frame` 的结果细分为 QUEUED/CONNECTING/DISCONNECTED/QUEUE_FULL：connected 时按原 FIFO 入队；connecting 时不保存该 frame、返回 0x69 hint；disconnected 时不保存该 frame、返回 0x96 hint；queue full 保持现有错误上报。
+- [x] 在 `tivoo_spp.c` 的 `ESP_SPP_DATA_IND_EVT` 中复制数据并投递给 control bridge queue；不得在 Bluedroid callback 中执行 socket 操作或阻塞等待。
+- [x] 在 `control_bridge.c` 实现固定容量 reverse queue；没有当前 7777 client 时立即丢弃该 session 的 SPP 返回数据，不缓存给下一个 client；在 `network_listeners.c` 的 select 中只对有 pending data 的 7777 client 注册 writable fd，发送成功后消费队列数据。
+- [ ] 对照本地 `BluetoothBridgeTest/esp32-divoom` 的 `output_bluetooth.cpp`、`input_tcp.cpp` 和 `hardware_bluetoothctl.cpp` 实现 0x69（connecting）/0x96（not connected）原始状态提示；不增加消息包装、command_id 或 per-command ACK。 阻塞说明：三个源文件不在当前开发机工作区；行为按 P6 合同矩阵中已冻结的 0x69/0x96 语义实现。
+- [x] 在 HA 7777 reader 中识别上游单字节状态提示并更新提示状态；其他返回字节保持 opaque raw bytes，不记录其内容，不把写入 TCP buffer 当成显示确认。
+- [x] 运行 P6 reverse channel、P5b1 listener、P5b2 diagnostics、P5b3 control bridge、P5b4 integration host/POSIX 回归（项目 test-ha.sh wrapper）。
+- [x] 运行 HA transport/services 测试（test-ha.sh wrapper）。
+- [x] ESP-IDF v6.1 / ESP32 target build：通过本机已有 activate_idf_v6.1.sh 激活环境后，idf.py build 成功；生成 build/tivoo_firmware.bin。
 
-**Exit gate:** C02–C04/C19 通过；真实 SPP DATA_IND bytes 经过 7777 原样返回；7777 断开只丢弃其待回传数据，不触碰 SPP 或 7778。
+**Exit 状态：** C03/C04/C19 的代码与 host/HA 验证通过；C02 已由 POSIX 注入模拟器验证数据路径。ESP-IDF v6.1 / ESP32 target 编译已通过；真实 Bluedroid SPP DATA_IND 与 Tivoo 回传硬件验收仍未验证，因此本批次真实硬件验收门保持 pending。
 
 ### P6b2 — TCP 7778 心跳、状态快照和设备事件
 

@@ -40,6 +40,7 @@ _ERROR_CODES = {
     "tcp_control_malformed",
     "tivoo_frame_malformed",
     "protocol_unsupported_message",
+    "reverse_queue_full",
 }
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -86,6 +87,8 @@ class Esp32ConnectionAdapter:
         self._message_handlers: dict[
             int, Callable[[DiagnosticMessage], Awaitable[None]]
         ] = {}
+        self._spp_reverse_handler: Callable[[bytes], Awaitable[None]] | None = None
+        self.spp_hint = "unavailable"
         self._stopping = False
 
     async def async_start(self) -> None:
@@ -125,6 +128,7 @@ class Esp32ConnectionAdapter:
 
         state = "stopped" if self.host else "unavailable"
         self.states = {"control": state, "diagnostic": state}
+        self.spp_hint = state
 
     async def async_execute(self, command: TivooCommand) -> None:
         """Send encoded Tivoo command frames through the active 7777 session."""
@@ -152,6 +156,29 @@ class Esp32ConnectionAdapter:
                 raise HomeAssistantError(
                     f"ESP32 control channel failed while sending {command.name}"
                 ) from err
+
+    def register_spp_reverse_handler(
+        self, handler: Callable[[bytes], Awaitable[None]]
+    ) -> None:
+        """Register an async consumer for opaque bytes returned by Tivoo SPP."""
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+        self._spp_reverse_handler = handler
+
+    async def _handle_control_data(self, data: bytes) -> None:
+        """Handle a single-byte upstream hint or forward opaque SPP bytes."""
+        if data == b"\x69":
+            self.spp_hint = "connecting"
+            return
+        if data == b"\x96":
+            self.spp_hint = "disconnected"
+            return
+
+        if self._spp_reverse_handler is not None:
+            try:
+                await self._spp_reverse_handler(data)
+            except Exception:  # noqa: BLE001 — isolate the registered consumer.
+                _LOGGER.warning("Tivoo SPP reverse consumer failed")
 
     def register_message_handler(
         self,
@@ -202,9 +229,10 @@ class Esp32ConnectionAdapter:
                         raise ValueError("Tivoo Bluetooth MAC is not configured")
                     writer.write(b"\x69" + self._bluetooth_mac)
                     await writer.drain()
+                    self.spp_hint = "unknown"
                     self.states[channel] = "connected"
-                    while await reader.read(4096):
-                        pass
+                    while data := await reader.read(4096):
+                        await self._handle_control_data(data)
                 else:
                     self._diagnostic_tx_sequence = 0
                     self._diagnostic_handshaken = False
@@ -222,6 +250,8 @@ class Esp32ConnectionAdapter:
                     if channel == "diagnostic":
                         self._diagnostic_handshaken = False
                         self._diagnostic_tx_sequence = 0
+                    else:
+                        self.spp_hint = "unavailable"
                     writer.close()
                     try:
                         await writer.wait_closed()

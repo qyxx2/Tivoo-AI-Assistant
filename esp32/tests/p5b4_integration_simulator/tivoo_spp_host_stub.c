@@ -31,10 +31,11 @@ bool tivoo_spp_queue_disconnect(const uint8_t peer[6])
     return true;
 }
 
-bool tivoo_spp_queue_frame(const uint8_t *frame, size_t size)
+tivoo_spp_queue_result_t tivoo_spp_queue_frame(
+    const uint8_t *frame, size_t size)
 {
     if (atomic_exchange(&s_fail_next_frame, false)) {
-        return false;
+        return TIVOO_SPP_QUEUE_FULL;
     }
 
     printf("FRAME ");
@@ -43,5 +44,5 @@ bool tivoo_spp_queue_frame(const uint8_t *frame, size_t size)
     }
     putchar('\n');
     fflush(stdout);
-    return true;
+    return TIVOO_SPP_QUEUE_QUEUED;
 }

@@ -9,6 +9,14 @@
 esp_err_t tivoo_spp_start(void);
 #endif
 
+typedef enum {
+    TIVOO_SPP_QUEUE_QUEUED,
+    TIVOO_SPP_QUEUE_CONNECTING,
+    TIVOO_SPP_QUEUE_DISCONNECTED,
+    TIVOO_SPP_QUEUE_FULL,
+} tivoo_spp_queue_result_t;
+
 bool tivoo_spp_queue_connect(const uint8_t peer[6]);
 bool tivoo_spp_queue_disconnect(const uint8_t peer[6]);
-bool tivoo_spp_queue_frame(const uint8_t *frame, size_t size);
+tivoo_spp_queue_result_t tivoo_spp_queue_frame(
+    const uint8_t *frame, size_t size);
