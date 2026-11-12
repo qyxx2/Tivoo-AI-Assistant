@@ -2,9 +2,11 @@
 
 > 基于 Divoom Tivoo、ESP32、Home Assistant 和 AstrBot 的个人 AI 语音终端。
 >
-> 当前阶段：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署，P7A 阶段门 PASS，允许进入 P5/P6；真实麦克风和设备音频链路继续按 P7/P6/P8 验收。**
+> 当前阶段：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署；P5 ESP32 最小固件已实现，16MB Flash / 8MB PSRAM 与全 himem bank 实测通过，隔夜完全断电后 Wi-Fi 自动恢复，HA 后续 SPP 命令执行成功，P5 final 16MiB 镜像与 manifest 已生成。用户已实测 HA 语音助手成功调用 Tivoo 工具并执行命令。JTAG `esp_restart()`、第二台 Tivoo 正向替换和最终长滚动专项观察仍留有记录，但不阻止进入 P6；P6 继续实现双向状态/事件及 HTTP 音频资源通道，真实音频链路继续按 P7/P8 验收。**
 
 ESP32 与 HA 双向通信契约：[通信层规格书](docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md)（待审阅）。
+
+P5 固件实施与收尾验收：[P5 合同矩阵](docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md)；[2026-11-12 硬件、Bond 与发布包收尾报告](docs/superpowers/reports/2026-11-12-p5-memory-bond-artifact-closeout.md)。当前最终发布包位于 `esp32/firmware/build/p5-final/`，NAS 持久副本位于 `/volume1/docker/tivoo-esptool/artifacts/p5-final/`。
 
 P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md)（实现已部署；HA 文字对话及生产 STT → AstrBot SSE → TTS Proxy 两轮端到端验证通过；24h 轮换、HA 重启、取消/Stop owner 和 API Key 轮换仍待验收）。
 

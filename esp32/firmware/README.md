@@ -142,8 +142,9 @@ The release package is generated on the ARM64 Ubuntu development machine after a
 
 - `tivoo-esp32-wrover-e-n16r8-p5-final-<commit>.bin` — complete raw 16MB flash image, including bootloader, partition table and application; flash once at offset `0x000000`.
 - `tivoo-esp32-app-p5-final-<commit>.bin` — application-only image; flash at `0x010000` for a compatible firmware update after initial installation. It does not overwrite NVS, the partition table or bootloader.
+- `bootloader/bootloader.bin` and `partition_table/partition-table.bin` — standalone IDF segments for use with the package `flash_args.txt`.
 - `manifest.json` — exact source commit, IDF/toolchain version, flash geometry, partition layout, image sizes and SHA256 values.
-- `flash_args.txt` — generated ESP-IDF flash input map used by `merge-bin`.
+- `flash_args.txt` — IDF-generated flash segment map with paths resolved against the package directory; it can be used with `esptool write_flash @flash_args.txt` when run from that directory.
 
 The complete image is exactly 16,777,216 bytes and is padded to the full 16MB address range. Flash it using ESP32 target, 16MB flash size, DIO mode and 40MHz frequency. It is a single image at address `0x000000`; do not also program the individual bootloader/partition/application files. Check its SHA256 against `manifest.json` on Windows before flashing.
 
