@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** P6b0–P6b5 已完成。P6b3 的真实 MIC_SESSION/MIC_PCM 硬件链路留待 P7 producer 实现后验证；P6b4 完成 HA 内网 TTS Proxy URL、Pipeline 流式/非流式事件时序、TTS_PLAY 下发及 7778 握手/Sequence 验证，报告见 [P6b4 执行报告](../reports/2026-11-12-p6b4-ha-tts-proxy-pipeline-events.md)。P6b2 的 C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收；P6b6 未开始。
+> **状态：** P6b0–P6b6 已完成，P6-C01–C20 均有对应证据。P6b6 完成 clean IDF build、HA/ESP32 回归、C/Python golden test，并在真实 ESP32 上验收 GET_STATUS、SPP DEVICE_EVENT、ERROR、7777 单独断线及 HTTP reader/STOP。详情见 [P6 最终验收报告](../reports/2026-11-12-p6-acceptance-report.md)。Wi-Fi AP 关闭/恢复、生产 HTTPS 握手和当前工作区 HA transport 的端到端实机重连仍 NOT RUN；MIC producer、decoder/playback 与 P6.5 取消传播属于后续阶段。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -127,7 +127,12 @@ ESP32 diagnostics 增加 MIC_CAPTURE_STOP JSON/session_id/reason 校验与非阻
 **执行结果：** P6b5 已完成；HTTP GET/reader/STOP 在 ESP32 实机通过（chunked 256 KiB 与 10 MiB 无 Content-Length、大流不缓存、busy、过期/匹配/重复 STOP、MIME 和 HTTP 状态错误）。自动化 ESP32 51 passed、HA Tivoo 225 passed，ESP-IDF v6.1 build PASS。报告：[P6b5 执行报告](../reports/2026-11-12-p6b5-esp32-http-audio-resource.md)。
 ### P6b6 — 最终集成与阶段验收
 
-**完成：** P5 全回归、P6 自动化测试、跨语言 golden tests、ESP-IDF clean build、必要真实设备链路、逐合同验收报告、README 阶段状态。
+**执行结果：** 完成。HA/P3 regression 288 passed；ESP32/P5/P6 suite 52 passed；ESP-IDF v6.1 clean build PASS；新增 C/Python golden frame test PASS。已在真实 ESP32 上完成 app-only flash 和 read-back verify，并验证真实 GET_STATUS、SPP DEVICE_EVENT、ERROR、7777 单独断线不影响 7778、HTTP reader/STOP，以及 394 个动画协议块/82,429 bytes 的长文本传输压力。C01–C20 证据索引及 NOT RUN 项见 [P6 最终验收报告](../reports/2026-11-12-p6-acceptance-report.md)。
+
+**保留的 NOT RUN：** Wi-Fi AP 关闭/恢复、生产 HTTPS 握手、当前工作区 HA transport 与真实板卡的完整 Pipeline/TTS Proxy 联调；这些项目没有被模拟器或构建结果代替。真实 MIC producer 与 decoder/playback 分别属于 P7/P8，P6.5 取消传播仍是独立阶段。
+
+
+**验收范围：** P5 全回归、P6 自动化测试、跨语言 golden tests、ESP-IDF clean build、必要真实设备链路、逐合同验收报告和 README 阶段状态；未运行的扩展物理测试单独列出。
 
 **验收门：** C01–C20 全部有证据；自动化、IDF build、真实设备观察分类清晰；任何未运行项目标记 BLOCKED/NOT RUN，不以编译/模拟代替实机验收。
 

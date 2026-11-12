@@ -1,0 +1,13 @@
+P6b6 real-device 7777 long-text transport pressure test
+Date: 2026-11-12
+Firmware: 0.1.0+43e3ece
+Device: ESP32 192.168.3.28; peer SPP link already bonded.
+
+PRECHECK tcp={"7777":"connected","7778":"connected"} spp=connected
+SCROLL 1: chars=104 image_frames=536 protocol_chunks=121 bytes=25318
+SCROLL 2: chars=274 image_frames=625 protocol_chunks=141 bytes=29523
+SCROLL 3: chars=146 image_frames=584 protocol_chunks=132 bytes=27588
+TOTAL protocol_chunks=394 tcp_bytes=82429 control_closed=False
+POSTCHECK tcp={"7777":"connected","7778":"connected"} spp={"state":"connected","mac":"11:75:58:97:49:98"}
+PASS raw 7777 long-text frame burst; both TCP clients and SPP remain connected; no ERROR
+NOTE physical pixels/scroll continuity require visual observation and are not inferred from TCP/SPP status.

@@ -1,0 +1,46 @@
+HELLO {"device_id": "tivoo-esp32", "firmware_version": "0.1.0+43e3ece", "protocol_version": 1, "capabilities": ["spp_control", "spp_reverse", "remote_diagnostics", "device_status", "device_events", "audio_resource_http", "audio_control"], "reset_reason": "ESP_RST_POWERON"}
+DEVICE_STATUS {"request_id": "96cd9c85-96f5-4d09-9709-fb71b2dae251", "device_id": "tivoo-esp32", "firmware_version": "0.1.0+43e3ece", "uptime_ms": 400118, "wifi": {"state": "connected", "ip": "192.168.3.28", "rssi_dbm": -10}, "tcp": {"7777": "connected", "7778": "connected"}, "spp": {"state": "connected", "mac": "11:75:58:97:49:98"}, "audio_resource": {"state": "idle", "playback_id": null}}
+PASS C08 real GET_STATUS snapshot
+ERROR {"error_code": "protocol_invalid_payload", "module": "audio_resource", "message": "Invalid TTS_PLAY payload", "uptime_ms": 400189}
+PASS C10 physical ERROR stimulus
+DEVICE_EVENT spp_disconnected {"event": "spp_disconnected", "uptime_ms": 400281, "data": {"mac": "11:75:58:97:49:98"}}
+DEVICE_EVENT spp_connecting {"event": "spp_connecting", "uptime_ms": 400376, "data": {"mac": "11:75:58:97:49:98"}}
+DEVICE_EVENT spp_connected {"event": "spp_connected", "uptime_ms": 401620, "data": {"mac": "11:75:58:97:49:98"}}
+C09 observed transitions: spp_disconnected,spp_connecting,spp_connected
+PASS C09 physical SPP transition event
+ASYNC 66 {"level": "INFO", "module": "tivoo_spp", "message": "authenticated_spp_peer_ready peer=11:75:58:97:49:98 bond_list=confirmed", "uptime_ms": 401637}
+STATUS after 7777 close {"7777": "disconnected", "7778": "connected"}
+PASS C17 7777 close leaves 7778 alive
+STATUS after 7777 reconnect {"7777": "connected", "7778": "connected"}
+PASS C17 7777 reconnect leaves 7778 alive
+HELLO {"device_id": "tivoo-esp32", "firmware_version": "0.1.0+43e3ece", "protocol_version": 1, "capabilities": ["spp_control", "spp_reverse", "remote_diagnostics", "device_status", "device_events", "audio_resource_http", "audio_control"], "reset_reason": "ESP_RST_POWERON"}
+AUDIO_STATE {"audio_id": "d456e71e-de1c-4571-9f11-96db0c3fed2f", "source": "tts_http", "state": "resource_ready", "bytes_received": 262144}
+PASS chunked_get bytes=262144
+AUDIO_STATE {"audio_id": "8f80bcb3-bc96-4f1c-867b-f54eff37a4c7", "source": "tts_http", "state": "buffering", "bytes_received": 0}
+HTTP_SEND large 1048576
+HTTP_SEND large 2097152
+HTTP_SEND large 3145728
+HTTP_SEND large 4194304
+HTTP_SEND large 5242880
+HTTP_SEND large 6291456
+HTTP_SEND large 7340032
+HTTP_SEND large 8388608
+HTTP_SEND large 9437184
+HTTP_SEND large 10485760
+AUDIO_STATE {"audio_id": "8f80bcb3-bc96-4f1c-867b-f54eff37a4c7", "source": "tts_http", "state": "resource_ready", "bytes_received": 10485760}
+PASS large_chunked_get bytes=10485760
+AUDIO_STATE {"audio_id": "85f605a3-168d-4d80-aafc-7187307cf422", "source": "tts_http", "state": "buffering", "bytes_received": 0}
+ERROR {"error_code": "audio_busy", "module": "audio_resource", "message": "Another audio resource is active", "uptime_ms": 464918}
+PASS stale_stop_ignored
+AUDIO_STATE {"audio_id": "85f605a3-168d-4d80-aafc-7187307cf422", "source": "tts_http", "state": "stopped", "bytes_received": 65536}
+PASS matching_stop bytes=65536
+PASS repeated_stop_noop
+AUDIO_STATE {"audio_id": "563c4f14-494b-4292-8436-13954cc8d51a", "source": "tts_http", "state": "buffering", "bytes_received": 0}
+ERROR {"error_code": "audio_content_type_mismatch", "module": "audio_resource", "message": "TTS HTTP resource request failed", "uptime_ms": 465849}
+AUDIO_STATE {"audio_id": "563c4f14-494b-4292-8436-13954cc8d51a", "source": "tts_http", "state": "failed", "bytes_received": 0, "error_code": "audio_content_type_mismatch"}
+PASS mime_mismatch
+AUDIO_STATE {"audio_id": "bd380af5-07cd-4149-bf04-bb8d2366c862", "source": "tts_http", "state": "buffering", "bytes_received": 0}
+ERROR {"error_code": "audio_http_status", "module": "audio_resource", "message": "TTS HTTP resource request failed", "uptime_ms": 466130}
+AUDIO_STATE {"audio_id": "bd380af5-07cd-4149-bf04-bb8d2366c862", "source": "tts_http", "state": "failed", "bytes_received": 0, "error_code": "audio_http_status"}
+PASS http_status
+RESULT PASS

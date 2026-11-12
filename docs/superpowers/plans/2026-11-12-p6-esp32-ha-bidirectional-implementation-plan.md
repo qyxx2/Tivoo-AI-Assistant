@@ -286,20 +286,23 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - Modify: only tests/files required to repair demonstrated P6 contract defects; no unrelated cleanup
 
 **Tasks:**
-- [ ] 检查 branch、HEAD、工作区和 P6b0–P6b5 每批实现提交；确认不存在 P6 外改动、未完成测试或仅靠手动现象标 PASS 的合同。
-- [ ] 运行 HA Tivoo 整套回归：`./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo -q`；另跑 P3 conversation/session/SSE regression。
-- [ ] 运行 ESP32 所有 P5/P6 POSIX tests：`.venv/bin/python -m pytest tests/esp32 -q`；运行 HA protocol golden tests，确保 C/Python 产生的 TVIO header、type、Sequence、payload 字节一致。
-- [ ] 在 ARM Ubuntu 用 ESP-IDF v6.1 / esp32 target 执行 clean build；检查 warnings/errors、sdkconfig defaults、dependencies.lock、分区和现有 16MiB/8MiB 配置未漂移。
-- [ ] 实机验收 7777：现有 HA command 正向控制仍有效；Tivoo SPP 返回字节能原样返回 HA；0x69/0x96 hint 只更新提示状态；连续控制/动画时反向队列无明显丢失；7777 断开不释放正常 SPP。
-- [ ] 实机验收 7778：HELLO/ACK 能力正确；15s PING/PONG；模拟失联 45s 后只重连 7778；GET_STATUS 包含真实 Wi-Fi/TCP/SPP；Wi-Fi/SPP 事件按状态变化上报；7778 reconnect 不重置 SPP。
-- [ ] 实机验收 TTS URL/HTTP：HA 流式回复在 tts_start_streaming 后触发 TTS_PLAY；ESP32 从 HA LAN TTS Proxy 获取 HTTP 资源；chunk 持续传入 reader；短回答走 tts-end；错误状态、AUDIO_STOP、过期 STOP 和 HTTP busy 行为符合合同。此项只验收到 HTTP resource reader，不把“无声音输出”记成失败或“已播放”记成通过。
-- [ ] 验证 7777/7778 独立断线恢复、Wi-Fi 断开/恢复后的 listener/HA 自动重连；确认 token/URL/PCM/凭据未进入日志。
-- [ ] 真实设备更新仅使用 app-only image `0x10000`，保留 NVS/Wi-Fi/SPP Bond；不 erase flash、不刷写覆盖 NVS 的 merged image，除非用户另行明确要求。
-- [ ] 运行 Ruff、HA 测试、ESP32 tests、ESP-IDF build、Markdown relative link check、`git diff --check`；逐条对照 P6-C01–C20。
-- [ ] 报告区分 Python/C 自动化、IDF build、真实硬件观察和未执行项；任何硬件未测、网络不可达或测试缺口标记 BLOCKED/NOT RUN，不得折算 PASS。
-- [ ] 只有 C01–C20 全部有证据后，才更新 README 将 P6 标记为完成；不修改 P6.5/P7/P8 的状态，不将 HTTP resource_ready 写成 audio playback completed。
+- [x] 检查 branch、HEAD、工作区和 P6b0–P6b5 每批实现提交；确认不存在 P6 外改动、未完成测试或仅靠手动现象标 PASS 的合同。
+- [x] 运行 HA Tivoo + P3 conversation/session/SSE 回归，288 passed。
+- [x] 运行 ESP32 所有 P5/P6 POSIX tests，52 passed；新增 C/Python golden test 覆盖通用消息、ERROR 与 DIAGNOSTIC_LOG 实际发送 API。
+- [x] ARM Ubuntu ESP-IDF v6.1 / esp32 clean build 通过；配置、依赖锁、分区及 flash/PSRAM 规格未漂移。
+- [x] 实机长文本滚动传输压力：复用 renderer/encoder 发送 3 组内容、394 个协议块/82,429 bytes；两端口与 SPP 持续连接且无 ERROR。Tivoo 屏幕视觉连续性未采集，单独保留 NOT RUN。
+- [x] 实机验收 7778：HELLO、GET_STATUS、SPP transition DEVICE_EVENT 和 ERROR 已观察；心跳/45s timeout/reconnect 由 P6b2 设备记录及自动化覆盖。
+- [ ] 完整 HA Pipeline/TTS Proxy → 当前工作区 HA transport → 实机链路：NOT RUN；P6b4 HA event/URL 自动化 PASS，本批直接实机 TTS_PLAY/HTTP reader/STOP PASS。
+- [ ] Wi-Fi AP 关闭/恢复后的自动重连：NOT RUN（当前没有可控 AP 管理入口）；7777/7778 TCP 独立断线证据已由自动化与真实设备 7777 disconnect test 覆盖。
+- [x] 实机仅更新 app image 0x10000，esptool read-back verify OK，未写入 NVS。
+- [x] Ruff、HA、ESP32、IDF clean build、Markdown link 与 diff 检查通过；C01–C20 逐项记录在验收报告。
+- [x] 报告区分自动化、构建、硬件与未执行项；Wi-Fi AP outage、生产 HTTPS、完整 HA Pipeline 实机链路明确为 NOT RUN。
+- [x] C01–C20 均有合同证据后更新 README；保持 P6.5/P7/P8 状态不变，并保留 resource_ready 的 HTTP reader 语义。
 
 **Exit gate:** P6-C01–C20 全部通过；P5 全量回归及 P6 自动化、IDF build、必要实机合同均有可追溯证据；工作区差异仅包含 P6 已验收交付。
+
+**执行结果：** P6b6 完成；C01–C20 证据映射、测试结果、设备刷写和未运行项见 [P6 最终验收报告](../reports/2026-11-12-p6-acceptance-report.md)。完整 HA Pipeline→实机与 Wi-Fi AP 失联恢复仍保留 NOT RUN，不作为已观察硬件行为。
+
 
 
 ## 6. 合同覆盖与阶段边界

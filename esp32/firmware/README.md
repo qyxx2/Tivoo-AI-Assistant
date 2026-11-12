@@ -211,3 +211,36 @@ until the active request has stopped or reached resource_ready/failed.
 For host/device testing, python3 tests/esp32/p6_audio_http_fixture.py serves
 /audio/ok, /audio/chunked, /audio/large, /audio/slow, /audio/status,
 /audio/mime, and /audio/disconnect.
+
+## P6b6 final integration acceptance
+
+The P6 final acceptance report is
+[2026-11-12-p6-acceptance-report.md](../../docs/superpowers/reports/2026-11-12-p6-acceptance-report.md).
+P6-C01–C20 have corresponding automated, build, source-review or physical
+device evidence. The final clean ESP-IDF v6.1 image was built from commit
+43e3ece, size 1,465,584 bytes (0x165cf0), SHA-256
+f52bd312d0d89a1ef7fdbeec2293ec61ffa963120c462ad5960b376dbd361ef1.
+It was flashed app-only at 0x10000 through the existing NAS esptool
+container; esptool read-back verification reported verify OK (digest
+matched). NVS, Wi-Fi settings and the existing Tivoo SPP Bond were retained.
+
+On the real board, HELLO/capabilities and GET_STATUS were verified; physical
+SPP disconnecting/connecting/connected DEVICE_EVENT transitions and a
+protocol_invalid_payload ERROR were observed. Closing TCP 7777 did not
+interrupt a live 7778 session; GET_STATUS reported the expected independent
+port state, and a new 7777 connection restored both ports.
+A subsequent long-text transport run sent 394 animation chunks (82,429 bytes) through 7777; 7777, 7778 and SPP remained connected without ERROR. The HTTP reader
+was tested with 256 KiB and 10 MiB chunked resources without Content-Length,
+plus busy, stale/matching/repeated AUDIO_STOP, wrong MIME and HTTP 503 cases.
+The NAS HA and persistent esptool containers were restored/running after
+acceptance; both TCP sockets returned to ESTABLISHED.
+
+P6 does not produce microphone PCM or decode/play audio. A real I2S
+microphone producer remains P7; decoder, SRC, I2S TX, DAC/AUX and
+playing/completed states remain P8. resource_ready only means the complete
+HTTP body was delivered to the configured reader. The following physical
+checks remain NOT RUN and are itemized in the acceptance report: Wi-Fi AP
+disable/recovery, production HTTPS handshake, a full live HA Pipeline/TTS
+Proxy to board run using the current workspace HA transport, and all P7/P8
+acoustic hardware behavior. P6.5 cancellation propagation is a separate
+phase and was not executed.

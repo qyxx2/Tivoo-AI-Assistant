@@ -734,3 +734,76 @@ def test_mic_capture_stop_without_registered_producer_is_an_idempotent_noop(tmp_
         if client is not None:
             client.close()
         _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_p6_cross_language_golden_frames_match_python_codec(tmp_path):
+    import sys
+
+    sys.path.insert(0, str(ROOT / "homeassistant"))
+    from custom_components.tivoo.diagnostics import encode_message
+
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        client.settimeout(5)
+        _handshake(client)
+        time.sleep(0.1)
+
+        generic_types = [0x04, 0x11, 0x20, 0x21, 0x22, 0x32, 0x33, 0x40]
+        for sequence, message_type in enumerate(generic_types, start=1):
+            payload = b"\x00\x01\xff" if message_type == 0x21 else b"{}"
+            _command(process, f"send {message_type:#x} {payload.hex()}")
+            time.sleep(0.1)
+            raw_type, raw_sequence, raw_payload = _read_raw_frame(client)
+            raw = (
+                struct.pack(
+                    "<4sBBHII",
+                    b"TVIO",
+                    1,
+                    raw_type,
+                    0,
+                    len(raw_payload),
+                    raw_sequence,
+                )
+                + raw_payload
+            )
+            assert raw == encode_message(message_type, payload, sequence)
+
+        _command(process, "error audio_http_status audio_resource HTTP request failed")
+        time.sleep(0.1)
+        error_type, error_sequence, error_payload = _read_raw_frame(client)
+        assert (error_type, error_sequence) == (0x41, 9)
+        assert json.loads(error_payload)["error_code"] == "audio_http_status"
+        error_frame = (
+            struct.pack(
+                "<4sBBHII",
+                b"TVIO",
+                1,
+                error_type,
+                0,
+                len(error_payload),
+                error_sequence,
+            )
+            + error_payload
+        )
+        assert error_frame == encode_message(0x41, error_payload, 9)
+
+        _command(process, "log INFO wifi_station station_connected")
+        time.sleep(0.1)
+        log_type, log_sequence, log_payload = _read_raw_frame(client)
+        assert (log_type, log_sequence) == (0x42, 10)
+        assert json.loads(log_payload)["message"] == "station_connected"
+        log_frame = (
+            struct.pack(
+                "<4sBBHII", b"TVIO", 1, log_type, 0, len(log_payload), log_sequence
+            )
+            + log_payload
+        )
+        assert log_frame == encode_message(0x42, log_payload, 10)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
