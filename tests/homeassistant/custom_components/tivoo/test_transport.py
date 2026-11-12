@@ -213,7 +213,15 @@ async def test_diagnostic_handshake_and_device_messages_use_standard_logger(
             "device_id": "tivoo-esp32",
             "firmware_version": "0.1.0+abcdef0",
             "protocol_version": 1,
-            "capabilities": ["spp_control", "remote_diagnostics"],
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
             "reset_reason": "ESP_RST_POWERON",
         }
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
@@ -312,7 +320,15 @@ async def test_unsupported_hello_protocol_is_rejected_and_closes_only_diagnostic
             "device_id": "tivoo-esp32",
             "firmware_version": "0.1.0+abcdef0",
             "protocol_version": 2,
-            "capabilities": ["spp_control", "remote_diagnostics"],
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
             "reset_reason": "ESP_RST_POWERON",
         }
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
@@ -369,7 +385,15 @@ async def test_invalid_diagnostic_json_is_ignored_without_losing_connection(
             "device_id": "tivoo-esp32",
             "firmware_version": "0.1.0+abcdef0",
             "protocol_version": 1,
-            "capabilities": ["spp_control", "remote_diagnostics"],
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
             "reset_reason": "ESP_RST_POWERON",
         }
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
@@ -592,5 +616,156 @@ async def test_config_entry_mac_change_reload_connects_the_new_peer(
         control_server.close()
         diagnostic_server.close()
         await _close_clients(control_clients + diagnostic_clients)
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_bidirectional_message_handler_and_outbound_sequence(
+    monkeypatch, socket_enabled
+):
+    import json
+
+    from custom_components.tivoo.diagnostics import (
+        TYPE_DEVICE_STATUS,
+        TYPE_MIC_CAPTURE_STOP,
+        DiagnosticMessage,
+    )
+
+    handled = asyncio.Event()
+    received = []
+    sent = []
+
+    async def handler(message: DiagnosticMessage):
+        received.append(message)
+        handled.set()
+
+    async def diagnostic_handler(reader, writer):
+        hello = {
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "protocol_version": 1,
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
+            "reset_reason": "ESP_RST_POWERON",
+        }
+        writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        assert await _read_tvio_message(reader) == (0x02, 0, {"accepted": True})
+        writer.write(_tvio_message(TYPE_DEVICE_STATUS, 1, b'{"request_id":"status-1"}'))
+        await writer.drain()
+        sent.append(await _read_tvio_message(reader))
+        await reader.read()
+
+    async def control_handler(reader, writer):
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
+    adapter.register_message_handler(TYPE_DEVICE_STATUS, handler)
+    with pytest.raises(HomeAssistantError, match="handshake"):
+        await adapter.async_send_message(TYPE_MIC_CAPTURE_STOP, b"{}")
+
+    await adapter.async_start()
+    try:
+        await asyncio.wait_for(handled.wait(), timeout=2)
+        await adapter.async_send_message(TYPE_MIC_CAPTURE_STOP, b'{"session_id":"s1"}')
+        for _ in range(100):
+            if sent:
+                break
+            await asyncio.sleep(0.01)
+
+        assert received == [
+            DiagnosticMessage(TYPE_DEVICE_STATUS, 0, 1, b'{"request_id":"status-1"}')
+        ]
+        assert sent == [(TYPE_MIC_CAPTURE_STOP, 1, {"session_id": "s1"})]
+        assert adapter.states["diagnostic"] == "connected"
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+async def test_unknown_message_is_reported_once_and_next_frame_is_processed(
+    monkeypatch, socket_enabled, caplog
+):
+    import json
+    import logging
+
+    caplog.set_level(logging.INFO)
+
+    async def control_handler(reader, writer):
+        await reader.read()
+
+    async def diagnostic_handler(reader, writer):
+        hello = {
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "protocol_version": 1,
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
+            "reset_reason": "ESP_RST_POWERON",
+        }
+        writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        await _read_tvio_message(reader)
+        valid = {
+            "level": "INFO",
+            "module": "wifi_station",
+            "message": "after_unknown_type",
+            "uptime_ms": 99,
+        }
+        writer.write(
+            _tvio_message(0x7F, 1, b"future-message")
+            + _tvio_message(0x42, 2, json.dumps(valid).encode())
+        )
+        await writer.drain()
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
+    )
+    await adapter.async_start()
+    try:
+        await _wait_for_log(caplog, "after_unknown_type")
+        assert caplog.text.count("protocol_unsupported_message") == 1
+        assert adapter.states["diagnostic"] == "connected"
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
         await control_server.wait_closed()
         await diagnostic_server.wait_closed()

@@ -33,7 +33,10 @@ def _read_exact(sock: socket.socket, size: int) -> bytes:
 
 def _wait_closed(sock: socket.socket) -> None:
     sock.settimeout(2)
-    assert sock.recv(1) == b""
+    try:
+        assert sock.recv(1) == b""
+    except ConnectionResetError:
+        pass
 
 
 def _connect(port: int) -> socket.socket:
@@ -83,7 +86,15 @@ def _handshake(sock: socket.socket) -> dict:
     assert (message_type, sequence) == (0x01, 0)
     assert hello["device_id"] == "tivoo-esp32"
     assert hello["protocol_version"] == 1
-    assert hello["capabilities"] == ["spp_control", "remote_diagnostics"]
+    assert hello["capabilities"] == [
+        "spp_control",
+        "spp_reverse",
+        "remote_diagnostics",
+        "device_status",
+        "device_events",
+        "audio_resource_http",
+        "audio_control",
+    ]
     assert hello["firmware_version"].startswith("0.1.0+")
     assert hello["reset_reason"] == "ESP_RST_POWERON"
     _send_ack(sock)
@@ -339,6 +350,7 @@ def test_rejected_hello_ack_does_not_unlock_queue_and_reconnects(tmp_path):
         _wait_closed(rejected)
         rejected.close()
         rejected = None
+        time.sleep(0.2)  # Wait for the listener to release its one-client slot.
 
         accepted = _connect(diagnostic_port)
         _handshake(accepted)
@@ -349,4 +361,283 @@ def test_rejected_hello_ack_does_not_unlock_queue_and_reconnects(tmp_path):
         for client in (rejected, accepted):
             if client is not None:
                 client.close()
+        _stop(process)
+
+
+def _read_raw_frame(sock: socket.socket) -> tuple[int, int, bytes]:
+    header = _read_exact(sock, 16)
+    magic, version, message_type, flags, payload_length, sequence = struct.unpack(
+        "<4sBBHII", header
+    )
+    assert (magic, version, flags) == (b"TVIO", 1, 0)
+    return message_type, sequence, _read_exact(sock, payload_length)
+
+
+def _send_frame(sock: socket.socket, message_type: int, sequence: int, payload: bytes):
+    sock.sendall(
+        struct.pack("<4sBBHII", b"TVIO", 1, message_type, 0, len(payload), sequence)
+        + payload
+    )
+
+
+@pytest.mark.enable_socket
+def test_realtime_outbound_message_uses_common_sequence_and_header(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)  # Let the listener consume HELLO_ACK before queueing.
+        _command(process, "send 0x04 7b7d")
+
+        message_type, sequence, payload = _read_raw_frame(client)
+        assert (message_type, sequence, payload) == (0x04, 1, b"{}")
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_inbound_message_dispatch_echoes_fragmented_and_coalesced_frames(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+
+        first = struct.pack("<4sBBHII", b"TVIO", 1, 0x10, 0, 2, 1) + b"{}"
+        second_payload = b'{"request_id":"second"}'
+        second = (
+            struct.pack("<4sBBHII", b"TVIO", 1, 0x10, 0, len(second_payload), 2)
+            + second_payload
+        )
+        client.sendall(first[:7])
+        client.sendall(first[7:] + second)
+
+        assert _read_raw_frame(client) == (0x11, 1, b"{}")
+        assert _read_raw_frame(client) == (0x11, 2, second_payload)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_mic_pcm_binary_boundary_accepts_four_kibibytes_and_rejects_more(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+        payload = bytes(range(256)) * 16
+        _command(process, f"send 0x21 {payload.hex()}")
+        assert _read_raw_frame(client) == (0x21, 1, payload)
+
+        oversized = payload + b"x"
+        _command(process, f"send 0x21 {oversized.hex()}")
+        _command(process, "send 0x04 7b7d")
+        assert _read_raw_frame(client) == (0x04, 2, b"{}")
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_unknown_message_reports_protocol_error_and_preserves_next_frame(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+        _send_frame(client, 0x7F, 1, b"future")
+        _send_frame(client, 0x10, 2, b'{"request_id":"ok"}')
+
+        frames = [_read_raw_frame(client), _read_raw_frame(client)]
+        assert {frame[0] for frame in frames} == {0x11, 0x41}
+        status = next(frame for frame in frames if frame[0] == 0x11)
+        error = next(frame for frame in frames if frame[0] == 0x41)
+        assert status[2] == b'{"request_id":"ok"}'
+        error_payload = json.loads(error[2])
+        assert error_payload["error_code"] == "protocol_unsupported_message"
+        assert error_payload["module"] == "diagnostics"
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_c_dispatches_every_ha_to_esp32_message_type(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+
+        incoming = [
+            (0x03, 0x04),
+            (0x10, 0x11),
+            (0x23, 0x32),
+            (0x30, 0x32),
+            (0x31, 0x32),
+            (0x41, 0x41),
+        ]
+        frames = []
+        for sequence, (message_type, _) in enumerate(incoming, start=1):
+            payload = b"{}"
+            frames.append(
+                struct.pack(
+                    "<4sBBHII",
+                    b"TVIO",
+                    1,
+                    message_type,
+                    0,
+                    len(payload),
+                    sequence,
+                )
+                + payload
+            )
+
+        client.sendall(frames[0][:9])
+        client.sendall(frames[0][9:] + b"".join(frames[1:4]))
+        responses = [_read_raw_frame(client) for _ in range(4)]
+        client.sendall(b"".join(frames[4:]))
+        responses.extend(_read_raw_frame(client) for _ in range(2))
+        assert [
+            (message_type, sequence) for message_type, sequence, _ in responses
+        ] == [
+            (response_type, sequence)
+            for sequence, (_, response_type) in enumerate(incoming, start=1)
+        ]
+        assert all(payload == b"{}" for _, _, payload in responses)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_c_outbound_api_covers_all_esp32_to_ha_message_types(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+
+        outgoing = [0x04, 0x11, 0x20, 0x22, 0x32, 0x33, 0x40, 0x41]
+        frames = []
+        for message_type in outgoing:
+            _command(process, f"send {message_type:#x} 7b7d")
+            frames.append(_read_raw_frame(client))
+        assert [(message_type, sequence) for message_type, sequence, _ in frames] == [
+            (message_type, sequence)
+            for sequence, message_type in enumerate(outgoing, start=1)
+        ]
+        assert all(payload == b"{}" for _, _, payload in frames)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(
+    "bad_header",
+    [
+        struct.pack("<4sBBHII", b"NOPE", 1, 0x10, 0, 2, 1) + b"{}",
+        struct.pack("<4sBBHII", b"TVIO", 2, 0x10, 0, 2, 1) + b"{}",
+        struct.pack("<4sBBHII", b"TVIO", 1, 0x10, 1, 2, 1) + b"{}",
+    ],
+)
+def test_malformed_header_closes_only_the_diagnostic_connection(tmp_path, bad_header):
+    process, control_port, diagnostic_port = _start_simulator(tmp_path)
+    control = diagnostic = None
+    try:
+        _command(process, "up")
+        control = _connect(control_port)
+        diagnostic = _connect(diagnostic_port)
+        _handshake(diagnostic)
+        time.sleep(0.1)
+        diagnostic.sendall(bad_header)
+        _wait_closed(diagnostic)
+        control.settimeout(0.2)
+        with pytest.raises(TimeoutError):
+            control.recv(1)
+    finally:
+        for client in (control, diagnostic):
+            if client is not None:
+                client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_incoming_sequence_mismatch_closes_diagnostic_connection(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+        _send_frame(client, 0x10, 2, b"{}")
+        _wait_closed(client)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_realtime_messages_and_p5_logs_share_sequence_without_starvation(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+
+        _command(process, "log INFO first_record")
+        _command(process, "send 0x04 7b7d")
+        _command(process, "log WARNING second_record")
+        _command(process, "send 0x11 7b7d")
+
+        frames = [_read_raw_frame(client) for _ in range(4)]
+        assert [sequence for _, sequence, _ in frames] == [1, 2, 3, 4]
+        assert [message_type for message_type, _, _ in frames].count(0x42) == 2
+        assert {message_type for message_type, _, _ in frames} >= {0x04, 0x11, 0x42}
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_c_json_payload_accepts_sixteen_kibibytes(tmp_path):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process, "up")
+        client = _connect(diagnostic_port)
+        _handshake(client)
+        time.sleep(0.1)
+        payload = b'{"data":"' + b"a" * (16 * 1024 - len(b'{"data":""}')) + b'"}'
+        assert len(payload) == 16 * 1024
+        _send_frame(client, 0x10, 1, payload)
+        assert _read_raw_frame(client) == (0x11, 1, payload)
+    finally:
+        if client is not None:
+            client.close()
         _stop(process)

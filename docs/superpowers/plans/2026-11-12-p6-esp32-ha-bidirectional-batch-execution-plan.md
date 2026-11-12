@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** 已完成分批拆解；未开始 P6 代码实现。
+> **状态：** 已完成分批拆解；P6b0 已完成（P6b1–P6b6 未开始）。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -58,6 +58,8 @@ P6b1 与 P6b2 在技术上可独立，但为了减少跨批次接口变动和并
 ## 4. 每批范围、验收门和不做事项
 
 ### P6b0 — TVIO v1 双向协议底座
+
+**状态：** 已完成。
 
 **完成：** Python/C 两端拥有矩阵中 P6 消息类型、双向 framing/Sequence、二进制 MIC_PCM 上限、HELLO 新 capabilities、业务消息 send/dispatch API；P5 HELLO/ACK/日志/错误不回退。
 

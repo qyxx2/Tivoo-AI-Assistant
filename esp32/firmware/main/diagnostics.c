@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,8 +27,10 @@
 
 #define TVIO_HEADER_SIZE 16U
 #define TVIO_MAX_JSON_PAYLOAD (16U * 1024U)
+#define TVIO_MAX_MIC_PCM_PAYLOAD (4U * 1024U)
 #define TVIO_MAX_LOG_JSON 1024U
 #define LOG_QUEUE_DEPTH 16U
+#define MESSAGE_QUEUE_DEPTH 4U
 #define LOG_MESSAGE_MAX 384U
 #define LOG_MODULE_MAX 48U
 #define ERROR_CODE_MAX 40U
@@ -37,6 +40,19 @@
 
 #define TVIO_TYPE_HELLO 0x01U
 #define TVIO_TYPE_HELLO_ACK 0x02U
+#define TVIO_TYPE_PING 0x03U
+#define TVIO_TYPE_PONG 0x04U
+#define TVIO_TYPE_GET_STATUS 0x10U
+#define TVIO_TYPE_DEVICE_STATUS 0x11U
+#define TVIO_TYPE_MIC_SESSION_START 0x20U
+#define TVIO_TYPE_MIC_PCM 0x21U
+#define TVIO_TYPE_MIC_SESSION_END 0x22U
+#define TVIO_TYPE_MIC_CAPTURE_STOP 0x23U
+#define TVIO_TYPE_TTS_PLAY 0x30U
+#define TVIO_TYPE_AUDIO_STOP 0x31U
+#define TVIO_TYPE_AUDIO_STATE 0x32U
+#define TVIO_TYPE_AUDIO_INTERRUPTED 0x33U
+#define TVIO_TYPE_DEVICE_EVENT 0x40U
 #define TVIO_TYPE_ERROR 0x41U
 #define TVIO_TYPE_DIAGNOSTIC_LOG 0x42U
 
@@ -52,9 +68,20 @@ typedef struct {
     char message[LOG_MESSAGE_MAX + 1U];
 } diagnostic_record_t;
 
+typedef struct {
+    uint8_t type;
+    size_t size;
+    uint8_t *payload;
+} realtime_message_t;
+
 static diagnostic_record_t s_queue[LOG_QUEUE_DEPTH];
 static size_t s_queue_head;
 static size_t s_queue_count;
+static realtime_message_t s_message_queue[MESSAGE_QUEUE_DEPTH];
+static size_t s_message_head;
+static size_t s_message_count;
+static bool s_prefer_message = true;
+static tivoo_diagnostics_message_handler_t s_message_handler;
 static atomic_uint_fast32_t s_dropped_count = ATOMIC_VAR_INIT(0);
 static atomic_bool s_running = ATOMIC_VAR_INIT(false);
 static atomic_bool s_worker_alive = ATOMIC_VAR_INIT(false);
@@ -62,11 +89,11 @@ static bool s_started;
 
 static int s_client_fd = -1;
 static bool s_hello_sent;
-static bool s_ack_accepted;
+static atomic_bool s_ack_accepted = ATOMIC_VAR_INIT(false);
 static uint32_t s_tx_sequence;
 static uint32_t s_rx_sequence;
 static uint8_t s_rx_buffer[RX_BUFFER_SIZE];
-static uint8_t s_tx_buffer[TVIO_HEADER_SIZE + TVIO_MAX_LOG_JSON];
+static uint8_t s_tx_buffer[TVIO_HEADER_SIZE + TVIO_MAX_JSON_PAYLOAD];
 static size_t s_rx_size;
 
 #ifdef ESP_PLATFORM
@@ -248,6 +275,9 @@ static bool valid_error_code(const char *code)
         "spp_write_failed",
         "tcp_control_malformed",
         "tivoo_frame_malformed",
+        "protocol_invalid_header",
+        "protocol_invalid_payload",
+        "protocol_unsupported_message",
     };
     if (code == NULL) {
         return false;
@@ -360,10 +390,11 @@ static bool send_all(int fd, const uint8_t *data, size_t size)
 static bool send_message_locked(
     int fd,
     uint8_t message_type,
-    const char *payload,
+    const uint8_t *payload,
     size_t payload_size)
 {
-    if (payload_size > TVIO_MAX_LOG_JSON) {
+    if (payload_size > TVIO_MAX_JSON_PAYLOAD ||
+        (payload_size > 0U && payload == NULL)) {
         return false;
     }
 
@@ -377,7 +408,9 @@ static bool send_message_locked(
     s_tx_buffer[7] = 0U;
     write_le32(&s_tx_buffer[8], (uint32_t)payload_size);
     write_le32(&s_tx_buffer[12], s_tx_sequence);
-    memcpy(&s_tx_buffer[TVIO_HEADER_SIZE], payload, payload_size);
+    if (payload_size > 0U) {
+        memcpy(&s_tx_buffer[TVIO_HEADER_SIZE], payload, payload_size);
+    }
     return send_all(fd, s_tx_buffer, TVIO_HEADER_SIZE + payload_size);
 }
 
@@ -452,8 +485,14 @@ static char *build_hello_payload(size_t *payload_size)
     cJSON_AddStringToObject(root, "firmware_version", TIVOO_FIRMWARE_VERSION);
     cJSON_AddNumberToObject(root, "protocol_version", 1);
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("spp_control"));
+    cJSON_AddItemToArray(capabilities, cJSON_CreateString("spp_reverse"));
     cJSON_AddItemToArray(
         capabilities, cJSON_CreateString("remote_diagnostics"));
+    cJSON_AddItemToArray(capabilities, cJSON_CreateString("device_status"));
+    cJSON_AddItemToArray(capabilities, cJSON_CreateString("device_events"));
+    cJSON_AddItemToArray(
+        capabilities, cJSON_CreateString("audio_resource_http"));
+    cJSON_AddItemToArray(capabilities, cJSON_CreateString("audio_control"));
     cJSON_AddItemToObject(root, "capabilities", capabilities);
     cJSON_AddStringToObject(root, "reset_reason", reset_reason);
 
@@ -517,6 +556,115 @@ static char *build_record_payload(
     }
 }
 
+static bool supported_message_type(uint8_t type)
+{
+    switch (type) {
+    case TVIO_TYPE_HELLO:
+    case TVIO_TYPE_HELLO_ACK:
+    case TVIO_TYPE_PING:
+    case TVIO_TYPE_PONG:
+    case TVIO_TYPE_GET_STATUS:
+    case TVIO_TYPE_DEVICE_STATUS:
+    case TVIO_TYPE_MIC_SESSION_START:
+    case TVIO_TYPE_MIC_PCM:
+    case TVIO_TYPE_MIC_SESSION_END:
+    case TVIO_TYPE_MIC_CAPTURE_STOP:
+    case TVIO_TYPE_TTS_PLAY:
+    case TVIO_TYPE_AUDIO_STOP:
+    case TVIO_TYPE_AUDIO_STATE:
+    case TVIO_TYPE_AUDIO_INTERRUPTED:
+    case TVIO_TYPE_DEVICE_EVENT:
+    case TVIO_TYPE_ERROR:
+    case TVIO_TYPE_DIAGNOSTIC_LOG:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool inbound_message_type(uint8_t type)
+{
+    return type == TVIO_TYPE_HELLO_ACK || type == TVIO_TYPE_PING ||
+           type == TVIO_TYPE_GET_STATUS ||
+           type == TVIO_TYPE_MIC_CAPTURE_STOP || type == TVIO_TYPE_TTS_PLAY ||
+           type == TVIO_TYPE_AUDIO_STOP || type == TVIO_TYPE_ERROR;
+}
+
+static void clear_message_queue_locked(void)
+{
+    if (!queue_mutex_take(true)) {
+        return;
+    }
+    while (s_message_count > 0U) {
+        realtime_message_t *message = &s_message_queue[s_message_head];
+        free(message->payload);
+        memset(message, 0, sizeof(*message));
+        s_message_head = (s_message_head + 1U) % MESSAGE_QUEUE_DEPTH;
+        s_message_count--;
+    }
+    s_message_head = 0U;
+    s_prefer_message = true;
+    queue_mutex_give();
+}
+
+bool tivoo_diagnostics_send_message(
+    uint8_t type, const uint8_t *payload, size_t size)
+{
+    const bool outbound_type =
+        type == TVIO_TYPE_PONG || type == TVIO_TYPE_DEVICE_STATUS ||
+        type == TVIO_TYPE_MIC_SESSION_START || type == TVIO_TYPE_MIC_PCM ||
+        type == TVIO_TYPE_MIC_SESSION_END || type == TVIO_TYPE_AUDIO_STATE ||
+        type == TVIO_TYPE_AUDIO_INTERRUPTED || type == TVIO_TYPE_DEVICE_EVENT ||
+        type == TVIO_TYPE_ERROR;
+    if (!atomic_load(&s_running) || !atomic_load(&s_ack_accepted) ||
+        !outbound_type ||
+        size > TVIO_MAX_JSON_PAYLOAD ||
+        (type == TVIO_TYPE_MIC_PCM && size > TVIO_MAX_MIC_PCM_PAYLOAD) ||
+        (size > 0U && payload == NULL)) {
+        return false;
+    }
+
+    uint8_t *copy = NULL;
+    if (size > 0U) {
+        copy = malloc(size);
+        if (copy == NULL) {
+            return false;
+        }
+        memcpy(copy, payload, size);
+    }
+    if (!queue_mutex_take(false)) {
+        free(copy);
+        return false;
+    }
+    if (!atomic_load(&s_running) || !atomic_load(&s_ack_accepted) ||
+        s_message_count == MESSAGE_QUEUE_DEPTH) {
+        queue_mutex_give();
+        free(copy);
+        return false;
+    }
+
+    const size_t tail = (s_message_head + s_message_count) % MESSAGE_QUEUE_DEPTH;
+    s_message_queue[tail].type = type;
+    s_message_queue[tail].size = size;
+    s_message_queue[tail].payload = copy;
+    s_message_count++;
+    queue_mutex_give();
+    return true;
+}
+
+void tivoo_diagnostics_set_message_handler(
+    tivoo_diagnostics_message_handler_t handler)
+{
+    if (!s_started) {
+        s_message_handler = handler;
+        return;
+    }
+    if (mutex_take(true)) {
+        s_message_handler = handler;
+        mutex_give();
+    }
+}
+
 static void disconnect_client_locked(int fd)
 {
     if (s_client_fd != fd) {
@@ -525,10 +673,11 @@ static void disconnect_client_locked(int fd)
     (void)shutdown(fd, SHUT_RDWR);
     s_client_fd = -1;
     s_hello_sent = false;
-    s_ack_accepted = false;
+    atomic_store(&s_ack_accepted, false);
     s_tx_sequence = 0U;
     s_rx_sequence = 0U;
     s_rx_size = 0U;
+    clear_message_queue_locked();
 }
 
 static void diagnostics_worker(void)
@@ -556,7 +705,8 @@ static void diagnostics_worker(void)
             char *payload = build_hello_payload(&payload_size);
             const bool sent =
                 payload != NULL &&
-                send_message_locked(fd, TVIO_TYPE_HELLO, payload, payload_size);
+                send_message_locked(
+                    fd, TVIO_TYPE_HELLO, (const uint8_t *)payload, payload_size);
             cJSON_free(payload);
             if (sent) {
                 s_hello_sent = true;
@@ -569,45 +719,64 @@ static void diagnostics_worker(void)
             continue;
         }
 
-        if (!s_ack_accepted || !queue_mutex_take(true)) {
+        if (!atomic_load(&s_ack_accepted) || !queue_mutex_take(true)) {
             mutex_give();
             worker_delay();
             continue;
         }
 
         const bool has_record = s_queue_count > 0U;
+        const bool has_message = s_message_count > 0U;
+        const bool send_realtime =
+            has_message && (!has_record || s_prefer_message);
         diagnostic_record_t record = {0};
-        if (has_record) {
+        realtime_message_t message = {0};
+
+        if (send_realtime) {
+            message = s_message_queue[s_message_head];
+            memset(&s_message_queue[s_message_head], 0, sizeof(realtime_message_t));
+            s_message_head = (s_message_head + 1U) % MESSAGE_QUEUE_DEPTH;
+            s_message_count--;
+            s_prefer_message = false;
+        } else if (has_record) {
             record = s_queue[s_queue_head];
+            s_prefer_message = true;
         }
         queue_mutex_give();
 
-        if (!has_record) {
+        if (!has_record && !has_message) {
             mutex_give();
             worker_delay();
             continue;
         }
 
-        const uint32_t dropped_count = (uint32_t)atomic_load(&s_dropped_count);
-        size_t payload_size = 0U;
-        char *payload =
-            build_record_payload(&record, dropped_count, &payload_size);
-        const bool sent =
-            payload != NULL &&
-            send_message_locked(fd, record.type, payload, payload_size);
-        cJSON_free(payload);
+        bool sent = false;
+        if (send_realtime) {
+            sent = send_message_locked(fd, message.type, message.payload, message.size);
+            free(message.payload);
+        } else {
+            const uint32_t dropped_count = (uint32_t)atomic_load(&s_dropped_count);
+            size_t payload_size = 0U;
+            char *payload =
+                build_record_payload(&record, dropped_count, &payload_size);
+            sent = payload != NULL &&
+                   send_message_locked(
+                       fd, record.type, (const uint8_t *)payload, payload_size);
+            cJSON_free(payload);
 
-        if (sent) {
-            if (queue_mutex_take(true)) {
+            if (sent && queue_mutex_take(true)) {
                 s_queue_head = (s_queue_head + 1U) % LOG_QUEUE_DEPTH;
                 s_queue_count--;
                 queue_mutex_give();
             }
-            s_tx_sequence++;
-            if (record.type == TVIO_TYPE_DIAGNOSTIC_LOG &&
+            if (sent && record.type == TVIO_TYPE_DIAGNOSTIC_LOG &&
                 dropped_count > 0U) {
                 (void)atomic_fetch_sub(&s_dropped_count, dropped_count);
             }
+        }
+
+        if (sent) {
+            s_tx_sequence++;
         } else {
             disconnect_client_locked(fd);
         }
@@ -646,9 +815,12 @@ esp_err_t tivoo_diagnostics_start(void)
     memset(s_queue, 0, sizeof(s_queue));
     s_queue_head = 0U;
     s_queue_count = 0U;
+    s_message_head = 0U;
+    s_message_count = 0U;
+    s_prefer_message = true;
     s_client_fd = -1;
     s_hello_sent = false;
-    s_ack_accepted = false;
+    atomic_store(&s_ack_accepted, false);
     s_tx_sequence = 0U;
     s_rx_sequence = 0U;
     s_rx_size = 0U;
@@ -712,6 +884,8 @@ void tivoo_diagnostics_stop(void)
             (void)shutdown(s_client_fd, SHUT_RDWR);
             s_client_fd = -1;
         }
+        atomic_store(&s_ack_accepted, false);
+        clear_message_queue_locked();
         mutex_give();
     }
 
@@ -742,9 +916,10 @@ void tivoo_diagnostics_client_connected(int fd)
     if (s_client_fd >= 0 && s_client_fd != fd) {
         (void)shutdown(s_client_fd, SHUT_RDWR);
     }
+    clear_message_queue_locked();
     s_client_fd = fd;
     s_hello_sent = false;
-    s_ack_accepted = false;
+    atomic_store(&s_ack_accepted, false);
     s_tx_sequence = 0U;
     s_rx_sequence = 0U;
     s_rx_size = 0U;
@@ -774,7 +949,12 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
 
         const uint32_t payload_size = read_le32(&header[8]);
         const uint32_t sequence = read_le32(&header[12]);
+        const uint8_t message_type = header[5];
         if (payload_size > TVIO_MAX_JSON_PAYLOAD ||
+            (message_type == TVIO_TYPE_MIC_PCM &&
+             payload_size > TVIO_MAX_MIC_PCM_PAYLOAD) ||
+            (message_type == TVIO_TYPE_DIAGNOSTIC_LOG &&
+             payload_size > TVIO_MAX_LOG_JSON) ||
             sequence != s_rx_sequence) {
             mutex_give();
             return false;
@@ -785,8 +965,8 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
             break;
         }
 
-        if (header[5] == TVIO_TYPE_HELLO_ACK) {
-            if (!s_hello_sent || s_ack_accepted) {
+        if (message_type == TVIO_TYPE_HELLO_ACK) {
+            if (!s_hello_sent || atomic_load(&s_ack_accepted)) {
                 mutex_give();
                 return false;
             }
@@ -802,13 +982,62 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
                 mutex_give();
                 return false;
             }
-            s_ack_accepted = true;
+            atomic_store(&s_ack_accepted, true);
+        } else if (!atomic_load(&s_ack_accepted) ||
+                   (supported_message_type(message_type) &&
+                    !inbound_message_type(message_type))) {
+            mutex_give();
+            return false;
+        }
+
+        tivoo_diagnostics_message_handler_t handler = NULL;
+        uint8_t *payload_copy = NULL;
+        bool unsupported = false;
+        if (message_type != TVIO_TYPE_HELLO_ACK &&
+            message_type != TVIO_TYPE_HELLO) {
+            if (!supported_message_type(message_type)) {
+                unsupported = true;
+            } else if (s_message_handler != NULL && payload_size > 0U) {
+                payload_copy = malloc(payload_size);
+                if (payload_copy == NULL) {
+                    mutex_give();
+                    return false;
+                }
+                memcpy(payload_copy, &s_rx_buffer[TVIO_HEADER_SIZE], payload_size);
+                handler = s_message_handler;
+            } else if (s_message_handler != NULL) {
+                handler = s_message_handler;
+            }
         }
 
         s_rx_sequence++;
         s_rx_size -= frame_size;
         if (s_rx_size > 0U) {
             memmove(s_rx_buffer, &s_rx_buffer[frame_size], s_rx_size);
+        }
+
+        mutex_give();
+        if (unsupported) {
+            tivoo_report_error(
+                "protocol_unsupported_message",
+                "diagnostics",
+                "Unsupported TVIO message type");
+        }
+        bool handled = true;
+        if (handler != NULL) {
+            handled = handler(message_type, payload_copy, payload_size);
+        }
+        free(payload_copy);
+        if (!handled) {
+            return false;
+        }
+
+        if (!mutex_take(true)) {
+            return false;
+        }
+        if (s_client_fd != fd) {
+            mutex_give();
+            return false;
         }
     }
 
@@ -824,10 +1053,11 @@ void tivoo_diagnostics_client_disconnected(int fd)
     if (s_client_fd == fd) {
         s_client_fd = -1;
         s_hello_sent = false;
-        s_ack_accepted = false;
+        atomic_store(&s_ack_accepted, false);
         s_tx_sequence = 0U;
         s_rx_sequence = 0U;
         s_rx_size = 0U;
+        clear_message_queue_locked();
     }
     mutex_give();
 }

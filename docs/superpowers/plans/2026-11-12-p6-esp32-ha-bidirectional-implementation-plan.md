@@ -117,15 +117,15 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - HELLO capabilities 固定为 `spp_control`、`spp_reverse`、`remote_diagnostics`、`device_status`、`device_events`、`audio_resource_http`、`audio_control`；不声明 P7/P8 能力。
 
 **Tasks:**
-- [ ] 为 Python codec 写测试：矩阵内所有消息 type 均可编码；16-byte header 字段与 P5 相同；每个方向 Sequence 独立；MIC_PCM 4 KiB 内通过、超过 4 KiB 拒绝；16 KiB JSON 上限保持；非法 header/Sequence 失败；未知合法 type 忽略消息、记录一次 `protocol_unsupported_message`，且不破坏下一帧边界。
-- [ ] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_diagnostics.py -q`，确认新增测试按预期 RED。
-- [ ] 扩展 `diagnostics.py` 的 constants、payload limit 检查和现有 `DiagnosticFrameStream`；不另建一套 codec。
-- [ ] 为 C simulator 增加相同 TVIO golden frame，测试所有 message type、拆包/粘包、方向 Sequence、超长 MIC_PCM/JSON、未知 type 只记录一次 `protocol_unsupported_message` 且不关闭合法流，以及 malformed header。
-- [ ] 扩展 `diagnostics.c/.h`：通用 message encode/receive、连接级 Sequence、有限发送队列和 message-handler 注册入口；保持 P5 的 16 条日志队列独立，实时消息队列不能饿死日志发送。
-- [ ] 更新 HELLO capabilities 和 HA HELLO 校验；保留 HELLO_ACK accepted/reason 的 P5 格式。
-- [ ] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_diagnostics.py tests/homeassistant/custom_components/tivoo/test_transport.py -q`。
-- [ ] 运行 `.venv/bin/python -m pytest tests/esp32/test_p5b2_diagnostics.py -q`；确认 P5 handshake、日志补传和队列满测试仍通过。
-- [ ] 构建 `esp32/firmware` 的 ESP-IDF v6.1 / esp32 target，确认 C 接口及队列实现编译通过。
+- [x] 为 Python codec 写测试：矩阵内所有消息 type 均可编码；16-byte header 字段与 P5 相同；每个方向 Sequence 独立；MIC_PCM 4 KiB 内通过、超过 4 KiB 拒绝；16 KiB JSON 上限保持；非法 header/Sequence 失败；未知合法 type 忽略消息、记录一次 `protocol_unsupported_message`，且不破坏下一帧边界。
+- [x] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_diagnostics.py -q`，确认新增测试按预期 RED。
+- [x] 扩展 `diagnostics.py` 的 constants、payload limit 检查和现有 `DiagnosticFrameStream`；不另建一套 codec。
+- [x] 为 C simulator 增加相同 TVIO golden frame，测试所有 message type、拆包/粘包、方向 Sequence、超长 MIC_PCM/JSON、未知 type 只记录一次 `protocol_unsupported_message` 且不关闭合法流，以及 malformed header。
+- [x] 扩展 `diagnostics.c/.h`：通用 message encode/receive、连接级 Sequence、有限发送队列和 message-handler 注册入口；保持 P5 的 16 条日志队列独立，实时消息队列不能饿死日志发送。
+- [x] 更新 HELLO capabilities 和 HA HELLO 校验；保留 HELLO_ACK accepted/reason 的 P5 格式。
+- [x] 运行 `./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_diagnostics.py tests/homeassistant/custom_components/tivoo/test_transport.py -q`。
+- [x] 运行 `.venv/bin/python -m pytest tests/esp32/test_p5b2_diagnostics.py -q`；确认 P5 handshake、日志补传和队列满测试仍通过。
+- [x] 构建 `esp32/firmware` 的 ESP-IDF v6.1 / esp32 target，确认 C 接口及队列实现编译通过。
 
 **Exit gate:** C05/C06 的跨语言 codec 和握手通过；P5 ERROR/DIAGNOSTIC_LOG/HELLO 行为保持；新的 outbound/inbound message API 已可供后续批次直接调用。此批不实现 P6 消息业务含义。
 

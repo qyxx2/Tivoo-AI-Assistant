@@ -6,6 +6,49 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool decode_hex(
+    const char *text, uint8_t *output, size_t capacity, size_t *size)
+{
+    const size_t length = strlen(text);
+    if ((length % 2U) != 0U || length / 2U > capacity) {
+        return false;
+    }
+    for (size_t i = 0; i < length / 2U; i++) {
+        char byte[3] = {text[i * 2U], text[i * 2U + 1U], '\0'};
+        char *end = NULL;
+        unsigned long value = strtoul(byte, &end, 16);
+        if (end != byte + 2 || value > UINT8_MAX) {
+            return false;
+        }
+        output[i] = (uint8_t)value;
+    }
+    *size = length / 2U;
+    return true;
+}
+
+static bool echo_message_handler(
+    uint8_t type, const uint8_t *payload, size_t size)
+{
+    uint8_t response_type;
+    switch (type) {
+    case 0x03U:
+        response_type = 0x04U;
+        break;
+    case 0x10U:
+        response_type = 0x11U;
+        break;
+    case 0x23U:
+    case 0x30U:
+    case 0x31U:
+        response_type = 0x32U;
+        break;
+    default:
+        response_type = type;
+        break;
+    }
+    return tivoo_diagnostics_send_message(response_type, payload, size);
+}
+
 static int parse_port(const char *value, uint16_t *port)
 {
     char *end = NULL;
@@ -41,6 +84,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    tivoo_diagnostics_set_message_handler(echo_message_handler);
     if (tivoo_diagnostics_start() != ESP_OK) {
         return EXIT_FAILURE;
     }
@@ -49,7 +93,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    char line[1024];
+    char line[10240];
     while (fgets(line, sizeof(line), stdin) != NULL) {
         char *save = NULL;
         char *command = strtok_r(line, " \t\r\n", &save);
@@ -81,6 +125,19 @@ int main(int argc, char **argv)
                 }
                 message[strcspn(message, "\r\n")] = '\0';
                 tivoo_report_error(code, module, message);
+            }
+        } else if (strcmp(command, "send") == 0) {
+            char *type_value = strtok_r(NULL, " \t\r\n", &save);
+            char *hex_payload = strtok_r(NULL, " \t\r\n", &save);
+            if (type_value != NULL && hex_payload != NULL) {
+                const unsigned long type = strtoul(type_value, NULL, 0);
+                uint8_t payload[4096];
+                size_t payload_size = 0U;
+                if (type <= UINT8_MAX &&
+                    decode_hex(hex_payload, payload, sizeof(payload), &payload_size)) {
+                    (void)tivoo_diagnostics_send_message(
+                        (uint8_t)type, payload, payload_size);
+                }
             }
         } else if (strcmp(command, "burst") == 0) {
             char *count_value = strtok_r(NULL, " \t\r\n", &save);

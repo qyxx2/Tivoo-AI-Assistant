@@ -1,6 +1,7 @@
 """Tests for the ESP32 TVIO diagnostics stream codec."""
 
 import pytest
+from custom_components.tivoo import diagnostics as codec
 from custom_components.tivoo.diagnostics import (
     DiagnosticFrameStream,
     DiagnosticMessage,
@@ -89,3 +90,74 @@ def test_stream_rejects_a_diagnostic_record_larger_than_one_kibibyte():
 
     with pytest.raises(ValueError, match="1 KiB"):
         DiagnosticFrameStream().feed(oversized_log)
+
+
+EXPECTED_MESSAGE_TYPES = frozenset(
+    {
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+        0x10,
+        0x11,
+        0x20,
+        0x21,
+        0x22,
+        0x23,
+        0x30,
+        0x31,
+        0x32,
+        0x33,
+        0x40,
+        0x41,
+        0x42,
+    }
+)
+
+
+def test_codec_exposes_all_p6_message_types():
+    assert codec.SUPPORTED_MESSAGE_TYPES == EXPECTED_MESSAGE_TYPES
+
+
+@pytest.mark.parametrize("message_type", sorted(EXPECTED_MESSAGE_TYPES))
+def test_every_p6_message_type_round_trips_with_the_fixed_header(message_type):
+    payload = b"\x00\x01\xff" if message_type == 0x21 else b"{}"
+    encoded = encode_message(message_type, payload, 0)
+
+    assert DiagnosticFrameStream().feed(encoded) == [
+        DiagnosticMessage(message_type, 0, 0, payload)
+    ]
+
+
+def test_mic_pcm_payload_limit_is_four_kibibytes_for_encode_and_decode():
+    payload = b"p" * 4096
+    assert (
+        DiagnosticFrameStream().feed(encode_message(0x21, payload, 0))[0].payload
+        == payload
+    )
+
+    with pytest.raises(ValueError, match="4 KiB"):
+        encode_message(0x21, payload + b"x", 0)
+    with pytest.raises(ValueError, match="4 KiB"):
+        DiagnosticFrameStream().feed(_frame(0x21, 0, payload + b"x"))
+
+
+def test_unknown_message_type_does_not_corrupt_following_frame_boundary():
+    stream = DiagnosticFrameStream()
+    unknown = _frame(0x7F, 0, b"future-payload")
+    known = _frame(0x41, 1, b"{}")
+
+    assert stream.feed(unknown + known) == [
+        DiagnosticMessage(0x7F, 0, 0, b"future-payload"),
+        DiagnosticMessage(0x41, 0, 1, b"{}"),
+    ]
+
+
+def test_receive_sequence_wraps_at_uint32_boundary():
+    stream = DiagnosticFrameStream()
+    stream._expected_sequence = 0xFFFFFFFF
+
+    assert stream.feed(_frame(0x03, 0xFFFFFFFF, b"") + _frame(0x04, 0, b"")) == [
+        DiagnosticMessage(0x03, 0, 0xFFFFFFFF, b""),
+        DiagnosticMessage(0x04, 0, 0, b""),
+    ]

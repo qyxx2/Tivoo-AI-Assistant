@@ -3,16 +3,21 @@
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from homeassistant.exceptions import HomeAssistantError
 
 from .commands import TivooCommand
 from .diagnostics import (
+    ESP32_TO_HA_MESSAGE_TYPES,
+    HA_TO_ESP32_MESSAGE_TYPES,
+    SUPPORTED_MESSAGE_TYPES,
     TYPE_DIAGNOSTIC_LOG,
     TYPE_ERROR,
     TYPE_HELLO,
     TYPE_HELLO_ACK,
     DiagnosticFrameStream,
+    DiagnosticMessage,
     encode_message,
 )
 from .protocol import encode_command
@@ -34,6 +39,7 @@ _ERROR_CODES = {
     "spp_write_failed",
     "tcp_control_malformed",
     "tivoo_frame_malformed",
+    "protocol_unsupported_message",
 }
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -74,6 +80,12 @@ class Esp32ConnectionAdapter:
         }
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._writers: dict[str, asyncio.StreamWriter] = {}
+        self._diagnostic_tx_sequence = 0
+        self._diagnostic_handshaken = False
+        self._diagnostic_write_lock = asyncio.Lock()
+        self._message_handlers: dict[
+            int, Callable[[DiagnosticMessage], Awaitable[None]]
+        ] = {}
         self._stopping = False
 
     async def async_start(self) -> None:
@@ -108,6 +120,8 @@ class Esp32ConnectionAdapter:
                 return_exceptions=True,
             )
         self._writers.clear()
+        self._diagnostic_handshaken = False
+        self._diagnostic_tx_sequence = 0
 
         state = "stopped" if self.host else "unavailable"
         self.states = {"control": state, "diagnostic": state}
@@ -139,6 +153,40 @@ class Esp32ConnectionAdapter:
                     f"ESP32 control channel failed while sending {command.name}"
                 ) from err
 
+    def register_message_handler(
+        self,
+        message_type: int,
+        handler: Callable[[DiagnosticMessage], Awaitable[None]],
+    ) -> None:
+        """Register an async consumer for one supported TVIO message type."""
+        if message_type not in ESP32_TO_HA_MESSAGE_TYPES:
+            raise ValueError("message_type is not an ESP32-to-HA TVIO message")
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+        self._message_handlers[message_type] = handler
+
+    async def async_send_message(self, message_type: int, payload: bytes) -> None:
+        """Send one TVIO message after the diagnostic HELLO handshake."""
+        if message_type not in HA_TO_ESP32_MESSAGE_TYPES:
+            raise ValueError("message_type is not an HA-to-ESP32 TVIO message")
+        if not self._diagnostic_handshaken:
+            raise HomeAssistantError("ESP32 diagnostic handshake is not accepted")
+        async with self._diagnostic_write_lock:
+            writer = self._writers.get("diagnostic")
+            if not self._diagnostic_handshaken or writer is None or writer.is_closing():
+                raise HomeAssistantError("ESP32 diagnostic handshake is not accepted")
+            frame = encode_message(message_type, payload, self._diagnostic_tx_sequence)
+            try:
+                writer.write(frame)
+                await writer.drain()
+            except (OSError, ConnectionError) as err:
+                raise HomeAssistantError(
+                    "ESP32 diagnostic channel failed while sending a message"
+                ) from err
+            self._diagnostic_tx_sequence = (
+                self._diagnostic_tx_sequence + 1
+            ) & 0xFFFFFFFF
+
     async def _connection_loop(self, channel: str, port: int) -> None:
         """Connect/reconnect one channel without coupling the other channel."""
         assert self.host is not None
@@ -158,6 +206,8 @@ class Esp32ConnectionAdapter:
                     while await reader.read(4096):
                         pass
                 else:
+                    self._diagnostic_tx_sequence = 0
+                    self._diagnostic_handshaken = False
                     self.states[channel] = "connected"
                     await self._diagnostic_session(reader, writer)
             except (OSError, TimeoutError) as err:
@@ -169,6 +219,9 @@ class Esp32ConnectionAdapter:
             finally:
                 if writer is not None:
                     self._writers.pop(channel, None)
+                    if channel == "diagnostic":
+                        self._diagnostic_handshaken = False
+                        self._diagnostic_tx_sequence = 0
                     writer.close()
                     try:
                         await writer.wait_closed()
@@ -185,6 +238,8 @@ class Esp32ConnectionAdapter:
         """Negotiate TVIO v1 then consume device logs until this socket closes."""
         frames = DiagnosticFrameStream()
         handshaken = False
+        self._diagnostic_tx_sequence = 0
+        self._diagnostic_handshaken = False
 
         while data := await reader.read(4096):
             for message in frames.feed(data):
@@ -208,14 +263,18 @@ class Esp32ConnectionAdapter:
                             json.dumps(acknowledgement, separators=(",", ":")).encode(
                                 "utf-8"
                             ),
-                            0,
+                            self._diagnostic_tx_sequence,
                         )
                     )
                     await writer.drain()
+                    self._diagnostic_tx_sequence = (
+                        self._diagnostic_tx_sequence + 1
+                    ) & 0xFFFFFFFF
                     if not acknowledgement["accepted"]:
                         return
 
                     handshaken = True
+                    self._diagnostic_handshaken = True
                     _LOGGER.info(
                         "ESP32 diagnostic channel ready: %s firmware=%s reset=%s",
                         payload["device_id"],
@@ -229,7 +288,15 @@ class Esp32ConnectionAdapter:
                         self._log_diagnostic(self._decode_json(message.payload))
                     elif message.message_type == TYPE_ERROR:
                         self._log_error(self._decode_json(message.payload))
-                    # Unknown and not-applicable message types are ignored in P5.
+                    elif message.message_type not in SUPPORTED_MESSAGE_TYPES:
+                        _LOGGER.warning(
+                            "protocol_unsupported_message: unsupported TVIO "
+                            "message type 0x%02x",
+                            message.message_type,
+                        )
+                    elif handler := self._message_handlers.get(message.message_type):
+                        await handler(message)
+                    # Supported messages without a registered handler are ignored.
                 except (ValueError, TypeError) as err:
                     _LOGGER.warning(
                         "Ignoring invalid ESP32 diagnostic message: %s", err
@@ -251,7 +318,16 @@ class Esp32ConnectionAdapter:
             payload.get("device_id") != "tivoo-esp32"
             or not isinstance(payload.get("firmware_version"), str)
             or not payload["firmware_version"]
-            or payload.get("capabilities") != ["spp_control", "remote_diagnostics"]
+            or payload.get("capabilities")
+            != [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ]
             or not isinstance(payload.get("reset_reason"), str)
             or not payload["reset_reason"]
             or isinstance(payload.get("protocol_version"), bool)
