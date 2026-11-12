@@ -1,6 +1,6 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
-> **状态：** P6b0、P6b1、P6b2 已完成。P6b1 真实 SPP DATA_IND 原始回传已通过亮度状态回显实机验证；P6b2 完成 7778 心跳/独立重连、状态快照与事件、P6 ERROR 解析、HA/ESP32 POSIX 回归及 ESP-IDF v6.1 构建。P6b3–P6b6 未开始。
+> **状态：** P6b0、P6b1、P6b2 已完成。P6b1 真实 SPP DATA_IND 原始回传已通过亮度状态回显实机验证；P6b2 代码与自动化验收完成；实机已验证 app-only 刷写、HELLO/GET_STATUS/DEVICE_STATUS、15s PING/PONG，以及 7778 超时重连且 7777 保持；C09/C10 实机触发和 C17 的 7777 单独断线方向仍未验收。P6b3–P6b6 未开始。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）
 > **合同矩阵：** [P6 Contract Matrix](../specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)
@@ -83,13 +83,13 @@ P6b1 与 P6b2 在技术上可独立，但为了减少跨批次接口变动和并
 
 ### P6b2 — TCP 7778 心跳、状态和事件
 
-**状态：** 已完成；报告：[P6b2 执行报告](../reports/2026-11-12-p6b2-tcp-diagnostic-heartbeat-device-status.md)。
+**状态：** 代码实现与自动化测试完成；实机完成部分合同验收，剩余门禁见报告补充；报告：[P6b2 执行报告](../reports/2026-11-12-p6b2-tcp-diagnostic-heartbeat-device-status.md)。
 
 **实现：** HA 在 HELLO_ACK 后仅发送一次 GET_STATUS，按 15 秒节奏发送 PING，仅空 PONG 更新存活时间；连续 45 秒无有效 PONG 时关闭并复用原有 7778 独立重连循环，不触碰 7777 或 SPP。DEVICE_STATUS 回显 request_id，并通过现有 Wi-Fi/netif、listener client flags、SPP 原状态/peer getter 生成真实快照。HTTP resource 仅增加当前 idle/fetching 状态写入 seam，本批没有实现 HTTP GET。Wi-Fi 与 SPP 固定事件只在真实状态变化后发送；HA 校验并缓存状态/事件。P6 ERROR allow-list 扩展，标准日志 URL/token/凭据/PCM 字段脱敏。
 
 **自动化验证：** HA transport/diagnostics、P6 device status simulator、P5b1 listener 和 P5b2 diagnostics 联合回归 73 passed；新增 ESP32 目标子集 22 passed。fake clock 覆盖 15s PING、有效/无效 PONG、45s 超时、7778 重连及 7777 连接保持；POSIX 模拟器覆盖 GET_STATUS、真实 getter 注入、idle/fetching 状态、Wi-Fi/SPP transition 去重和 P6 ERROR codes。
 
-**构建：** ESP-IDF v6.1 / ESP32 target build 通过，生成 `esp32/firmware/build/tivoo_firmware.bin`。没有刷写 ESP32，也没有部署 NAS。
+**构建与实机：** ESP-IDF v6.1 / ESP32 target build 通过；随后使用 NAS 现有 esptool 容器仅刷写 app 分区 0x10000，HA transport.py 已备份后部署本批版本并重启 HA。握手、状态快照、15s PING/PONG 和 7778 独立重连已有实机证据；C09/C10 实机触发与 C17 的 7777 单独断线方向仍未运行，详见执行报告。
 
 **范围：** 仅 P6b2；未实现 MIC session、TTS/HTTP GET、AUDIO_STOP、decoder/playback、设备重启或后续 P6b3–P6b6。未 push、未 merge。
 

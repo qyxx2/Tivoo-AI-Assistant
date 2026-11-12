@@ -76,4 +76,35 @@ ESP-IDF **v6.1 / ESP32** target build 成功，最后一次构建包含本批次
 
 ## 收尾边界
 
-本次未刷写 ESP32、未重启设备、未部署/重启 NAS HA 容器、未执行真实设备验收；该批次按计划完成自动化和目标构建门。未实现 MIC、TTS/HTTP GET、AUDIO_STOP、decoder/playback 或其他 P6b3–P6b6 内容。未 push、未 merge。代码和本报告一并纳入本批次本地提交。
+代码提交时尚未执行实机操作；后续实机验收及剩余门禁见下方“实机验收补充”。未实现 MIC、TTS/HTTP GET、AUDIO_STOP、decoder/playback 或其他 P6b3–P6b6 内容。未 push、未 merge。代码和本报告一并纳入本批次本地提交。
+
+
+## 实机验收补充（2026-11-12）
+
+本节更新提交时“未刷写/未部署/未实机验收”的历史状态；以下为后续在 NAS 上完成的实机验证结果。
+
+### 环境与部署
+
+- NAS：Synology DS920，ESP32 串口 /dev/ttyACM0，使用现有持久容器 tivoo-esptool:4.8.1（esptool 4.8.1）。
+- 芯片识别：ESP32-D0WD-V3，MAC 58:2a:bd:d5:4c:90。
+- 将 tivoo_firmware.bin 仅写入 app 分区 0x10000；保留 bootloader、partition table、NVS 和 SPP Bond。esptool 显示 Hash of data verified，写入 1,269,392 bytes。
+- 镜像 SHA-256：59bcf3c9411d6271a11734764dfd8d755e9c84f091f89b28eeef4d9a88c4ad86。
+- HA 的 custom_components/tivoo/transport.py 已部署为本批提交版本，部署文件 SHA-256 32463baedb715e66d75b82b546aeba06e5d40c15f01aa494130a9869452b43ff。原文件先备份到 NAS：/volume1/docker/tivoo-esptool/artifacts/p6b2/transport.py.pre-p6b2。重启 HA 后，新版本建立了 7777/7778 两条连接。
+
+### 已通过的实机检查
+
+- **HELLO / HELLO_ACK：** ESP32 宣告 TVIO v1 和 P6 capabilities，HA 返回 accepted=true。
+- **C08 GET_STATUS / DEVICE_STATUS：** HA 在握手后发出一次 GET_STATUS；ESP32 回显完全一致的 request_id。捕获到的真实快照包括 Wi-Fi connected、IP 192.168.3.28、RSSI -10 dBm、7778 connected、SPP disconnected、audio_resource=idle。快照当时 7777 仍在连接建立窗口内，随后 7777 与 7778 均为 ESTABLISHED；这是独立连接启动时点的真实状态，不是伪造状态。
+- **C07 心跳：** 抓包观察到连续空载荷 PING（type 0x03）和空载荷 PONG（type 0x04），PING 间隔约 15 秒。
+- **C07 / C17 的 7778 故障隔离：** 在 NAS 临时丢弃来自 ESP32:7778 的入站 TCP 包，持续超过 45 秒。HA 关闭旧 7778 会话并尝试重连，期间 7777 始终保持 ESTABLISHED。移除临时规则后，7778 自动重新握手并再次完成 GET_STATUS / DEVICE_STATUS。临时规则已删除，最终 INPUT/OUTPUT 规则表无残留的本次测试规则。
+- 实机抓包、刷写和诊断文件保存在 NAS：/volume1/docker/tivoo-esptool/artifacts/p6b2/。
+
+### 仍未通过实机验证的门
+
+- **C09 DEVICE_EVENT：** 自动化测试覆盖状态变化和去重；本次实机抓包没有观察到 Wi-Fi/SPP 的 DEVICE_EVENT。状态快照当时显示 SPP disconnected，也没有人为切换 Tivoo 蓝牙连接。因此不将实机事件门标记为通过。
+- **C10 ERROR：** P6 ERROR allow-list、日志解析及敏感信息脱敏由自动化测试覆盖；本次没有在实机上人为触发 ERROR 消息，故实机 ERROR 门未运行。
+- **C17 另一方向：** 已验证 7778 故障不影响 7777；尚未单独中断 7777 并观察 7778 保持工作。NAS 当前环境没有现成的单 socket TCP reset 工具，本次没有用重启设备/HA（会同时影响两端口）替代该项测试。
+
+### 验收结论
+
+P6b2 的代码实现、自动化测试、ESP-IDF 构建，以及实机刷写、握手、真实状态快照、15 秒心跳和“7778 故障不影响 7777”均已完成。完整实机验收仍有 C09、C10 实机触发和 C17 的 7777 单独断线方向未运行；本批不能宣称所有实机门禁全通过。未涉及 P6b3–P6b6，未 push、未 merge。
