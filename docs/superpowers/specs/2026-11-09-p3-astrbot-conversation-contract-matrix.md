@@ -338,6 +338,8 @@ HA 2026.11.0 的 Pipeline 可持续接收 ChatLog 增量。是否进入流式 TT
 
 ## 10. 取消、错误和重试合同
 
+> 取消调用的完整时序、真实 AstrBot 4.29.4 运行验证、SSE 终止事件和验证边界见 [AstrBot HTTP/SSE 推理取消与终止规格](2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)。本节仍是 P3 的身份/取消合同权威定义。
+
 ### 10.1 取消
 
 AstrBot 4.29.4 的 SSE subscriber 在 HTTP 连接关闭时会移除 subscriber，但其上游 run task 与 SSE subscriber 生命周期解耦。因此仅关闭 HA 的 HTTP response reader 不保证停止 AstrBot Agent。
@@ -428,7 +430,7 @@ HTTP 客户端复用 HA 的共享 aiohttp ClientSession。不要为每轮对话�
 | P3-T12 | JSON error、401、403、SSE error、意外 EOF | 显示明确失败，不伪装成功，不重复提交消息 |
 | P3-T13 | HA 取消对话 | 用相同 API Key 调用 session stop API 并传播取消；stop 失败时不伪称上游已停止 |
 | P3-T14 | 开启后续支持流式输入的 TTS Provider | Pipeline 可接收本集成产生的 Assistant 增量；实际流式 TTS 由 P5 验收 |
-| P3-T15 | 使用专用 API Key 发送 Chat 后立即取消 | Chat 请求体 `username` 与 stop 路由的 `AuthContext.username` 均为 `api_key:<key_id>`，owner 校验通过 |
+| P3-T15 | 使用专用 API Key 发送 Chat 后立即取消 | Chat 请求体 `username` 与 stop 路由的 `AuthContext.username` 均为 `api_key:<key_id>`，owner 校验通过；真实 AstrBot 4.29.4 运行证据见独立取消规格（首个 plain 前的 Stop 已通过，partial-output Stop 仍待验收） |
 | P3-T16 | 轮换为新建的专用 API Key | key_id/username 变化后创建新 session_id；旧 session 不被误用 |
 
 ## 13. P3 冻结项与后续阶段依赖

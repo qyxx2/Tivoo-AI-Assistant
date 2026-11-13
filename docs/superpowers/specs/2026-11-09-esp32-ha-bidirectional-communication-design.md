@@ -6,6 +6,8 @@
 >
 > 适用项目：Tivoo AI Assistant  
 > 范围：ESP32-WROVER-E-N16R8 自定义固件与 Home Assistant Tivoo 自定义集成之间的双向通信
+>
+> **2026-11-13 P6.5 当前打断策略覆盖说明：** 本文早期版本中“ESP32 AEC 后 VAD 命中近端语音即停止 DAC、发送 AUDIO_INTERRUPTED 并创建新的 barge_in MIC session”的行为已被 [P6.5 常驻音频会话与 KWS 确认打断合同矩阵](2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md) 替换。I2S RX/AEC/VAD 仍须常驻；VAD 仅做人声活动/上传门控，播放期间不拥有停止权。只有 HA 侧现有 Sherpa KWS Provider 返回有效 Detection，HA 才发送 AUDIO_STOP、取消旧 Pipeline/TTS/AstrBot，并在同一 MIC session 上切换到 STT。旧 AUDIO_INTERRUPTED / trigger_source=barge_in 定义保留为历史/兼容协议，不由当前 ESP32 方案发送。
 
 ## 1. 目标与边界
 
@@ -16,9 +18,11 @@
 - 以现有 `esp32-divoom` 的 TCP → SPP 桥接协议和蓝牙实现为基础，优先移植/适配，禁止重复实现已有协议能力。
 - HA 是设备业务入口和会话管理者；ESP32 是网络客户端的服务端对端、Tivoo 蓝牙控制器及音频外设控制器。
 - 7777 控制通道与 7778 音频/设备事件通道分离，避免持续 PCM 流阻塞图片、动画和控制命令。
+- P6.5 增加 MIC_ACTIVITY 0x24，仅上报 AEC 后 VAD 的 speech_start/speech_end 状态；它不表示唤醒词命中，也不具有播放停止/取消权限。
 - TTS 使用 HA 提供的音频资源 URL；ESP32 通过 HTTP 分块下载、解码为 PCM 并播放，不由 HA 再额外推送一份 PCM。
 - 本规格只面向用户现有的 Divoom Tivoo，不将其他 Divoom 型号的键盘灯、背光或 BLE 灯控能力移植进来。
 - **阶段边界：** P5 实现 Wi-Fi、最小 7777 SPP 控制通路和 7778 诊断日志子集；P6 在同一协议上完成双向 7777/7778、状态/事件/MIC 消息分发、HA 音频资源通知及 ESP32 HTTP 流式获取（P6 已完成）；P6.5 单独验证 HA Pipeline/TTS Proxy/Wyoming/AstrBot 取消传播；P7 实现 I²S RX、AFE/AEC/VAD、真实 MIC_PCM producer、Tivoo Assist Satellite 与 HA Pipeline/KWS/STT 接入；P8 实现解码、SRC、I²S TX、DAC/AUX 和最终播放管理。P5 使用最终协议的子集，不另建临时端口或第二套日志协议。
+- **P6.5b6+ 范围覆盖：** 常驻 I²S RX/AEC/VAD、持久 MIC ingress、HA side KWS watcher、KWS 确认打断和 I²S TX/DAC 必要闭环已前移至 P6.5，详细以 P6.5 新矩阵和 b6–b11 计划为准；本规格中旧的 VAD-only barge-in 段落已由上述覆盖说明取代。
 
 不在本规格范围：AstrBot 内部对话协议、HA Assist Pipeline 的 STT/TTS 算法实现、ESP32 GPIO 最终分配及供电/模拟线路电路细节、其他 Divoom 型号兼容、A2DP 主路线实现。麦克风与 DAC 模块及其数字音频接口基线见 §2.2–§2.3。
 
@@ -108,7 +112,7 @@ AEC（Acoustic Echo Cancellation）和播放打断属于首期语音交互的必
 - 经典 ESP32 target 的配置头文件将 AEC mode 标为 `AEC_MODE_SR_LOW_COST` / `AEC_MODE_SR_HIGH_PERF`；当前经典 ESP32 参考实现明确不支持 `SR_LOW_COST` 分支，因此首版设置 `aec_init=true`、`aec_mode=AEC_MODE_SR_HIGH_PERF`，以 **SR 高性能模式**作为基线。AFE 首版使用 `AFE_TYPE_SR`，输入格式 `MR`；VAD 启用且 `vad_mute_playback=false`。不得把 ESP32-S3 的 `AEC_MODE_FD_*`、非线性 NLP 或其资源表现当作 WROVER-E 已支持的能力。
 - AFE 输入通道用 `M` 表示麦克风、`R` 表示播放参考，参考通道按当前 AFE 输入格式放在最后；输入帧长通过所选 ESP-SR 版本的接口获取，不在通信合同中硬编码。16 kHz、int16 对齐和交错排列必须用已知信号验证。
 - 经典 ESP32 首版 AEC 以 SR 线性回声抵消为能力边界，不能保证消除扬声器失真引起的非线性残余回声，也不能消除与本机播放参考无关的电视、环境声或其他声源。单麦克风没有阵列波束形成能力；最终抑制程度必须用 Tivoo 实际扬声器音量、麦克风位置和房间环境验收。
-- AFE 的 VAD 必须保持播放期间可用（配置 `vad_mute_playback=false`），并且只以 AEC 后的近端语音结果决定 barge-in；不得为了避免扬声器自触发而在播放期间关闭 VAD。回声抑制由 AEC 参考通道承担，误触发通过实机阈值调校验收。
+- AFE 的 VAD 必须保持播放期间可用（配置 vad_mute_playback=false），但只报告 AEC 后的人声活动；不得将 VAD 输出直接解释为 barge-in，不得据此停止 DAC 或取消 Pipeline。回声抑制由 AEC 参考通道承担；播放期间真正的打断由 HA 侧 NAS KWS Detection 确认，详细合同见 P6.5 新矩阵。
 
 **AEC 双路信号合同：**
 
@@ -123,9 +127,9 @@ AEC（Acoustic Echo Cancellation）和播放打断属于首期语音交互的必
 
 - ESP32 所有由本固件控制的声音输出统一经过 `audio_output_manager` 和当前选定的输出后端。首期至少包括 TTS HTTP 播放；后续提示音、通知音和其他本地/远端音频也必须接入同一管理层，不得各自直接写 I²S TX。
 - 打断作用于**最终音频输出层**，不绑定 TTS 解码器或 TTS 输入任务。全局停止必须终止当前输出源及待播队列，取消相关 HTTP/解码/生成消费任务，清空 PCM 与后端待播缓冲，并在当前后端立即停止输出；不能只取消 TTS 文本输入或 HTTP 下载后仍让缓存音频继续播放。
-- 用户在播放期间讲话时，ESP32 持续运行 I²S RX、AEC 和本地 VAD。VAD 只对 AEC 后的近端语音输出做判断；满足持续语音条件后，本地先调用全局输出停止，再向 HA 上报 `AUDIO_INTERRUPTED`。打断判断不要求用户先说唤醒词；该次新语音会话以 `PipelineStage.STT` 进入 HA。普通空闲 VAD 触发仍从 `PipelineStage.WAKE_WORD` 开始；VAD 持续时长/阈值通过实测确定。
-- 打断后继续采集麦克风，不停止 RX/AEC；保留触发前预录缓冲和后续语音，形成 `trigger_source=barge_in` 的新 MIC 会话。`AUDIO_INTERRUPTED` 必须先于对应 `MIC_SESSION_START` 在 7778 上发送；HA 可在清理旧 Pipeline 的同时将新 PCM 暂存入有界队列。
-- `MIC_CAPTURE_STOP` 只结束指定的网络上传会话，不代表关闭物理 I²S RX、AEC 或本地 VAD。物理采集在空闲监听和播放打断检测期间保持运行；只有设备级音频关闭/故障策略才允许停止硬件采集。
+- 播放期间继续运行 I2S RX、AEC 和本地 VAD，但 VAD speech_start/speech_end 只作为活动事件上传；不能单独停止输出、发送 AUDIO_INTERRUPTED 或取消对话。HA 独立运行现有 Sherpa KWS watcher，只有检测到配置唤醒词的 Detection 才打断当前回复。普通空闲 VAD 首次触发仍从 PipelineStage.WAKE_WORD 开始。
+- NAS KWS 确认打断后继续使用当前网络 MIC session，不创建新的 trigger_source=barge_in MIC_SESSION_START；HA 取消旧 Pipeline 后从同一 ingress 的有界 handoff 中取得唤醒词后的 PCM，并以 PipelineStage.STT 启动新轮。RX/AEC/VAD 和网络上传均不因单轮 Pipeline RUN_END 重启。
+- `MIC_CAPTURE_STOP` 只结束指定的网络上传会话，不代表关闭物理 I²S RX、AEC 或本地 VAD。物理采集在空闲监听和播放期间保持运行；只有设备级音频关闭/故障策略才允许停止硬件采集。
 - 首期主输出是 I²S TX → PCM5102 → AUX，AEC 参考由该 TX 最终 PCM 取得。若未来切换到 A2DP 备用输出，必须为 A2DP 后端单独验证参考信号时序、编码/传输延迟与打断停止行为，不能直接假定 I²S 路径的 AEC 对 A2DP 同样有效。
 
 ## 3. 总体架构
@@ -317,14 +321,15 @@ HA 实体状态不得仅因 TCP 写入成功就假定设备画面已经改变。
 | `0x04` | PONG | ESP32 → HA | 空或 JSON 时间戳 |
 | `0x10` | GET_STATUS | HA → ESP32 | JSON：可选状态查询范围 |
 | `0x11` | DEVICE_STATUS | ESP32 → HA | JSON：当前设备和模块状态 |
-| `0x20` | MIC_SESSION_START | ESP32 → HA | JSON：音频格式、会话 ID、预录长度、`trigger_source`（`idle_vad` / `barge_in`）及可选 `interrupt_id` |
+| `0x20` | MIC_SESSION_START | ESP32 → HA | JSON：音频格式、会话 ID、预录长度、`trigger_source`（`idle_vad` / `barge_in`）及可选 `interrupt_id` | （P6.5 当前只发送 idle_vad；barge_in 为历史/兼容字段）
 | `0x21` | MIC_PCM | ESP32 → HA | 二进制：AEC 后的 16 kHz S16LE Mono PCM 音频帧 |
 | `0x22` | MIC_SESSION_END | ESP32 → HA | JSON：会话 ID、结束原因 |
 | `0x23` | MIC_CAPTURE_STOP | HA → ESP32 | JSON：停止指定的网络上传会话；不停止物理 I²S RX/AEC/本地 VAD |
+| 0x24 | MIC_ACTIVITY | ESP32 → HA | JSON：session_id、state（speech_start/speech_end）、uptime_ms；仅有效 MIC session 内发送 |
 | `0x30` | TTS_PLAY | HA → ESP32 | JSON：播放 ID、音频 URL、Token、MIME 类型 |
 | `0x31` | AUDIO_STOP | HA → ESP32 | JSON：请求 ID、全局停止范围、原因、可选预期活动音频 ID |
 | `0x32` | AUDIO_STATE | ESP32 → HA | JSON：音频 ID/来源、缓冲/播放/完成/停止/打断/失败状态 |
-| `0x33` | AUDIO_INTERRUPTED | ESP32 → HA | JSON：中断 ID、活动音频 ID（可空）、来源、近端语音打断原因 |
+| `0x33` | AUDIO_INTERRUPTED | ESP32 → HA | JSON：中断 ID、活动音频 ID（可空）、来源、近端语音打断原因 | （兼容/历史消息；P6.5 当前策略不由 ESP32 发送）
 | `0x40` | DEVICE_EVENT | ESP32 → HA | JSON：状态变化事件 |
 | `0x41` | ERROR | 双向 | JSON：错误代码、关联消息/会话 ID、简短说明 |
 | `0x42` | DIAGNOSTIC_LOG | ESP32 → HA | JSON：日志级别、模块、事件/简短消息、设备运行时间及可选关联 ID/丢弃计数 |
@@ -409,10 +414,10 @@ AFE 输出的 16 kHz S16LE Mono 增强音频是本项目唯一对外的麦克风
 
 1. ESP32 的 I²S RX、麦克风处理和本地 AFE AEC/VAD 在空闲监听及扬声器播放期间持续运行；空闲状态不上传无关音频，播放期间也不关闭麦克风 RX。
 2. 普通空闲 VAD 触发后发送 MIC_SESSION_START，`trigger_source=idle_vad`，包含唯一 session_id、音频格式和预录缓冲时长；HA 从 `PipelineStage.WAKE_WORD` 开始本轮 Pipeline。
-3. ESP32 先发送触发前的 AEC 后预录音频，再持续发送 AEC 后 MIC_PCM。
+3. 首次空闲 VAD 触发后，ESP32 依次发送 MIC_SESSION_START、MIC_ACTIVITY(speech_start)、AEC 预录音频和实时 MIC_PCM；后续 VAD speech_start/speech_end 作为 MIC_ACTIVITY 发送，并通过同一 TCP Sequence 与 PCM 顺序关联。
 4. HA 把 PCM Payload 放入当前会话的异步音频队列，并把队列迭代器交给 Tivoo Assist Satellite 的 `async_accept_pipeline_from_satellite()`。
 5. Pipeline 活跃期间 ESP32 必须持续发送音频，包括静音 PCM 帧；本地 VAD 不得在说话间隙擅自结束已启动的 HA Pipeline 音频流。
-6. TTS 或其他音频输出期间，若 AEC 后的近端语音 VAD 达到打断条件，ESP32 先在本地停止全局音频输出，再发送 AUDIO_INTERRUPTED；随后发送 `trigger_source=barge_in`、带对应 interrupt_id 的新 MIC_SESSION_START，并上传预录及实时音频。该新会话由 HA 在旧 Pipeline 取消收尾后从 `PipelineStage.STT` 开始，不再要求用户先说唤醒词。
+6. TTS 或其他音频输出期间，ESP32 的 VAD 只发送 MIC_ACTIVITY speech_start/speech_end，不停止音频、不新建 MIC session。HA side KWS watcher 命中配置唤醒词后，HA 发送匹配 audio_id 的 AUDIO_STOP、取消旧 Pipeline/TTS/AstrBot，并从同一 MIC session 的有界 handoff 以 PipelineStage.STT 启动新轮。
 7. HA Pipeline 正常结束、超时或取消后，HA 发送 MIC_CAPTURE_STOP；ESP32 只停止本次网络上传，保留物理 I²S RX、AEC 与本地 VAD，返回本地监听。
 8. ESP32 在主动结束或设备异常时发送 MIC_SESSION_END；HA 关闭对应音频队列，使异步音频迭代器正常结束。
 
@@ -514,22 +519,17 @@ AUDIO_STATE 状态至少包括 `buffering`、`playing`、`completed`、`stopped`
 - 停止时先阻止新的 PCM 被提交，再取消各活动音源的生产/下载/解码任务，清空软件队列和 I²S TX 待播数据，最后停止/静音当前硬件后端。为了避免爆音允许极短输出淡出，但不得让长缓冲音频在打断后继续播放。
 - 停止成功后通过 AUDIO_STATE 报告每个受影响活动源的最终状态。停止命令必须幂等；重复或过期请求不得造成任务崩溃或意外重新播放。
 
-**本地语音打断（barge-in）行为：**
+**NAS KWS 确认打断行为：**
 
-1. I²S RX 在播放时继续运行；AFE 同时接收 16 kHz 麦克风 M 通道和最终播放参考 R 通道，执行 AEC。
-2. 本地 VAD 仅检查 AEC 输出的近端语音。满足配置的持续时间/能量条件后，将当前音频输出标记为 interrupted，立即停止全局输出；不要求用户先说 wake word。
-3. ESP32 发送 AUDIO_INTERRUPTED（包含 interrupt_id、活动 audio_id/source、`reason=near_end_speech`），随后发送带 `trigger_source=barge_in` 和相同 interrupt_id 的 MIC_SESSION_START，并开始传送预录/实时 AEC 后 PCM。TCP 7778 上必须保持此消息顺序。
-4. 停止输出后继续采集和 AEC；参考环形缓冲保留实际 TX 的尾帧/房间回声衰减所需的数据，避免立即清空参考状态导致残余回声误触发。
-5. 本能力覆盖所有经过 ESP32 `audio_output_manager` 的声音源；不声称可以停止 Tivoo 自身独立播放、其他设备或外部音源。若启用 A2DP 后端，同样必须实现全局停止；其 AEC 参考时序需单独验收。
+1. I2S RX 在播放时继续运行；AFE 同时接收 16 kHz 麦克风 M 通道和最终播放参考 R 通道，执行 AEC。AEC 后 PCM 同时供本地 VAD、MIC_PCM 和 HA KWS/STT。
+2. 初始 Assist Pipeline 的 WAKE_WORD 阶段命中后，HA 在 STT_START 立即启动独立 side KWS watcher，并与 STT 订阅并行消费同一有序 MIC ingress；覆盖 STT、Intent、Conversation/SSE、TTS 生成和 DAC 播放阶段。
+3. 播放期间 MIC_ACTIVITY/VAD speech_start 只标记活动，**不得停止输出、不得发送 AUDIO_INTERRUPTED、不得取消 Pipeline/AstrBot**。只有现有 Sherpa Wyoming KWS 返回 Detection(name=tivoo-wake) 才可创建 interrupt generation。
+4. KWS Detection 命中后 HA 向 ESP32 发送匹配活动 audio_id 的 AUDIO_STOP；ESP32 的 audio_output_manager 停止当前/排队音频、HTTP/解码任务和待播 PCM。RX/AEC/VAD 不停止，原网络 MIC session 不重建。
+5. HA 同时取消并 await 当前 Satellite Pipeline caller；P3 关闭 AstrBot SSE reader，并按 owner 匹配规则对同 session Stop 一次；TTS producer/generator、HTTP consumer queue、Wyoming writer 和 P7A request/worker 由各自真实 owner 定向取消/清理。旧 generation 的迟到 TTS_PLAY/AUDIO_STATE 不得影响新轮。
+6. 复用同一 MIC ingress 的有界 handoff PCM，在旧轮清理完成后从 PipelineStage.STT 启动新轮；不创建新的 trigger_source=barge_in MIC_SESSION_START，不要求重复唤醒词。Detection timestamp 映射到 HA 侧 ingress index；handoff 上限为 8 秒/256 KiB。
+7. 该策略只识别当前配置的唤醒词，不是声纹识别。房间内其他人清晰说出同一唤醒词仍可能被 KWS 命中；普通人声、电视对话或 VAD 活动不应单独停止播放。经典 ESP32 AEC 的线性残余限制仍需真实声学测试。
 
-**HA 收到 AUDIO_INTERRUPTED 后的取消顺序：**
-
-1. 按 interrupt_id 幂等处理并检查事件是否过期。若 `audio_id` 关联当前 Satellite 响应，则取消该响应；若音源是提示音等非 Satellite 响应，则不取消无关 Pipeline，但仍应接受这次真实近端语音并准备新的 STT 会话。只有与已结束/已被新播放替代的旧音频对应的迟到事件才忽略。
-2. 只有当被打断音频关联到当前 Satellite 响应时，才关闭/取消该响应的 TTS Proxy 消费和流式输出，并阻止后续旧响应 TTS_PLAY/音频事件继续下发；非 Satellite 音源不应误取消其他对话响应。
-3. 若存在与该响应关联的活动 `async_accept_pipeline_from_satellite()` Pipeline run，则取消并等待其收尾；取消必须传播到 Conversation Agent，关闭 AstrBot SSE reader，并按既有 P3 合同调用 owner 匹配的 AstrBot session stop。P3 的 stop 操作作用于整个 session，不是单独 run；不得另起一条 `assist_pipeline/run` 绕过 Satellite 的第二套生命周期。若中断音源没有关联旧 Satellite 响应，则不创建虚假的取消对象，也不取消其他 Pipeline。
-4. 对已经进入 Satellite `RESPONDING` 的旧响应，在取消清理后将其播报状态收尾；`tts_response_finished()` 对同一响应最多调用一次。若中断的是非 Satellite 音源，则不调用该方法改变无关 Satellite 状态。该调用只结束 Satellite 播报状态，不能代替取消 Pipeline、TTS Proxy 或 AstrBot。
-5. 对紧随其后的 `trigger_source=barge_in` 麦克风会话，在旧 run 的取消/清理完成后启动新 Pipeline，`start_stage=PipelineStage.STT`；若新 PCM 已经到达，先放入有界队列，不能因等待旧任务退出而丢失用户语音。普通 `idle_vad` 会话仍从 `PipelineStage.WAKE_WORD` 启动。
-6. 如果 HA 上游取消失败或超时，设备端本地停止仍然有效；HA 必须报告取消未确认、阻止旧响应重新向设备输出，并按 P3 取消合同处理 AstrBot stop 失败，不能伪称上游已停止。
+AUDIO_INTERRUPTED / trigger_source=barge_in 保留为历史/兼容协议定义，但当前 P6.5 方案不由 ESP32 发送。
 
 **HA 主动停止播放：** HA 发起停止时先向 ESP32 发送 `AUDIO_STOP`，让设备立即终止最终输出；同时取消与该音源关联的 TTS Proxy、Pipeline/Conversation Agent SSE，并按 P3 约定停止 AstrBot session。设备回报 AUDIO_STATE 后再完成 Satellite 收尾。不能等待模型/HTTP 取消完成后才停止扬声器；若音源不关联当前 Satellite 响应，只停止设备音频，不取消无关对话。
 
@@ -549,7 +549,7 @@ HA 自定义集成是所有上层功能的唯一入口：
 - 确保下发 URL 是 ESP32 可直接访问的 HA LAN 地址，并在需要时提供短时 HTTP 访问凭据。
 - 复用 HA TTS Proxy 等现有音频资源服务；其他必要音频资源也通过明确的 HTTP URL 提供，不在首期另造资源发现 API。
 - 接收 AUDIO_STATE，按 audio_id 关联当前 Satellite TTS 响应，并在正常完成/停止/打断/失败后正确结束 Satellite 播报状态。
-- 处理 AUDIO_INTERRUPTED：如果活动音源关联当前 Satellite 响应，则取消对应 Pipeline/TTS Proxy/Conversation Agent 链路并收尾旧响应；否则不取消无关会话。两种情况下均停止迟到音频输出，并按 STT 阶段接收有效的 barge-in 新语音。
+- 处理 MIC_ACTIVITY 和 NAS KWS Detection：VAD 活动只用于候选语音/窗口管理；side KWS Detection 命中后，关联活动 audio_id，发送 AUDIO_STOP，并取消对应 Pipeline/TTS/AstrBot 链路；从同一 MIC session 的有界 handoff 以 STT 阶段接收新语音。
 - 管理每个 Satellite 当前 Pipeline run、TTS playback_id 和 interrupt_id 的关联；确保取消幂等、不会误取消新一轮会话。
 - 接收 AUDIO_STOP 相关结果；HA 主动停止服务与设备本地语音打断均调用统一取消收尾流程。
 - 向 HA 暴露屏幕控制服务、Assist Satellite、SPP 状态和麦克风/AEC/播放诊断实体。
@@ -577,7 +577,7 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 - ESP32 收到 7777 的完整 Tivoo 原始帧后，直接进入 SPP 发送队列；不解析图片文件、不生成调色板、不理解上层 AI 语义。
 - ESP32 收到 7778 的 TTS 通知后负责 HTTP 获取和解码，再交给全局音频输出管理器；任何音源停止都在最终输出层执行，不只取消 TTS 输入/解码。
 - `MIC_CAPTURE_STOP` 仅终止网络音频上传，不关闭物理采集和播放期间的 AEC/VAD；AEC 后音频才允许进入预录和 MIC_PCM。
-- ESP32 本地 near-end VAD 打断后立即停止所有受控输出，并将 AUDIO_INTERRUPTED 与新的 barge-in 麦克风会话按序通知 HA。
+- ESP32 VAD 只上报 MIC_ACTIVITY；播放期间不自行停止输出、不产生 AUDIO_INTERRUPTED 或新 barge-in 麦克风会话。NAS KWS Detection 命中后由 HA 发送 AUDIO_STOP。
 - ESP32 不实现 BLE GATT 灯控，不维护键盘/背光控制任务。
 - ESP32 的任何长耗时任务都不得阻塞 I²S DMA 和 SPP 发送队列。
 
@@ -681,9 +681,9 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 - AUDIO_STOP 能停止当前和排队的所有 ESP32 受控音频源，不限 TTS；终止源任务、清空软件/硬件待播数据并反馈 AUDIO_STATE。
 - 解码 PCM 能通过有状态 SRC 转为 32 kHz，并正确填入双声道 32-bit TX Slot；SRC/解码必须跨 HTTP chunk 保留状态，不因 chunk 边界产生断音。
 - INMP441 转出的 16 kHz M 通道和最终播放 16 kHz R 通道按正确时间关系送入 AFE；AFE 的 VAD 播放静音开关保持关闭，以便用户在播放期间仍可打断。
-- 播放期间用户近端说话时，AEC 后 VAD 能在配置阈值内检测并打断当前音频输出；TTS、提示音及其他纳入输出管理器的音源均能被同一全局停止操作终止。
+- 播放期间普通环境人声/VAD 活动不停止输出；NAS KWS 检测到配置唤醒词后，HA 能通过 AUDIO_STOP 终止 TTS、提示音及其他纳入输出管理器的音源。
 - 播放期间扬声器自身回声不能稳定触发 barge-in；无播放时参考通道为静音，AEC/VAD 不出现持续误触发。
-- AUDIO_INTERRUPTED 先于对应 barge-in MIC_SESSION_START 到达 HA；HA 能取消旧 Pipeline/TTS Proxy/AstrBot SSE，并在清理后以 STT 阶段接收新语音。
+- 当前方案不发送 AUDIO_INTERRUPTED/barge-in MIC_SESSION_START；HA 收到 side KWS Detection 后发送匹配 AUDIO_STOP，取消旧 Pipeline/TTS/AstrBot，并从同一 MIC session 的有界 handoff 以 STT 阶段启动新轮。
 - HA 取消失败时设备仍保持本地停止，不允许旧响应恢复播放；Satellite 状态不会卡在 RESPONDING。
 - TTS 完成、停止、打断和失败均能反馈到 HA，Satellite 能结束对应播报生命周期且不重复收尾。
 - 音频传输期间 SPP 屏幕命令仍能正常执行；I²S 不出现不可接受的 DMA 阻塞/欠载。
@@ -713,8 +713,8 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 4. **HA 集成测试**：使用模拟 ESP32 TCP Server 验证连接、服务下发、音频队列接收、TTS 事件通知和断线恢复；额外验证 AstrBot ChatLog 增量、`stream_response=true`、`tts_start_streaming` 触发提前下载，以及短回答通过 `tts-end` 回退通知。Wyoming TTS 服务测试还需覆盖 `SynthesizeStart/Chunk/Stop`、HA 兼容性完整 `Synthesize` 不会导致重复合成，以及服务以 `SynthesizeStopped` 正常结束音频流。
 5. **AEC 基线测试**：使用 ESP-SR 对应经典 ESP32 target，验证 16 kHz M/R 交错输入、AFE 输出帧、播放参考通道和 VAD；用已知播放参考 + 近端语音/纯回声录音测量回声残留、近端语音保留和资源占用。
 6. **音频联调**：先用已知 PCM/正弦信号验证 32 kHz 全双工 RX/TX、INMP441 24-bit 对齐、32→16 kHz 抗混叠转换和播放参考的 32→16 kHz 时序对齐；再用生产 HTTP MP3 和 nframes=0 WAV 流验证解码、22.05→32 kHz SRC、PCM 缓冲及 I²S 输出。
-7. **全局停止与打断测试**：分别从 HA AUDIO_STOP 和本地 AEC/VAD near-end 触发停止；验证 TTS 与其他输出源、HTTP/decoder tasks、软件 PCM 队列和 I²S TX 待播缓冲全部停止，麦克风 RX/AEC 不停止。
-8. **HA 取消联调**：模拟 AUDIO_INTERRUPTED 后 HA 取消 Assist Pipeline、TTS Proxy、Conversation Agent SSE 和 AstrBot session stop；验证旧播放不会迟到恢复，新 barge-in 音频不丢失，并从 STT 阶段启动新一轮。
+7. **全局停止与打断测试**：分别测试 HA 主动 AUDIO_STOP 和播放期间 NAS KWS Detection 确认打断；另以环境人声/电视声触发 VAD，确认它们不停止音频。验证 TTS 与其他输出源、HTTP/decoder tasks、软件 PCM 队列和 I2S TX 待播缓冲全部停止，麦克风 RX/AEC/VAD 不停止。
+8. **HA 取消联调**：模拟 side KWS Detection 后 HA 发送 AUDIO_STOP、取消 Assist Pipeline、TTS Proxy、Conversation Agent SSE 和 AstrBot session Stop；验证旧播放不会迟到恢复，同一 MIC session 的 handoff 音频不丢失，并从 STT 阶段启动新一轮。
 9. **实机验收**：最后在 Tivoo AUX 播放时持续发送 SPP 图片/动画，同时运行麦克风采集、AEC、VAD 和播放打断。
 
 ## 14. 设计约束与待实现时确认项

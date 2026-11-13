@@ -12,7 +12,7 @@
 P6.5 已完成计划内的环境/owner 清点、正常完成控制组、TTS 前取消、活动 TTS 期间取消和 HTTP GET consumer 单独断开对照。证据足以确定主要缺口与后续责任边界：
 
 1. **HA Satellite / Pipeline 取消本身有效。** 取消公开 Satellite caller 后，HA 持有的 Pipeline task 被取消并等待结束；取消异常向 caller 传播。
-2. **P3 取消责任正常。** 同一轮已确认的 AstrBot session，其 SSE reader 被关闭，P3 使用 owner 匹配的 session Stop API 精确调用一次。P3 仍是 SSE reader 与 AstrBot Stop 的唯一 owner。
+2. **P3 取消责任正常。** 同一轮已确认的 AstrBot session，其 SSE reader 被关闭，P3 使用 owner 匹配的 session Stop API 精确调用一次。P3 仍是 SSE reader 与 AstrBot Stop 的唯一 owner。除 b2 的本地 fake endpoint 取消测试外，2026-11-13 另对真实 AstrBot 4.29.4 执行了 HTTP OpenAPI 验收：在 run_started 后、首个可见 plain 前调用 Stop，返回 stopped_count=1；保持 SSE reader 打开时随后收到 complete/end，未观察到新增 plain，session is_running=false 且 active_runs 为空。详细身份、请求顺序和边界见 [AstrBot HTTP/SSE 推理取消与终止规格](../specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)。
 3. **HA TTS Proxy/Cache 有活动 TTS 取消缺口。** 一旦流式 TTSCache producer 和文本 generator 已经启动，Pipeline cleanup 仅删除 ResultStream token 映射；producer、generator、已建立的 HTTP response、HA Wyoming writer 及下游 P7A 请求不会随 Pipeline 自动结束。测试还直接推进了取消之后的 callback 和迟到文本，确认旧请求仍能继续生成 PCM。
 4. **HTTP GET consumer disconnect 与 Pipeline cancellation 是两种独立事件。** 单独关闭 GET 只结束 Proxy response iterator；不会取消 Pipeline、关闭 P3 SSE/Stop、删除 token 或停止上游 TTS 生成。当前 HA Cache consumer queue 在 GET 提前关闭后仍登记，形成另一个消费端资源清理问题。
 5. **P7A 的请求级清理实现与合同方向一致，但上游 GAP 阻止了端到端 TCP 断连验证。** P7A 现有单元测试覆盖 stream generator cancel、callback 协作停止和未收到 SynthesizeStop 的 EOF；b3/b4 期间 Wyoming TCP 未实际断开，因此不把 P7A handler/request/input/worker 的活动连接清理记为端到端 PASS。
@@ -32,7 +32,7 @@ P6.5 已完成计划内的环境/owner 清点、正常完成控制组、TTS 前�
 | Ruff | 0.17.4（两个独立虚拟环境） |
 | AstrBot 合同版本 | 4.29.4（项目既有 P3 基线；b1–b4 未重新连接远端实例查询） |
 
-b1–b4 使用真实 HA Core 2026.11.0 Assist Satellite 基类、Assist Pipeline、TTS Proxy/Cache、Wyoming Provider，以及项目 P7A Wyoming TCP server/handler。AstrBot HTTP/SSE 端点与 Sherpa 推理引擎由本地可控 fake 提供，用于屏障和可重复时序；不是远端 AstrBot 服务或真实模型推理验收。
+b1–b4 使用真实 HA Core 2026.11.0 Assist Satellite 基类、Assist Pipeline、TTS Proxy/Cache、Wyoming Provider，以及项目 P7A Wyoming TCP server/handler。该四批中的 AstrBot HTTP/SSE 端点与 Sherpa 推理引擎由本地可控 fake 提供，用于屏障和可重复时序；不是远端 AstrBot 服务或真实模型推理验收。另在 2026-11-13 独立连接 NAS 的 AstrBot 4.29.4 运行实例，对 Chat/Stop OpenAPI 和 SSE 终止事件做了真实服务验收；该验收只覆盖 AstrBot run 在首个可见文本前被 Stop 的情形，不改变 b3/b4 对 HA TTS producer/consumer/Wyoming 生命周期 GAP 的结论。
 
 HA 测试运行于 Python 3.14 虚拟环境；Sherpa/Wyoming 测试运行于 Python 3.11 虚拟环境。二者按仓库既有脚本分开执行，未将不同解释器的依赖混合收集。本轮没有连接 NAS、部署/重启 HA 或 Sherpa 容器、连接或刷写 ESP32，也没有测试真实麦克风、DAC 或 Tivoo 播放链路。
 
