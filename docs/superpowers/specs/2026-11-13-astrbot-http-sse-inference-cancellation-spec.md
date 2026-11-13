@@ -3,7 +3,7 @@
 - 日期：2026-11-13
 - 适用运行版本：AstrBot 4.29.4（对应源码 tag：`v4.29.4`）
 - 项目分支：`feature/p6-5-ha-cancellation-preflight`
-- 状态：**真实接口已验证：活动 run 在首个可见文本前取消成功；首个可见文本输出后的中途取消尚未单独实测**
+- 状态：**真实接口已验证：活动 run 在首个可见文本输出前后均可取消**
 - 上位合同：[P3 AstrBot Conversation 接口合同矩阵](2026-11-09-p3-astrbot-conversation-contract-matrix.md)
 - 适用范围：HA P3 Conversation Agent 使用 AstrBot 原生 HTTP OpenAPI 停止 WebChat Agent 推理，并结束相应 SSE 流。
 - 本文只规定 AstrBot HTTP/SSE 的会话身份、停止调用、事件终止和 HA 适配流程；不重新定义 HA Pipeline、TTS Proxy/Cache、Wyoming 或 ESP32 的生命周期。
@@ -204,7 +204,7 @@ Stop 请求失败时，不能吞掉最初的 `CancelledError`，也不能声称 
 
 ### 6.2 证据范围限制
 
-Stop 在收到 `run_started` 后立即触发，Stop 前尚未收到第一段可见 `plain` 文本。因此本次真实服务测试证明了**活动 Agent run 可被停止，且 SSE 正常到达终止事件**，但还没有单独覆盖“已经向用户输出一段或多段文本后再停止”的时机。
+Stop 在收到 `run_started` 后立即触发，Stop 前尚未收到第一段可见 `plain` 文本。B6 另在首条非空 `plain` 后发起 Stop，得到 `stopped_count=1`，Stop 成功响应后无新增 `plain`，SSE 收到 `complete` 和 `end`。详见 [B6 真实 AstrBot 验收](../reports/2026-11-13-p6-5b6-cancellation-owner-closeout.md#真实-astrbot-验收)。
 
 P3 本地自动化测试已覆盖取消时先关闭 SSE reader、同一 session Stop 只调用一次、Stop 403/超时不吞掉 `CancelledError`、锁释放后后续请求可继续；这些用例使用本地 fake HTTP/SSE 端点，不等同于真实 AstrBot 模型推理验收。
 

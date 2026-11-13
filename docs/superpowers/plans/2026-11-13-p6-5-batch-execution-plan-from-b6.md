@@ -65,9 +65,9 @@
 
 **Files:** `tests/homeassistant/custom_components/astrbot/test_conversation.py`；必要时复用 `tests/homeassistant/test_assist_pipeline_tts_cancellation.py`；报告 `docs/superpowers/reports/2026-11-13-p6-5b6-cancellation-owner-closeout.md`。
 
-- [ ] 真实 AstrBot 4.29.4 Chat 收到 run_started 和至少一条 plain 后调用同 owner Stop。
-- [ ] 记录 stopped_count、Stop 后 complete/end、plain 是否继续、session is_running/active_runs。
-- [ ] 清理测试 session；API Key secret 不进入日志或文档。
+- [x] 真实 AstrBot 4.29.4 Chat 收到 run_started 和至少一条 plain 后调用同 owner Stop。
+- [x] 记录 stopped_count、Stop 后 complete/end、plain 是否继续、session is_running/active_runs。
+- [x] 清理测试 session；API Key secret 不进入日志或文档。
 - [x] 扩展 fake endpoint：plain 前取消、plain 后取消、complete 无 end、Stop 403/timeout；断言 SSE close、Stop exactly once、原 CancelledError 传播、lock 释放。
 - [x] 运行 P3 Conversation tests 与 HA cancellation 集成测试，区分真实服务和 fake 证据。
 
@@ -82,7 +82,7 @@
 - [x] GET close 只移除自己的 consumer queue；Pipeline cancel 必须取消该 run 的 producer。
 - [x] 模拟真实 TCP EOF，验证 P7A handler/request/input/worker/callback 全部结束；若有残留，在 P7A request owner 修复。
 - [x] 取消后无迟到 text/PCM/callback/TTS_PLAY；清理测试屏障不算产品 PASS。
-- [x] 已验证定向 producer handle。真实 AstrBot partial-output Stop 因 NAS 不可达待验收，B6 总体保持 BLOCKED。
+- [x] 已验证定向 producer handle 和真实 AstrBot partial-output Stop，B6 退出条件通过。
 
 **执行记录：** [B6 取消链路验收](../reports/2026-11-13-p6-5b6-cancellation-owner-closeout.md)。
 

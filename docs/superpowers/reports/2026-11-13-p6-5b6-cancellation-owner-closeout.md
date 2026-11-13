@@ -2,7 +2,7 @@
 
 - 日期：2026-11-13
 - 分支：`feature/p6-5-ha-cancellation-preflight`
-- 结论：**TTS 取消的本地集成验证通过。B6 总体验收 BLOCKED，等待真实 AstrBot 4.29.4 的 partial-output Stop。**
+- 结论：**B6 验收通过。单轮 TTS 本地集成验证和真实 AstrBot 4.29.4 partial-output Stop 均已完成。**
 
 ## 单轮 TTS 取消
 
@@ -20,7 +20,17 @@ HA Core 2026.11.0 的 `tts.async_get_stream` 只能按 token 取得 `ResultStrea
 
 ## 真实 AstrBot 验收
 
-开发机连接目标 NAS SSH 和 AstrBot HTTP 均超时。未能创建测试 session。首条 plain 后的真实 `stopped_count`、`complete/end`、迟到 plain 数量及 `is_running/active_runs` 均待采集。依赖 B6 退出条件的端到端打断验收继续保持 BLOCKED。
+通过 root SSH 在 NAS 本机对 AstrBot 4.29.4 的 HTTP API 执行一次性验收。测试脚本从 NAS 文件读取 API Key，并在 NAS 上通过 AstrBot 的 key hash 查到实际 owner。API Key 未传出 NAS。
+
+| 验收项 | 实测结果 |
+| --- | --- |
+| Chat | HTTP 200，`text/event-stream`。依次收到 `session_id`、`user_message_saved`、`run_started` 和首条非空 `plain` |
+| Stop | 收到首条 `plain` 后使用同一 Key 发起一次 Stop。HTTP 200，`stopped_count=1` |
+| SSE 终止 | 发起 Stop 后持续读取 SSE。等待 Stop 响应期间收到 30 条 `plain`，收到成功响应后新增 `plain` 为 0，随后收到 `complete` 和 `end` |
+| 会话状态 | HTTP 200，creator 匹配实际 API Key owner，`is_running=false`，`active_runs=[]` |
+| 清理 | 使用匹配 owner 创建的两条临时会话经 DELETE API 返回成功。另两条初始探测使用了 HA 配置中与实际 Key owner 不一致的标识，Stop 和 DELETE 返回 `Permission denied`。按 UUID 和测试文本确认后，仅删除这两条临时会话及其关联记录。已确认四条临时会话均已清理 |
+
+SSE 验收以收到 Stop 成功响应为边界。同步等待 Stop 的初次同 owner 探测曾读到 23 条积压的 `plain`，因此复测改用并行读取 SSE，以区分响应前后的接收计数。
 
 ## 回归结果
 
