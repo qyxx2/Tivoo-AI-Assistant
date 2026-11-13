@@ -104,6 +104,7 @@ EXPECTED_MESSAGE_TYPES = frozenset(
         0x21,
         0x22,
         0x23,
+        0x24,
         0x30,
         0x31,
         0x32,

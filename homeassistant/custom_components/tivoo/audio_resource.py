@@ -74,6 +74,7 @@ class TtsResourceManager:
         self.hass = hass
         self.adapter = adapter
         self._resource: _TtsResource | None = None
+        self.playback_id: str | None = None
 
     @staticmethod
     def _output_fields(output: object) -> tuple[str, str] | None:
@@ -95,6 +96,7 @@ class TtsResourceManager:
             return
         url = build_internal_tts_url(self.hass, resource.relative_url)
         resource.sent = True
+        self.playback_id = resource.playback_id
         await self.adapter.async_send_tts_play(
             resource.playback_id,
             url,
@@ -108,6 +110,7 @@ class TtsResourceManager:
 
         if event_type == "run-start":
             self._resource = None
+            self.playback_id = None
             fields = self._output_fields(data.get("tts_output"))
             if fields is not None:
                 relative_url, mime_type = fields
@@ -162,9 +165,14 @@ class PipelineTtsEvents:
         self._owner: PipelineTtsOwner | None = None
         self._caller: asyncio.Task | None = None
         self._events: set[asyncio.Task] = set()
-        self._playback_id: str | None = None
         self._cancelled = False
+        self.send_failed = False
         self._error_cleanup: asyncio.Task | None = None
+
+    @property
+    def playback_id(self) -> str | None:
+        """Return the playback ID once its TTS_PLAY is being sent."""
+        return self._manager.playback_id
 
     async def async_run(self, pipeline: Coroutine) -> None:
         """Run and join the public Satellite caller, including TTS on cancellation."""
@@ -173,6 +181,8 @@ class PipelineTtsEvents:
             await asyncio.shield(self._caller)
             if self._error_cleanup is not None:
                 await asyncio.shield(self._error_cleanup)
+            if self._events:
+                await asyncio.shield(asyncio.gather(*self._events))
         except BaseException as err:
             caller = self._caller
             if not caller.done() and not self._cancelled:
@@ -190,8 +200,13 @@ class PipelineTtsEvents:
 
     async def async_cancel(self, playback_id: str) -> bool:
         """Cancel and join only the run associated with this playback ID."""
-        if self._playback_id is None or playback_id != self._playback_id:
+        if self.playback_id is None or playback_id != self.playback_id:
             return False
+        await self.async_close()
+        return True
+
+    async def async_close(self) -> None:
+        """Close this run's resources even after the public caller returned."""
         caller = self._caller
         if caller is not None and not caller.done() and not self._cancelled:
             caller.cancel()
@@ -200,7 +215,6 @@ class PipelineTtsEvents:
         finally:
             if caller is not None:
                 await asyncio.gather(caller, return_exceptions=True)
-        return True
 
     async def _stop_audio(self) -> None:
         self._cancelled = True
@@ -218,12 +232,11 @@ class PipelineTtsEvents:
         try:
             await self._manager.async_handle_pipeline_event(event)
         except HomeAssistantError:
+            self.send_failed = True
             _LOGGER.warning(
                 "Unable to send TTS resource to ESP32; check the internal URL "
                 "and diagnostic connection"
             )
-        if self._manager._resource is not None:
-            self._playback_id = self._manager._resource.playback_id
 
     @callback
     def __call__(self, event: PipelineEvent) -> None:

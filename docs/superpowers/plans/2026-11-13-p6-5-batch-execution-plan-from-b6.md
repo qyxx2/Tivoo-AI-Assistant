@@ -94,21 +94,23 @@
 
 **Files:** `audio_session.py`、`diagnostics.py`、`transport.py`、`__init__.py`、新建/复用 `assist_satellite.py`、P3 `conversation.py`；测试 `test_audio_session.py`、`test_transport.py`、`test_assist_satellite.py`。
 
-- [ ] RED tests：MIC_SESSION_START 创建长期 ingress；多个顺序 iterator/订阅可开始结束而不结束 device upload；session end/stop 只影响匹配 UUID。
-- [ ] 将单次 iterator_claimed 改为一个 ingress + 有界 per-turn subscription/handoff；保持 4 KiB MIC_PCM 上限和旧 session ID 丢弃规则。KWS Detection 后用于新 STT 的 handoff 固定为 15 秒/480,000 bytes，覆盖 P3 Stop 最长 10 秒的现有等待预算，按矩阵 §5.3 用 ingress index 合并 1 秒预录、queued_audio 和后续音频；总 handoff 上限包含预录。
-- [ ] 添加有界 pre-roll、KWS-to-STT handoff、队列深度/overflow 结果；不累积无限 PCM。
-- [ ] 新增 MIC_ACTIVITY 0x24：严格校验 UUID、speech_start/speech_end、uptime_ms；仅 HELLO 声明 mic_activity_events 时处理。首次上传顺序为 MIC_SESSION_START → MIC_ACTIVITY speech_start → pre-roll MIC_PCM；验证 TCP Sequence 顺序。
-- [ ] 生产 Tivoo Satellite 通过 tts_options 显式设置 preferred_format=mp3；验证传入真实 HA Pipeline，不能沿用测试 Satellite 的 wav 选项。
-- [ ] AudioSessionCoordinator 独占 session、turn generation、pipeline handle、KWS watcher、playback_id 和 timer；transport 只负责消息分发。
-- [ ] Pipeline RUN_END 不停止 MIC session；只有 wake miss、首次候选 15 秒硬上限、command timeout、follow-up timeout、异常/unload 关闭上传。
-- [ ] 首轮窗口：WAKE_WORD 阶段由 AudioSessionCoordinator 监控 MIC_ACTIVITY；最近 speech_end 后 3 秒无新 speech_start 时取消未命中 Pipeline；从首次 speech_start 起 15 秒候选硬上限。不要依赖 HA WakeWordSettings 默认值（实际为 None），也不要复制 Satellite 基类未公开的参数。
-- [ ] 首次唤醒在 Detection 时启动 5 秒 command-start watchdog；打断交接在新轮 STT_START 时启动并优先消费 handoff，旧轮清理不计入；HA STT_VAD_START（VoiceCommandSegmenter 检测到至少 0.3 秒命令语音）到达时取消。超时没有 STT_VAD_START 就取消空 STT turn，不触发 AstrBot Stop（P3 Chat 尚未开始）。
-- [ ] 定义命令端点测试：HA VoiceCommandSegmenter 默认 0.3 秒起始 speech、1.0 秒 command_seconds、0.7 秒 silence 和 15 秒 timeout；P7A requires_external_vad=true 必须使用此 segmenter，STT_VAD_START 用于取消 5 秒空命令 watchdog。
-- [ ] Follow-up：仅在设备报告真实 playback completed 后启动 8 秒定时器；speech_start 取消 timer 并从 STT 开新 turn；到期 MIC_CAPTURE_STOP 一次，物理采集不停止。
-- [ ] P3 ConversationResult：保留 async_get_result_from_chat_log() 的 response/conversation_id；当 user_input.satellite_id 非 None 且有正常回复时，构造 continue_conversation=True 的 ConversationResult，使 HA 下一轮沿用 AstrBot agent。无 satellite_id 时原样返回 HA ChatLog 派生的 continue_conversation，不改普通文字会话原生问句续聊行为。测试 Satellite override 与普通文字原生行为两条分支。
-- [ ] fake clock 测试：Pipeline/TTS 活跃期间 timer 不推进；follow-up speech 重置窗口；wake miss 和 command timeout 不串入 AstrBot session TTL。
+- [x] RED tests：MIC_SESSION_START 创建长期 ingress；多个顺序 iterator/订阅可开始结束而不结束 device upload；session end/stop 只影响匹配 UUID。
+- [x] 将单次 iterator_claimed 改为一个 ingress + 有界 per-turn subscription/handoff；保持 4 KiB MIC_PCM 上限和旧 session ID 丢弃规则。KWS Detection 后用于新 STT 的 handoff 固定为 15 秒/480,000 bytes，覆盖 P3 Stop 最长 10 秒的现有等待预算，按矩阵 §5.3 用 ingress index 合并 1 秒预录、queued_audio 和后续音频；总 handoff 上限包含预录。
+- [x] 添加有界 pre-roll、KWS-to-STT handoff、队列深度/overflow 结果；不累积无限 PCM。
+- [x] 新增 MIC_ACTIVITY 0x24：严格校验 UUID、speech_start/speech_end、uptime_ms；仅 HELLO 声明 mic_activity_events 时处理。首次上传顺序为 MIC_SESSION_START → MIC_ACTIVITY speech_start → pre-roll MIC_PCM；验证 TCP Sequence 顺序。
+- [x] 生产 Tivoo Satellite 通过 tts_options 显式设置 preferred_format=mp3；验证传入真实 HA Pipeline，不能沿用测试 Satellite 的 wav 选项。
+- [x] AudioSessionCoordinator 独占 session、turn generation、pipeline handle、playback_id 和 timer；transport 只负责消息分发。side KWS watcher 由 b9 接入同一协调器。
+- [x] Pipeline RUN_END 不停止 MIC session；只有 wake miss、首次候选 15 秒硬上限、command timeout、follow-up timeout、异常/unload 关闭上传。
+- [x] 首轮窗口：WAKE_WORD 阶段由 AudioSessionCoordinator 监控 MIC_ACTIVITY；最近 speech_end 后 3 秒无新 speech_start 时取消未命中 Pipeline；从首次 speech_start 起 15 秒候选硬上限。不要依赖 HA WakeWordSettings 默认值（实际为 None），也不要复制 Satellite 基类未公开的参数。
+- [x] 首次唤醒在 Detection 时启动 5 秒 command-start watchdog；打断交接在新轮 STT_START 时启动并优先消费 handoff，旧轮清理不计入（b7 实现按 STT_START 计时及有界 handoff，b9 接线）；HA STT_VAD_START（VoiceCommandSegmenter 检测到至少 0.3 秒命令语音）到达时取消。超时没有 STT_VAD_START 就取消空 STT turn，不触发 AstrBot Stop（P3 Chat 尚未开始）。
+- [x] 定义命令端点测试：HA VoiceCommandSegmenter 默认 0.3 秒起始 speech、1.0 秒 command_seconds、0.7 秒 silence 和 15 秒 timeout；P7A requires_external_vad=true 必须使用此 segmenter，STT_VAD_START 用于取消 5 秒空命令 watchdog。
+- [x] Follow-up：仅在设备报告真实 playback completed 后启动 8 秒定时器；speech_start 取消 timer 并从 STT 开新 turn；到期 MIC_CAPTURE_STOP 一次，物理采集不停止。
+- [x] P3 ConversationResult：保留 async_get_result_from_chat_log() 的 response/conversation_id；当 user_input.satellite_id 非 None 且有正常回复时，构造 continue_conversation=True 的 ConversationResult，使 HA 下一轮沿用 AstrBot agent。无 satellite_id 时原样返回 HA ChatLog 派生的 continue_conversation，不改普通文字会话原生问句续聊行为。测试 Satellite override 与普通文字原生行为两条分支。
+- [x] fake clock 测试：Pipeline/TTS 活跃期间 timer 不推进；follow-up speech 重置窗口；wake miss 和 command timeout 不串入 AstrBot session TTL。
   
 **Exit gate:** 一个 MIC session 跨 2+ Pipeline；顺序消费、队列上限和过期清理正确；VAD event 不会取消活动回复。
+
+**验收:** [B7 本地验收记录](../reports/2026-11-13-p6-5b7-persistent-mic-ingress.md)。
 
 ## P6.5b8 — ESP32 常驻 I2S RX / AEC / VAD / MIC producer
 

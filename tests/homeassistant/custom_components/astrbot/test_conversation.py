@@ -100,13 +100,15 @@ async def test_config_entry_registers_and_unloads_conversation_agent(
     assert conversation.async_get_agent(hass, "conversation.astrbot") is None
 
 
+@pytest.mark.parametrize("native_followup", [False, True])
 async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_result(
-    hass, enable_custom_integrations, aiohttp_client
+    hass, enable_custom_integrations, aiohttp_client, native_followup
 ):
     enable_socket()
     first_delta_seen = asyncio.Event()
     allow_first_response_to_finish = asyncio.Event()
     request_bodies = []
+    second_reply = "第二轮回答？" if native_followup else "第二轮回答"
 
     async def send_event(response, payload):
         data = json.dumps(payload, ensure_ascii=False)
@@ -133,7 +135,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
             await allow_first_response_to_finish.wait()
             await send_event(response, {"type": "plain", "data": "第二段"})
         else:
-            await send_event(response, {"type": "plain", "data": "第二轮回答"})
+            await send_event(response, {"type": "plain", "data": second_reply})
         await send_event(response, {"type": "end", "data": ""})
         await response.write_eof()
         return response
@@ -179,6 +181,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
     first_result = first_task.result()
 
     assert isinstance(first_result, conversation.ConversationResult)
+    assert first_result.continue_conversation is True
     assert first_result.conversation_id == "ha-conversation-one"
     assert (
         first_result.response.as_dict()["speech"]["plain"]["speech"] == "第一段第二段"
@@ -201,7 +204,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
         context=Context(user_id="ha-user-id"),
         conversation_id="ha-conversation-two",
         device_id="another-device",
-        satellite_id="another-satellite",
+        satellite_id=None,
         language="en-US",
         agent_id="conversation.astrbot",
         extra_system_prompt="also must not be forwarded",
@@ -210,14 +213,15 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
         hass, second_input, on_delta, chat_logs
     )
 
+    assert second_result.continue_conversation is native_followup
     assert second_result.conversation_id == "ha-conversation-two"
-    assert second_result.response.as_dict()["speech"]["plain"]["speech"] == "第二轮回答"
+    assert second_result.response.as_dict()["speech"]["plain"]["speech"] == second_reply
     second_messages = [
         item for item in chat_logs[1].content if item.role in {"user", "assistant"}
     ]
     assert [item.role for item in second_messages] == ["user", "assistant"]
     assert second_messages[0].content == SECOND_MESSAGE
-    assert second_messages[1].content == "第二轮回答"
+    assert second_messages[1].content == second_reply
 
     assert len(request_bodies) == 2
     for body, message in zip(

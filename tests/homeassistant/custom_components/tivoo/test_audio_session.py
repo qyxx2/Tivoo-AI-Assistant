@@ -245,3 +245,54 @@ async def test_new_session_waits_for_ended_session_pcm_to_drain():
     assert await _collect(old_iterator) == [b"pending-old-frame!"]
     await manager.async_start_session(_start_payload(SESSION_2))
     assert manager.active_session_id == SESSION_2
+
+
+async def test_persistent_ingress_reopens_without_replaying_old_audio():
+    manager = AudioSessionManager()
+    await manager.async_start_session(_start_payload(), persistent=True)
+    async with manager.audio_subscription(SESSION_1) as first:
+        await manager.async_push_pcm(SESSION_1, b"one!")
+        assert await anext(first) == b"one!"
+
+    checkpoint = manager.ingress_offset(SESSION_1)
+    await manager.async_push_pcm(SESSION_1, b"two!")
+    async with manager.audio_subscription(SESSION_1, start=checkpoint) as second:
+        assert await anext(second) == b"two!"
+        await manager.async_end_session(SESSION_1, "completed")
+        assert await _collect(second) == []
+
+
+async def test_handoff_keeps_delayed_detection_audio_in_ingress_order():
+    manager = AudioSessionManager()
+    await manager.async_start_session(_start_payload(), persistent=True)
+    for value in range(80):
+        await manager.async_push_pcm(SESSION_1, bytes([value]) * 640)
+
+    # Detection is associated with the start of frame 60. HA already has
+    # queued frames 60–79, so they must be read from ingress exactly once.
+    handoff = manager.handoff(SESSION_1, 60 * 640)
+    async with handoff as audio:
+        await manager.async_push_pcm(SESSION_1, bytes([80]) * 640)
+        await manager.async_end_session(SESSION_1, "completed")
+        assert [chunk[0] async for chunk in audio] == list(range(10, 81))
+
+
+async def test_handoff_byte_limit_includes_preroll_and_stops_on_overflow():
+    stops = []
+
+    async def stop(session_id, reason):
+        stops.append((session_id, reason))
+
+    manager = AudioSessionManager(stop)
+    await manager.async_start_session(_start_payload(), persistent=True)
+    for _ in range(50):
+        await manager.async_push_pcm(SESSION_1, bytes(640))
+
+    async with manager.handoff(SESSION_1, 32000) as audio:
+        for _ in range(700):
+            await manager.async_push_pcm(SESSION_1, bytes(640))
+        assert manager.queue_size == 750
+        await manager.async_push_pcm(SESSION_1, bytes(640))
+        assert await _collect(audio) == []
+    assert manager.overflow_count == 1
+    assert stops == [(SESSION_1, "handoff_overflow")]

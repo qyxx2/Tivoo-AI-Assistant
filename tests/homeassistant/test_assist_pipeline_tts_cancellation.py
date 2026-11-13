@@ -95,9 +95,19 @@ async def _send_sse(response: web.StreamResponse, event: dict) -> None:
 
 
 @pytest.mark.enable_socket
-@pytest.mark.parametrize("owned", [False, True], ids=["native", "tivoo"])
+@pytest.mark.parametrize(
+    ("owned", "external_vad"),
+    [(False, False), (True, False), (True, True)],
+    ids=["native", "tivoo", "tivoo-external-vad"],
+)
 async def test_normal_pipeline_completion_closes_all_owned_streams(
-    hass, enable_custom_integrations, aiohttp_client, monkeypatch, tmp_path, owned
+    hass,
+    enable_custom_integrations,
+    aiohttp_client,
+    monkeypatch,
+    tmp_path,
+    owned,
+    external_vad,
 ) -> None:
     """A complete Assist run drains its SSE/TTS/Wyoming owners without Stop."""
     enable_socket()
@@ -337,9 +347,43 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         )
 
         satellite = P65ControlSatellite(hass, wyoming_entry)
+        audio = _audio_stream()
+        if external_vad:
+            from custom_components.tivoo.assist_satellite import TivooAssistSatellite
+            from custom_components.tivoo.audio_session import AudioSessionManager
+            from homeassistant.components.assist_pipeline import audio_enhancer
+
+            assert await async_setup_component(hass, "ffmpeg", {})
+            satellite = TivooAssistSatellite(
+                wyoming_entry.entry_id, AudioSessionManager(), SimpleNamespace()
+            )
+            satellite.hass = hass
+            satellite.platform = SimpleNamespace(config_entry=wyoming_entry)
+            satellite.entity_id = "assist_satellite.tivoo"
+            satellite.registry_entry = None
+            satellite.async_write_ha_state = lambda: None
+            satellite.events = []
+            satellite.on_pipeline_event = satellite.events.append
+
+            # Keep the real HA VoiceCommandSegmenter and Wyoming STT transport.
+            # Deterministic scores isolate endpointing from the acoustic model.
+            class FixtureVad:
+                def Process10ms(self, chunk):
+                    return 1.0 if any(chunk) else 0.0
+
+            monkeypatch.setattr(audio_enhancer, "MicroVad", FixtureVad)
+
+            async def command_then_silence():
+                for _ in range(15):
+                    yield b"\x01\x00" * 320
+                for _ in range(50):
+                    yield bytes(640)
+                pytest.fail("HA must endpoint the command before input EOF")
+
+            audio = command_then_silence()
         mark("pipeline_start")
         pipeline_call = satellite.async_accept_pipeline_from_satellite(
-            _audio_stream(),
+            audio,
             start_stage=PipelineStage.STT,
             end_stage=PipelineStage.TTS,
             context=Context(user_id="p6-5b1-ha-user"),
@@ -387,6 +431,15 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
             event.type is PipelineEventType.ERROR for event in satellite.events
         )
         assert stop_calls == []
+        if external_vad:
+            events = {event.type: event.data for event in satellite.events}
+            assert events[PipelineEventType.STT_START]["audio_processing"][
+                "requires_external_vad"
+            ]
+            started = events[PipelineEventType.STT_VAD_START]["timestamp"]
+            ended = events[PipelineEventType.STT_VAD_END]["timestamp"]
+            assert 290 <= started <= 310
+            assert 990 <= ended <= 1020
 
         tts_end = next(
             event
@@ -400,12 +453,17 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         mark("tts_proxy_get_start")
         response = await web_client.get(f"/api/tts_proxy/{token}")
         assert response.status == 200
-        assert response.content_type == "audio/x-wav"
+        assert response.content_type == (
+            "audio/mpeg" if external_vad else "audio/x-wav"
+        )
         audio_data = await response.read()
         mark("tts_proxy_get_done")
         await asyncio.wait_for(wyoming_client_disconnected.wait(), timeout=5)
         assert wyoming_disconnect_count == 1
-        assert audio_data.startswith(b"RIFF")
+        if external_vad:
+            assert audio_data.startswith(b"ID3")
+        else:
+            assert audio_data.startswith(b"RIFF")
         assert len(audio_data) > 44
 
         if owned:
