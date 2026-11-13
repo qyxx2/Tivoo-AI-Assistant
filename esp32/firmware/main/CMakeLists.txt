@@ -2,6 +2,8 @@ idf_component_register(
     SRCS
         "main.c"
         "audio_resource.c"
+        "audio_capture.c"
+        "audio_frontend.c"
         "device_status.c"
         "hardware_memory.c"
         "wifi_station.c"
@@ -14,6 +16,7 @@ idf_component_register(
         "tivoo_spp_session.c"
     INCLUDE_DIRS "."
     REQUIRES
+        esp_driver_i2s
         esp_event
         esp_http_client
         mbedtls

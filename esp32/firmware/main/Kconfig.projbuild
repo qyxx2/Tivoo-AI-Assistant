@@ -13,3 +13,29 @@ config TIVOO_WIFI_PASSWORD
         Local Wi-Fi password. Stored in the local sdkconfig and never logged.
 
 endmenu
+
+menu "Tivoo I2S audio"
+
+config TIVOO_I2S_BCLK_GPIO
+    int "Shared BCLK GPIO"
+    range 0 33
+    default 26
+
+config TIVOO_I2S_WS_GPIO
+    int "Shared WS GPIO"
+    range 0 33
+    default 25
+
+config TIVOO_I2S_DIN_GPIO
+    int "INMP441 SD GPIO"
+    range 0 39
+    default 34
+
+config TIVOO_I2S_DOUT_GPIO
+    int "PCM5102 DIN GPIO"
+    range -1 33
+    default -1
+    help
+        -1 leaves DAC data disconnected. The capture batch uses silent TX DMA.
+
+endmenu

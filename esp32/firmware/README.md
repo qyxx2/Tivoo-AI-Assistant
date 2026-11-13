@@ -1,6 +1,6 @@
-# Tivoo ESP32 firmware (P5b4)
+# Tivoo ESP32 firmware
 
-This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; it does not run the Tivoo display codec or any audio pipeline.
+This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; Home Assistant owns the Tivoo display codec. The firmware runs the P6.5b8 microphone frontend and the P6 HTTP audio resource reader.
 
 ## Local build
 
@@ -18,9 +18,15 @@ The default controller mode is Classic-only (`BR_EDR_ONLY`) with Bluedroid and S
 
 At CMake configure time, the firmware version is generated as `0.1.0+<git-short-sha>` from repository HEAD.
 
+## INMP441 capture
+
+The **Tivoo I2S audio** menu defaults to BCLK GPIO26, WS GPIO25, and INMP441 SD GPIO34. Tie L/R to GND to select the left slot. Power the microphone from 3.3 V with a common ground. Verify that SD has a pull-down of about 100 kΩ on the module or wiring because GPIO34 has no internal pull-down. The DAC data GPIO defaults to unused for this capture batch.
+
+Capture uses I2S0 in Philips stereo mode at 32 kHz with 32-bit slots. The frontend applies a low-pass filter before 2:1 decimation and runs the 16 kHz ESP-SR AEC and VAD. Existing local builds can select 240 MHz under **CPU frequency** in menuconfig. The frontend advertises `mic_activity_events` after successful initialization and requires a B7-compatible HA integration for that handshake.
+
 ## Startup and NVS ownership
 
-Startup order is diagnostics worker, `nvs_flash_init()`, Bluetooth Controller/Bluedroid/SPP, TCP listener manager, and then Wi-Fi Station. Bluetooth is never initialized when NVS initialization fails.
+Startup order is diagnostics worker, `nvs_flash_init()`, Bluetooth Controller/Bluedroid/SPP, I²S RX/AEC/VAD frontend, TCP listener manager, and then Wi-Fi Station. Bluetooth is never initialized when NVS initialization fails.
 
 There is deliberately no automatic `nvs_flash_erase()` fallback. An NVS initialization error stops startup and is reported through the existing 7778 diagnostics path. This preserves previously stored Bluetooth bonds instead of silently deleting the entire NVS partition.
 

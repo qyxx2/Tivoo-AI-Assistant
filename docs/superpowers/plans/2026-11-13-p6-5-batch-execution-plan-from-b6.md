@@ -118,17 +118,19 @@
 
 **Files:** 新建 `audio_capture.c/.h`、`audio_frontend.c/.h`；修改 `main.c`、`CMakeLists.txt`、`diagnostics.c/.h` 和 MIC send seam；测试 `tests/esp32/`。
 
-- [ ] Host tests：INMP441 左 Slot 解码、sign extension、anti-alias/downsample、16 kHz S16LE 输出、pre-roll ring、session start/stop。
-- [ ] 配置同一 I2S controller 32 kHz/Stereo/32-bit 全双工；RX/TX DMA 分离，沿用已冻结 GPIO/wiring。
-- [ ] 使用 esp-sr 2.6.1 初始化 M/R AFE、经典 ESP32 SR High Performance AEC 和 VAD；vad_mute_playback=false，帧长取 API。
-- [ ] 无播放时 R 输入零样本；播放时从音频输出管理器取得最终 TX 参考。
-- [ ] RX/AEC/VAD 成功初始化后常驻；VAD 只维护 speech activity 状态并发送 MIC_ACTIVITY，不调用 AUDIO_STOP / AUDIO_INTERRUPTED。
-- [ ] IDLE speech_start 打开 MIC session，先发送 AEC pre-roll，再持续发送 AEC PCM（含静音）。
-- [ ] MIC_CAPTURE_STOP 仅停止网络上传；I2S RX/AEC/VAD 继续运行。
-- [ ] 网络写入、AFE、DMA 不互相阻塞；检查 Wi-Fi/SPP 并发时任务栈和 buffer。
-- [ ] 设备日志有 AEC underrun/misalignment、VAD transition、PCM drop 计数。
+- [x] Host tests：INMP441 左 Slot 解码、sign extension、anti-alias/downsample、16 kHz S16LE 输出、pre-roll ring、session start/stop。
+- [x] 配置同一 I2S controller 32 kHz/Stereo/32-bit 全双工；RX/TX DMA 分离，沿用已冻结 GPIO/wiring。
+- [x] 使用 esp-sr 2.6.1 初始化 M/R AFE、经典 ESP32 SR High Performance AEC 和 VAD；vad_mute_playback=false，帧长取 API。
+- [x] 无播放时 R 输入零样本；预留最终 TX 参考输入，输出管理器接线与对齐由 b10 验收。
+- [x] RX/AEC/VAD 成功初始化后常驻；VAD 只维护 speech activity 状态并发送 MIC_ACTIVITY，不调用 AUDIO_STOP / AUDIO_INTERRUPTED。
+- [ ] IDLE speech_start 打开 MIC session，先发送 AEC pre-roll，再持续发送 AEC PCM（含静音）。主机通过，真实 VAD 会话待验收。
+- [ ] MIC_CAPTURE_STOP 仅停止网络上传；I2S RX/AEC/VAD 继续运行。主机通过，真实 STOP 待验收。
+- [x] 网络写入、AFE、DMA 不互相阻塞；检查 Wi-Fi/SPP 并发时任务栈和 buffer。
+- [x] 设备日志有 AEC underrun/misalignment、VAD transition、PCM drop 计数。
 
 **Exit gate:** ESP-IDF build/host tests PASS；实机 RX/AEC/VAD 常驻，首次 VAD 开启上传，MIC_CAPTURE_STOP 不停止物理音频运行时。
+
+**验收状态：** 实机 RX/AEC/VAD 常驻已验证。真人说话未建立 MIC session，实机上传与 STOP 退出条件仍待通过。[B8 验收记录](../reports/2026-11-13-p6-5b8-esp32-audio-capture.md)。
 
 ## P6.5b9 — NAS KWS watcher、确认打断与 PCM handoff
 
