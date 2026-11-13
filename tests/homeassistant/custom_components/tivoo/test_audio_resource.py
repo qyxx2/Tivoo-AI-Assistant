@@ -264,3 +264,14 @@ async def test_pipeline_callback_logs_tts_failure_without_proxy_token(hass, capl
     assert "Unable to send TTS resource to ESP32" in caplog.text
     assert "opaque-fake-token-1" not in caplog.text
     assert adapter.sent == []
+
+
+async def test_interruption_suppresses_late_tts_events(hass):
+    adapter = _TtsAdapter()
+    events = create_pipeline_event_callback(hass, adapter)
+    events.stop_dispatch()
+    events(_event(PipelineEventType.TTS_END, {"tts_output": _tts_output()}))
+    await hass.async_block_till_done()
+
+    assert adapter.sent == []
+    assert events.playback_id is None

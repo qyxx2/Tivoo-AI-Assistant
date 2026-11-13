@@ -138,18 +138,20 @@
 
 **Files:** `assist_satellite.py`、`audio_session.py`、`audio_resource.py`；测试 `test_assist_satellite.py`、`test_audio_session.py`、`test_audio_resource.py`。
 
-- [ ] RED tests：side KWS 在主 Pipeline 发出 STT_START 时立即启动，与 STT 消费并行；覆盖 STT 本身、AstrBot 首个 plain 前、plain 后和 TTS 播放；WAKE_WORD 主阶段不得重复建 watcher。follow-up STT turn 也启动 watcher。
-- [ ] 使用 HA 公开 `WakeWordDetectionEntity.async_process_audio_stream()` 和当前选定的 Wake Word entity；复用 Sherpa Wyoming Provider。Watcher 从 STT_START 并行消费，不等 STT_END，因而 STT 阶段也能被下一次唤醒词打断。
-- [ ] watcher 消费同一有序 AEC ingress，可独立取消；KWS hit、follow-up start、session expiry、HA unload 时关闭。
-- [ ] KWS Detection 命中时只创建一个 interrupt generation；activity-only 事件不得触发 cancel。
-- [ ] 若旧 playback_id 活动，发送匹配 AUDIO_STOP；随后 cancel/await 旧 public Satellite caller。
-- [ ] P3 负责关闭 SSE 并 Stop；Tivoo 不直接调用 AstrBot API。
-- [ ] 等 b6 TTS owner 和下游 Wyoming/P7A request 清理完成后才启动新 STT。
-- [ ] Wyoming Detection.timestamp 只关联 HA ingress index，不当作精确唤醒词结束点；按矩阵 §5.3 合并 1 秒检测前预录、queued_audio、未消费 ingress 及后续 PCM，去重后交给新 STT；不得将 ESP32 uptime_ms 与 HA monotonic 直接比较。handoff 上限 15 秒/480,000 bytes，超限显式失败。
-- [ ] 新 Pipeline 从 STT 开始，conversation/session ID 延续 P3；旧 run 迟到事件按 generation 丢弃。
-- [ ] 测试唤醒词紧接命令及 Detection 回调延迟时命令开头无丢失；旧 Stop 等待超过 5 秒时缓存命令仍可进入新 STT 且不误触发空命令超时；测试连续两次快速 KWS hit、KWS miss、旧 Stop 延迟、旧 AUDIO_STATE 迟到；新 run 不受旧消息影响。
+- [x] RED tests：side KWS 在主 Pipeline 发出 STT_START 时立即启动，与 STT 消费并行；覆盖 STT 本身、AstrBot 首个 plain 前、plain 后和 TTS 播放；WAKE_WORD 主阶段不得重复建 watcher。follow-up STT turn 也启动 watcher。
+- [x] 使用 HA 公开 `WakeWordDetectionEntity.async_process_audio_stream()` 和当前选定的 Wake Word entity；复用 Sherpa Wyoming Provider。Watcher 从 STT_START 并行消费，不等 STT_END，因而 STT 阶段也能被下一次唤醒词打断。
+- [x] watcher 消费同一有序 AEC ingress，可独立取消；KWS hit、follow-up start、session expiry、HA unload 时关闭。
+- [x] KWS Detection 命中时只创建一个 interrupt generation；activity-only 事件不得触发 cancel。
+- [x] 若旧 playback_id 活动，发送匹配 AUDIO_STOP；随后 cancel/await 旧 public Satellite caller。
+- [x] P3 负责关闭 SSE 并 Stop；Tivoo 不直接调用 AstrBot API。
+- [x] 等 b6 TTS owner 和下游 Wyoming/P7A request 清理完成后才启动新 STT。
+- [x] Wyoming Detection.timestamp 只关联 HA ingress index，不当作精确唤醒词结束点；按矩阵 §5.3 合并 1 秒检测前预录、queued_audio、未消费 ingress 及后续 PCM，去重后交给新 STT；不得将 ESP32 uptime_ms 与 HA monotonic 直接比较。handoff 上限 15 秒/480,000 bytes，超限显式失败。
+- [x] 新 Pipeline 从 STT 开始，conversation/session ID 延续 P3；旧 run 迟到事件按 generation 丢弃。
+- [x] 测试唤醒词紧接命令及 Detection 回调延迟时命令开头无丢失；旧 Stop 等待超过 5 秒时缓存命令仍可进入新 STT 且不误触发空命令超时；测试连续两次快速 KWS hit、KWS miss、旧 Stop 延迟、旧 AUDIO_STATE 迟到；新 run 不受旧消息影响。
 
 **Exit gate:** AstrBot 尚未回应时和 SSE 输出期间 KWS 可打断；普通 VAD 活动不打断；新命令 PCM 无丢失且从 STT 开始。
+
+**B9 验证（2026-11-13）：** HA 回归覆盖 STT、AstrBot 首个 plain 前后、TTS 播放状态、follow-up、连续命中、未命中及迟到的 AUDIO_STATE。以模拟旧轮清理验证超过 5 秒后仍可从 STT 交付有界 PCM，Provider queued_audio 不重复交付。NAS 的 HA Core 2026.11.0 容器内运行临时测试，使用真实 HA Wyoming Wake Word Entity 和生产 Sherpa 模型，Matcha 合成的普通话负样本未打断，“大肥鱼”命中。模拟旧轮清理等待 5.2 秒后，新 STT 收到 约 72.5 KB，命令标记恰好一次；无后续 PCM 时 watcher 可关闭。NAS 到 ESP32 的 7777/7778 均已连接。测试使用注入 PCM 和替身 Pipeline，生产 HA 集成未替换，ESP32 未刷写；真人麦克风和实际 DAC 播放打断由 b11 验收。
 
 ## P6.5b10 — ESP32 解码/DAC 全双工与播放终态
 

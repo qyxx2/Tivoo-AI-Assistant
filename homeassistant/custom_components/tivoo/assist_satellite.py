@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 
+from homeassistant.components import wake_word
+from homeassistant.components.assist_pipeline import async_get_pipeline
 from homeassistant.components.assist_pipeline.models import (
     PipelineEvent,
     PipelineEventType,
@@ -27,6 +30,7 @@ from .const import DOMAIN
 from .transport import Esp32ConnectionAdapter
 
 _LOGGER = logging.getLogger(__name__)
+_WAKE_WORD_ID = "tivoo-wake"
 
 
 async def async_setup_entry(
@@ -55,9 +59,13 @@ class _Turn:
     tts: PipelineTtsEvents
     waiting_for_wake: bool
     task: asyncio.Task | None = None
+    pipeline_id: str | None = None
+    watcher: asyncio.Task | None = None
+    watcher_consumer: object | None = None
     error: bool = False
     command_started: bool = False
     playback_completed: bool = False
+    interrupted: bool = False
 
 
 class AudioSessionCoordinator:
@@ -123,14 +131,21 @@ class AudioSessionCoordinator:
             elif "wake_miss" not in self._timers:
                 self._arm(3, "wake_miss")
 
-    def _start_turn(self, stage: PipelineStage) -> None:
+    def _start_turn(
+        self,
+        stage: PipelineStage,
+        *,
+        interrupted: _Turn | None = None,
+        start: int | None = None,
+    ) -> None:
         self._clear_timers()
         self._followup = False
         session_id = self._session_id
         assert session_id is not None
         # Capture the boundary synchronously, before transport dispatches any
         # PCM following the speech-start frame in the same TCP read.
-        start = self.ingress.ingress_offset(session_id)
+        if start is None:
+            start = self.ingress.ingress_offset(session_id)
         turn = _Turn(
             session_id,
             PipelineTtsEvents(self.entity.hass, self.entity.adapter),
@@ -140,11 +155,22 @@ class AudioSessionCoordinator:
         self._turn = turn
         if turn.waiting_for_wake:
             self._arm(15, "wake_candidate_timeout")
-        prior_task = previous.task if previous is not None else self._closing
+        if previous is not None and interrupted is None:
+            prior_task = asyncio.gather(
+                *(
+                    task
+                    for task in (previous.task, previous.watcher)
+                    if task is not None
+                ),
+                return_exceptions=True,
+            )
+        else:
+            prior_task = self._closing
         if self._closing is not None and self._closing.done():
             self._closing = None
         turn.task = self.entity.hass.async_create_background_task(
-            self._run_turn(turn, stage, start, prior_task), "Tivoo satellite Pipeline"
+            self._run_turn(turn, stage, start, prior_task, interrupted),
+            "Tivoo satellite Pipeline",
         )
 
     async def _run_turn(
@@ -153,12 +179,20 @@ class AudioSessionCoordinator:
         stage: PipelineStage,
         start: int,
         prior: asyncio.Future | None,
+        interrupted: _Turn | None,
     ) -> None:
+        cleanup = (
+            asyncio.create_task(self._interrupt_turn(interrupted))
+            if interrupted
+            else None
+        )
         try:
             async with self.ingress.audio_subscription(
                 turn.session_id, start=start, consumer=turn
             ) as audio:
-                if prior is not None and not prior.done():
+                if cleanup is not None:
+                    await asyncio.shield(cleanup)
+                elif prior is not None and not prior.done():
                     # Reconnect/follow-up must not overtake the previous public
                     # caller, including its asynchronous cancellation cleanup.
                     await asyncio.shield(asyncio.gather(prior, return_exceptions=True))
@@ -172,8 +206,11 @@ class AudioSessionCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception:
-            _LOGGER.exception("Tivoo satellite Pipeline failed")
+            _LOGGER.exception("Tivoo satellite Pipeline or PCM handoff failed")
             turn.error = True
+        finally:
+            if cleanup is not None:
+                await asyncio.gather(cleanup, return_exceptions=True)
 
         if self._turn is not turn:
             return
@@ -181,6 +218,104 @@ class AudioSessionCoordinator:
             await self.ingress.async_stop_session(turn.session_id, "pipeline_failed")
         elif turn.tts.playback_id is None and not self._followup:
             self._open_followup()
+
+    async def _interrupt_turn(self, turn: _Turn) -> None:
+        """Join the interrupted caller and its audio owner before reusing Assist."""
+        try:
+            async with asyncio.timeout(5):
+                await turn.tts.async_stop_playback()
+        finally:
+            if turn.task is not None and not turn.task.done():
+                if not turn.task.cancelling():
+                    turn.task.cancel()
+                await asyncio.gather(turn.task, return_exceptions=True)
+            # Also covers an already-returned caller and propagates a failed
+            # Wyoming cleanup so the replacement cannot overtake it.
+            await turn.tts.async_close()
+
+    def _start_watcher(self, turn: _Turn) -> None:
+        if turn.watcher is not None or turn.waiting_for_wake or self._followup:
+            return
+        start = self.ingress.ingress_offset(turn.session_id)
+        turn.watcher_consumer = object()
+        turn.watcher = self.entity.hass.async_create_background_task(
+            self._watch_wake_word(turn, start, turn.watcher_consumer),
+            "Tivoo side wake word",
+        )
+
+    def _stop_watcher(self, turn: _Turn) -> asyncio.Task | None:
+        if turn.watcher_consumer is not None:
+            # Wyoming waits for its pending read on cancellation. Releasing
+            # the cursor wakes that read even when no new MIC_PCM is arriving.
+            self.ingress.release_subscription(turn.session_id, turn.watcher_consumer)
+        task = turn.watcher
+        if task is not None and not task.done():
+            if not task.cancelling():
+                task.cancel()
+            return task
+        return None
+
+    async def _watch_wake_word(self, turn: _Turn, start: int, consumer: object) -> None:
+        try:
+            selection = self.entity.wake_word_provider(turn.pipeline_id)
+        except Exception:
+            _LOGGER.exception("Tivoo could not resolve the selected wake-word provider")
+            return
+        if selection is None:
+            return
+        provider, wake_word_id = selection
+
+        while self._turn is turn and not self._followup and not turn.error:
+            last_offset = start
+
+            async def indexed_audio(
+                audio: AsyncIterator[bytes],
+                offset: int,
+            ) -> AsyncIterator[tuple[bytes, int]]:
+                nonlocal last_offset
+                async for chunk in audio:
+                    last_offset = offset
+                    # Sherpa echoes this value as an opaque ingress position.
+                    yield chunk, offset
+                    offset += len(chunk)
+
+            try:
+                async with (
+                    self.ingress.audio_subscription(
+                        turn.session_id, start=start, consumer=consumer
+                    ) as audio,
+                    aclosing(indexed_audio(audio, start)) as chunks,
+                ):
+                    detection = await provider.async_process_audio_stream(
+                        chunks, wake_word_id
+                    )
+            except Exception:
+                _LOGGER.exception("Tivoo side wake-word detection failed")
+                detection = None
+
+            if self._turn is not turn or self._followup or turn.error:
+                return
+            if detection is not None and detection.wake_word_id == wake_word_id:
+                # Provider queued chunks already exist in ingress. Replay
+                # their union with pre-roll and later PCM as one subscription.
+                detection_offset = (
+                    last_offset if detection.timestamp is None else detection.timestamp
+                )
+                start_offset = self.ingress.handoff_start(detection_offset)
+                for _, offset in detection.queued_audio or ():
+                    start_offset = min(start_offset, offset)
+
+                turn.interrupted = True
+                turn.tts.stop_dispatch()
+                self._start_turn(
+                    PipelineStage.STT, interrupted=turn, start=start_offset
+                )
+                return
+
+            # HA Wyoming returns None when its connection ends. Reopen while
+            # the turn is active, with backoff for a busy or offline provider.
+            await asyncio.sleep(1)
+            start = self.ingress.ingress_offset(turn.session_id)
 
     @callback
     def on_pipeline_event(self, event: PipelineEvent) -> None:
@@ -190,6 +325,8 @@ class AudioSessionCoordinator:
             return
         turn.tts(event)
         match event.type:
+            case PipelineEventType.RUN_START:
+                turn.pipeline_id = (event.data or {}).get("pipeline")
             case PipelineEventType.WAKE_WORD_END:
                 if turn.waiting_for_wake and (event.data or {}).get("wake_word_output"):
                     turn.waiting_for_wake = False
@@ -198,6 +335,7 @@ class AudioSessionCoordinator:
             case PipelineEventType.STT_START:
                 if "command_timeout" not in self._timers:
                     self._arm(5, "command_timeout")
+                self._start_watcher(turn)
             case PipelineEventType.STT_VAD_START:
                 turn.command_started = True
                 self._cancel_timer("command_timeout")
@@ -219,6 +357,8 @@ class AudioSessionCoordinator:
             self._arm(0, "playback_failed")
 
     def _open_followup(self) -> None:
+        if self._turn is not None:
+            self._stop_watcher(self._turn)
         self.entity.tts_response_finished()
         self._followup = True
         self._arm(8, "followup_timeout")
@@ -233,8 +373,10 @@ class AudioSessionCoordinator:
         self._clear_timers()
         turn, self._turn = self._turn, None
         if turn is not None:
-            tasks = {self._event_turn.task} if self._event_turn is not None else set()
-            tasks.add(turn.task)
+            tasks = {turn.task, self._stop_watcher(turn)}
+            event_turn = self._event_turn
+            if event_turn is not None and not event_turn.interrupted:
+                tasks.add(event_turn.task)
             pending: list[asyncio.Future] = []
             for task in tasks:
                 if task is None or task.done():
@@ -292,6 +434,29 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         self.adapter.register_playback_handler(self.coordinator.on_playback)
         self.coordinator.ingress.on_activity = self.coordinator.on_activity
         self.coordinator.ingress.on_end = self.coordinator.on_end
+
+    @callback
+    def wake_word_provider(
+        self,
+        pipeline_id: str | None,
+    ) -> tuple[wake_word.WakeWordDetectionEntity, str] | None:
+        """Use the same pipeline selection and wake engine as HA Assist."""
+        pipeline = async_get_pipeline(self.hass, pipeline_id)
+        entity_id = pipeline.wake_word_entity or wake_word.async_default_entity(
+            self.hass
+        )
+        if (
+            entity_id is not None
+            and (
+                provider := wake_word.async_get_wake_word_detection_entity(
+                    self.hass, entity_id
+                )
+            )
+            is not None
+        ):
+            return provider, pipeline.wake_word_id or _WAKE_WORD_ID
+        _LOGGER.warning("No wake word entity for Tivoo side detection")
+        return None
 
     @callback
     def async_get_configuration(self) -> AssistSatelliteConfiguration:

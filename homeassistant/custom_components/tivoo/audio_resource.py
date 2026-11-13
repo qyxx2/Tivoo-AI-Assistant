@@ -1,6 +1,7 @@
 """HA TTS Proxy URL creation and Assist Pipeline event dispatch for P6."""
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import Coroutine, Mapping
@@ -13,6 +14,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
+from .diagnostics import TYPE_AUDIO_STOP
 from .transport import Esp32ConnectionAdapter
 from .tts_lifecycle import PipelineTtsOwner
 
@@ -174,6 +176,26 @@ class PipelineTtsEvents:
         """Return the playback ID once its TTS_PLAY is being sent."""
         return self._manager.playback_id
 
+    @callback
+    def stop_dispatch(self) -> None:
+        """Discard queued TTS events before sending a targeted device stop."""
+        self._cancelled = True
+        for task in self._events:
+            task.cancel()
+
+    async def async_stop_playback(self) -> None:
+        """Stop the resource associated with this run on the ESP32."""
+        if self.playback_id is not None:
+            payload = json.dumps(
+                {
+                    "request_id": str(uuid.uuid4()),
+                    "expected_audio_id": self.playback_id,
+                    "reason": "wake_word",
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            await self._manager.adapter.async_send_message(TYPE_AUDIO_STOP, payload)
+
     async def async_run(self, pipeline: Coroutine) -> None:
         """Run and join the public Satellite caller, including TTS on cancellation."""
         self._caller = asyncio.create_task(pipeline)
@@ -185,7 +207,7 @@ class PipelineTtsEvents:
                 await asyncio.shield(asyncio.gather(*self._events))
         except BaseException as err:
             caller = self._caller
-            if not caller.done() and not self._cancelled:
+            if not caller.done() and not caller.cancelling():
                 caller.cancel()
             try:
                 await self._stop_audio()
@@ -208,7 +230,7 @@ class PipelineTtsEvents:
     async def async_close(self) -> None:
         """Close this run's resources even after the public caller returned."""
         caller = self._caller
-        if caller is not None and not caller.done() and not self._cancelled:
+        if caller is not None and not caller.done() and not caller.cancelling():
             caller.cancel()
         try:
             await self._stop_audio()

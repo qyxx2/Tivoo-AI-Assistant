@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 
 from .diagnostics import MAX_MIC_PCM_PAYLOAD
@@ -258,17 +258,20 @@ class AudioSessionManager:
             if offset + len(data) > cutoff:
                 session.history.appendleft((cutoff, data[cutoff - offset :]))
 
-    def handoff(self, session_id: str, detection_offset: int):
-        """Pin pre-roll and subsequent PCM at its ingress offsets.
+    @staticmethod
+    def handoff_start(detection_offset: int) -> int:
+        """Return the ingress offset one second before the detection chunk."""
+        return max(0, detection_offset - PREROLL_BYTES)
 
-        Provider queued audio already belongs to the same ingress, so the
-        handoff reuses those bytes by offset instead of concatenating copies.
-        """
+    def handoff(
+        self, session_id: str, detection_offset: int
+    ) -> AbstractAsyncContextManager[AsyncIterator[bytes]]:
+        """Pin pre-roll and subsequent PCM at its ingress offsets."""
         session = self._ingress(session_id)
         if not 0 <= detection_offset <= session.tail or detection_offset % 2:
             raise ValueError("invalid MIC detection offset")
         return self.audio_subscription(
-            session_id, start=max(0, detection_offset - PREROLL_BYTES)
+            session_id, start=self.handoff_start(detection_offset)
         )
 
     @asynccontextmanager
