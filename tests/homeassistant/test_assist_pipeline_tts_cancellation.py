@@ -69,6 +69,14 @@ class P65ControlSatellite(AssistSatelliteEntity):
         return None
 
 
+class P65PreTtsCancellationSatellite(P65ControlSatellite):
+    """Give the pre-TTS cancellation run its own task/entity identity."""
+
+    def __init__(self, hass, config_entry) -> None:
+        super().__init__(hass, config_entry)
+        self.entity_id = "assist_satellite.p6_5b2_pre_tts"
+
+
 def _free_port() -> int:
     with socket.socket() as server_socket:
         server_socket.bind(("127.0.0.1", 0))
@@ -461,6 +469,354 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         assert await hass.config_entries.async_unload(wyoming_entry.entry_id)
         await hass.async_block_till_done()
     finally:
+        if server_process.returncode is None:
+            server_process.send_signal(signal.SIGTERM)
+            await asyncio.wait_for(server_process.wait(), timeout=5)
+        output_task.cancel()
+        await asyncio.gather(output_task, return_exceptions=True)
+
+
+@pytest.mark.enable_socket
+async def test_cancel_before_tts_closes_sse_and_stops_pipeline_once(
+    hass, enable_custom_integrations, aiohttp_client, monkeypatch, tmp_path
+) -> None:
+    """Cancelling the public Satellite caller closes the active SSE session."""
+    enable_socket()
+    assert SHERPA_PYTHON.is_file()
+    assert FAKE_WYOMING_SERVER.is_file()
+
+    monkeypatch.syspath_prepend(
+        str(ROOT / ".venv-sherpa" / "lib" / "python3.11" / "site-packages")
+    )
+    from custom_components.astrbot.api import AstrBotApiClient
+    from custom_components.astrbot.const import DOMAIN as ASTRBOT_DOMAIN
+
+    port = _free_port()
+    trace_path = tmp_path / "p6_5b2_wyoming_trace.jsonl"
+    server_env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [str(ROOT / "services"), os.environ.get("PYTHONPATH", "")]
+        ),
+    }
+    server_process = await asyncio.create_subprocess_exec(
+        str(SHERPA_PYTHON),
+        str(FAKE_WYOMING_SERVER),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--trace",
+        str(trace_path),
+        cwd=ROOT,
+        env=server_env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    server_ready = asyncio.Event()
+    stt_handler_finished = asyncio.Event()
+    server_output: list[str] = []
+
+    async def read_server_output() -> None:
+        assert server_process.stdout is not None
+        while line := await server_process.stdout.readline():
+            decoded = line.decode(errors="replace").rstrip()
+            server_output.append(decoded)
+            if "service_starting" in decoded:
+                server_ready.set()
+            if (
+                "P6_5_TRACE" in decoded
+                and '"event": "handler_finished"' in decoded
+                and '"last_provider": "stt"' in decoded
+            ):
+                stt_handler_finished.set()
+
+    output_task = asyncio.create_task(read_server_output())
+    caller_task = None
+    wyoming_entry = None
+    astrbot_entry = None
+    release_chat = asyncio.Event()
+    chat_started = asyncio.Event()
+    chat_handler_finished = asyncio.Event()
+    session_confirmed = asyncio.Event()
+    sse_reader_closed = asyncio.Event()
+    stop_called = asyncio.Event()
+    confirmed_session_ids: list[str] = []
+    stop_calls: list[dict[str, object]] = []
+    chat_transports = []
+
+    try:
+        await asyncio.wait_for(server_ready.wait(), timeout=15)
+        assert server_process.returncode is None, server_output
+        assert await async_setup_component(hass, "homeassistant", {})
+
+        wyoming_entry = MockConfigEntry(
+            domain="wyoming",
+            title="P6.5b2 local Sherpa",
+            unique_id=f"p6-5b2-{port}",
+            data={"host": "127.0.0.1", "port": port},
+        )
+        wyoming_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(wyoming_entry.entry_id)
+        await hass.async_block_till_done()
+
+        stt_engine = stt.async_default_engine(hass)
+        tts_engine = tts.async_default_engine(hass)
+        assert stt_engine is not None
+        assert tts_engine is not None
+
+        async def handle_chat(request: web.Request) -> web.StreamResponse:
+            request_body = await request.json()
+            response = web.StreamResponse(
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Connection": "close",
+                },
+            )
+            await response.prepare(request)
+            chat_transports.append(request.transport)
+            chat_started.set()
+            await _send_sse(
+                response,
+                {
+                    "type": "session_id",
+                    "data": None,
+                    "session_id": request_body["session_id"],
+                },
+            )
+            try:
+                await release_chat.wait()
+                await response.write_eof()
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                pass
+            finally:
+                chat_handler_finished.set()
+            return response
+
+        async def handle_stop(request: web.Request) -> web.Response:
+            stop_calls.append(
+                {
+                    "session_id": request.match_info["session_id"],
+                    "sse_reader_closed": sse_reader_closed.is_set(),
+                    "chat_transport_closing": chat_transports[-1].is_closing(),
+                }
+            )
+            stop_called.set()
+            return web.json_response({"status": "ok", "data": {}})
+
+        astrbot_app = web.Application()
+        astrbot_app.router.add_post("/api/v1/chat", handle_chat)
+        astrbot_app.router.add_post(
+            "/api/v1/chat/sessions/{session_id}/stop", handle_stop
+        )
+        astrbot_client = await aiohttp_client(astrbot_app)
+        base_url = str(astrbot_client.make_url("/")).rstrip("/")
+
+        original_async_chat = AstrBotApiClient.async_chat
+
+        @asynccontextmanager
+        async def tracked_async_chat(self, *args, **kwargs):
+            try:
+                async with original_async_chat(self, *args, **kwargs) as response:
+                    yield response
+            finally:
+                sse_reader_closed.set()
+
+        monkeypatch.setattr(AstrBotApiClient, "async_chat", tracked_async_chat)
+
+        astrbot_entry = MockConfigEntry(
+            domain="astrbot",
+            title="AstrBot",
+            unique_id="astrbot",
+            data={
+                "base_url": base_url,
+                "api_key": "test-secret-value",
+                "api_key_id": "p6-5b2-test-key",
+            },
+        )
+        astrbot_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(astrbot_entry.entry_id)
+        await hass.async_block_till_done()
+        session_manager = hass.data[ASTRBOT_DOMAIN][astrbot_entry.entry_id][
+            "session_manager"
+        ]
+        original_confirm_session = session_manager.async_confirm_session
+
+        async def tracked_confirm_session(session_id: str) -> None:
+            await original_confirm_session(session_id)
+            confirmed_session_ids.append(session_id)
+            session_confirmed.set()
+
+        monkeypatch.setattr(
+            session_manager, "async_confirm_session", tracked_confirm_session
+        )
+        agent = conversation.async_get_agent(hass, "conversation.astrbot")
+        assert agent is not None
+        assert agent.supports_streaming is True
+
+        pipeline = Pipeline(
+            id="p6-5b2-pre-tts-cancellation",
+            conversation_engine="conversation.astrbot",
+            conversation_language="zh-CN",
+            language="zh-CN",
+            name="P6.5b2 pre-TTS cancellation",
+            stt_engine=stt_engine,
+            stt_language="zh-CN",
+            tts_engine=tts_engine,
+            tts_language="zh-CN",
+            tts_voice="0",
+            wake_word_entity=None,
+            wake_word_id=None,
+        )
+        monkeypatch.setattr(
+            assist_pipeline, "async_get_pipeline", lambda *_args, **_kwargs: pipeline
+        )
+
+        tts_manager = hass.data[tts.DATA_TTS_MANAGER]
+        result_streams = []
+        original_create_result_stream = tts_manager.async_create_result_stream
+
+        def track_result_stream(**kwargs):
+            stream = original_create_result_stream(**kwargs)
+            result_streams.append(stream)
+            return stream
+
+        monkeypatch.setattr(
+            tts_manager, "async_create_result_stream", track_result_stream
+        )
+        tts_caches = []
+        original_cache_stream = tts_manager.async_cache_message_stream_in_memory
+
+        def track_cache_stream(**kwargs):
+            tts_caches.append(original_cache_stream(**kwargs))
+            return tts_caches[-1]
+
+        monkeypatch.setattr(
+            tts_manager, "async_cache_message_stream_in_memory", track_cache_stream
+        )
+
+        proxy_tasks: list[asyncio.Task] = []
+        original_hass_background = hass.async_create_background_task
+
+        def track_hass_background(*args, **kwargs):
+            task = original_hass_background(*args, **kwargs)
+            name = args[1] if len(args) > 1 else kwargs.get("name", "")
+            if name.startswith("tts_load_data_into_cache"):
+                proxy_tasks.append(task)
+            return task
+
+        monkeypatch.setattr(hass, "async_create_background_task", track_hass_background)
+
+        config_entry_tasks: dict[str, list[asyncio.Task]] = {}
+        original_entry_background = wyoming_entry.async_create_background_task
+
+        def track_entry_background(*args, **kwargs):
+            task = original_entry_background(*args, **kwargs)
+            name = args[2] if len(args) > 2 else kwargs.get("name", "")
+            config_entry_tasks.setdefault(name, []).append(task)
+            return task
+
+        monkeypatch.setattr(
+            wyoming_entry, "async_create_background_task", track_entry_background
+        )
+
+        satellite = P65PreTtsCancellationSatellite(hass, wyoming_entry)
+        caller_task = asyncio.create_task(
+            satellite.async_accept_pipeline_from_satellite(
+                _audio_stream(),
+                start_stage=PipelineStage.STT,
+                end_stage=PipelineStage.TTS,
+                context=Context(user_id="p6-5b2-ha-user"),
+            )
+        )
+
+        await asyncio.wait_for(chat_started.wait(), timeout=10)
+        await asyncio.wait_for(session_confirmed.wait(), timeout=10)
+        assert len(confirmed_session_ids) == 1
+        session_id = confirmed_session_ids[0]
+        assert chat_transports and not chat_transports[0].is_closing()
+        assert not release_chat.is_set()
+        assert not sse_reader_closed.is_set()
+        assert not chat_handler_finished.is_set()
+        assert satellite._pipeline_task is not None
+        pipeline_task = satellite._pipeline_task
+        assert not pipeline_task.done()
+        assert len(result_streams) == 1
+        result_token = result_streams[0].token
+        assert tts.async_get_stream(hass, result_token) is result_streams[0]
+        assert not any(
+            event.type is PipelineEventType.TTS_START for event in satellite.events
+        )
+
+        caller_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(caller_task, timeout=10)
+        await asyncio.wait_for(stop_called.wait(), timeout=5)
+        await asyncio.wait_for(sse_reader_closed.wait(), timeout=5)
+        await asyncio.wait_for(stt_handler_finished.wait(), timeout=5)
+        await hass.async_block_till_done()
+
+        assert caller_task.cancelled()
+        assert pipeline_task.done()
+        assert pipeline_task.cancelled()
+        assert satellite._pipeline_task is None
+        assert stop_calls == [
+            {
+                "session_id": session_id,
+                "sse_reader_closed": True,
+                "chat_transport_closing": True,
+            }
+        ]
+        assert tts.async_get_stream(hass, result_token) is None
+        assert tts_caches == []
+        assert proxy_tasks == []
+        assert config_entry_tasks.get("wyoming tts write", []) == []
+        assert not any(
+            event.type is PipelineEventType.TTS_START for event in satellite.events
+        )
+        await asyncio.wait_for(chat_handler_finished.wait(), timeout=5)
+        assert chat_handler_finished.is_set()
+
+        traces = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert any(
+            item["event"] == "handler_finished" and item.get("last_provider") == "stt"
+            for item in traces
+        )
+        assert not any(
+            item["event"]
+            in {
+                "tts_generate",
+                "tts_callback",
+                "tts_session_cleanup",
+                "tts_collect_complete",
+            }
+            or (
+                item["event"] == "handler_finished"
+                and item.get("last_provider") == "tts_stream"
+            )
+            for item in traces
+        )
+        assert server_process.returncode is None
+    finally:
+        if caller_task is not None and not caller_task.done():
+            caller_task.cancel()
+            await asyncio.gather(caller_task, return_exceptions=True)
+        release_chat.set()
+        if chat_started.is_set() and not chat_handler_finished.is_set():
+            try:
+                await asyncio.wait_for(chat_handler_finished.wait(), timeout=5)
+            except TimeoutError:
+                pass
+        if astrbot_entry is not None:
+            await hass.config_entries.async_unload(astrbot_entry.entry_id)
+        if wyoming_entry is not None:
+            await hass.config_entries.async_unload(wyoming_entry.entry_id)
+        await hass.async_block_till_done()
         if server_process.returncode is None:
             server_process.send_signal(signal.SIGTERM)
             await asyncio.wait_for(server_process.wait(), timeout=5)
