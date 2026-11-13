@@ -1,6 +1,7 @@
 # P6.5 Patch — HA Assist Pipeline / TTS Proxy 取消链路前置验证
 
-- **状态：** 待执行；P7/P8 取消逻辑实现前的必做验证批次
+- **状态：** P6.5b0–b5 前置调查与模块边界决策已完成；活动 TTS 取消仍为 GAP，依赖该路径的 P7/P8 打断验收保持 BLOCKED
+- **最终汇总：** [P6.5 取消链路前置验证报告](../reports/2026-11-11-ha-cancellation-preflight-report.md)
 - **插入位置：** `README.md §10 实施顺序`，P6 之后、P7 之前
 - **目标版本：** 项目固定的 Home Assistant Core 2026.11.0
 - **任务性质：** 只验证、追踪和记录，不在本批次修改生产取消逻辑
