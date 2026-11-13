@@ -7,6 +7,7 @@ import platform
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -40,6 +41,7 @@ from .providers.tts import TTSProvider, TTSStreamSession
 from .providers.wake import WakeWordProvider, WakeWordSession
 
 _LOGGER = logging.getLogger("tivoo.sherpa_wyoming")
+_TTS_INPUT_QUEUE_TIMEOUT = 1
 _ATTRIBUTION = Attribution(
     name="k2-fsa",
     url="https://github.com/k2-fsa/sherpa-onnx",
@@ -159,12 +161,16 @@ class WyomingEventHandler(AsyncEventHandler):
         self._tts_session: TTSStreamSession | None = None
         self._tts_input: asyncio.Queue[Event] | None = None
         self._tts_task: asyncio.Task[None] | None = None
+        self._tts_completion: asyncio.Task[None] | None = None
         self._request_started = 0.0
         self._model_seconds = 0.0
         self._audio_bytes = 0
         self._tts_first_chunk_seconds: float | None = None
 
     async def handle_event(self, event: Event) -> bool:
+        if self._tts_completion is not None and not self._tts_completion.done():
+            # A new request cannot reuse this connection while its response is open.
+            return False
         if Describe.is_type(event.type):
             await self.write_event(self.info.event())
             return True
@@ -345,11 +351,25 @@ class WyomingEventHandler(AsyncEventHandler):
             self._reset_request()
             return True
 
-        await self._tts_input.put(event)
+        try:
+            async with asyncio.timeout(_TTS_INPUT_QUEUE_TIMEOUT):
+                await self._tts_input.put(event)
+        except TimeoutError:
+            # Bound input backpressure so a stalled model cannot keep the TCP
+            # reader from seeing disconnect indefinitely.
+            return False
         if SynthesizeStop.is_type(event.type):
+            # Keep reading TCP after the last text event so EOF can cancel the
+            # response even while the model is still producing audio.
+            self._tts_completion = asyncio.create_task(self._complete_streaming_tts())
+        return True
+
+    async def _complete_streaming_tts(self) -> None:
+        try:
             await self._collect_stream_task()
             self._reset_request()
-        return True
+        finally:
+            self._tts_completion = None
 
     async def _forward_streaming_tts(self) -> None:
         assert self._tts_session is not None
@@ -359,18 +379,21 @@ class WyomingEventHandler(AsyncEventHandler):
         outcome = "finished"
         error_code: str | None = None
         try:
-            async for item in self._tts_session.stream(self._iter_tts_input()):
-                if isinstance(item, Error):
-                    outcome = "error"
-                    error_code = item.code
-                if isinstance(item, AudioChunk):
-                    audio_bytes += len(item.audio)
-                    if first_chunk_at is None:
-                        first_chunk_at = time.perf_counter()
-                        self._tts_first_chunk_seconds = (
-                            first_chunk_at - self._request_started
-                        )
-                await self.write_event(item.event())
+            async with aclosing(
+                self._tts_session.stream(self._iter_tts_input())
+            ) as stream:
+                async for item in stream:
+                    if isinstance(item, Error):
+                        outcome = "error"
+                        error_code = item.code
+                    if isinstance(item, AudioChunk):
+                        audio_bytes += len(item.audio)
+                        if first_chunk_at is None:
+                            first_chunk_at = time.perf_counter()
+                            self._tts_first_chunk_seconds = (
+                                first_chunk_at - self._request_started
+                            )
+                    await self.write_event(item.event())
         except (ConnectionError, BrokenPipeError):
             outcome = "disconnected"
             raise
@@ -492,9 +515,12 @@ class WyomingEventHandler(AsyncEventHandler):
             self._stt_session.cancel()
             self._finish_request("cancelled", "stt")
         elif self._provider == "tts_stream":
+            completion = self._tts_completion
             if self._tts_task is not None:
                 self._tts_task.cancel()
                 await asyncio.gather(self._tts_task, return_exceptions=True)
+            if completion is not None:
+                await asyncio.gather(completion, return_exceptions=True)
             self._reset_request()
 
 

@@ -21,7 +21,8 @@ _TRACE_LOCK = threading.Lock()
 _ACTIVE_HANDLERS = []
 _TTS_CALLBACK_RELEASE = threading.Event()
 _TTS_CALLBACK_WAITING = threading.Event()
-_HOLD_FIRST_TTS_CALLBACK = False
+_HOLD_TTS_CALLBACK = 0
+_TTS_SAMPLE_COUNT = 512
 _TTS_GENERATE_COUNT = 0
 
 
@@ -73,8 +74,8 @@ class FakeTts:
         global _TTS_GENERATE_COUNT
         _TTS_GENERATE_COUNT += 1
         trace("tts_generate", text=text, sid=sid, speed=speed)
-        samples = np.linspace(-0.25, 0.25, 512, dtype=np.float32)
-        if _HOLD_FIRST_TTS_CALLBACK and _TTS_GENERATE_COUNT == 1:
+        samples = np.linspace(-0.25, 0.25, _TTS_SAMPLE_COUNT, dtype=np.float32)
+        if _TTS_GENERATE_COUNT == _HOLD_TTS_CALLBACK:
             _TTS_CALLBACK_WAITING.set()
             trace("tts_callback_waiting")
             _TTS_CALLBACK_RELEASE.wait()
@@ -107,6 +108,18 @@ def _install_task_tracing() -> None:
             )
 
     TTSStreamSession._cleanup = tracked_cleanup
+
+    original_disconnect = WyomingEventHandler.disconnect
+
+    async def tracked_disconnect(self) -> None:
+        task = self._tts_task
+        if task is not None:
+            trace("tts_tcp_eof")
+        await original_disconnect(self)
+        if task is not None:
+            trace("tts_request_finished", cancelled=task.cancelled())
+
+    WyomingEventHandler.disconnect = tracked_disconnect
 
     original_collect = WyomingEventHandler._collect_stream_task
 
@@ -225,10 +238,15 @@ async def _handle_control(
 
 
 async def _run(
-    host: str, port: int, control_port: int | None, hold_first_tts_callback: bool
+    host: str,
+    port: int,
+    control_port: int | None,
+    hold_tts_callback: int,
+    sample_count: int,
 ) -> None:
-    global _HOLD_FIRST_TTS_CALLBACK
-    _HOLD_FIRST_TTS_CALLBACK = hold_first_tts_callback
+    global _HOLD_TTS_CALLBACK, _TTS_SAMPLE_COUNT
+    _HOLD_TTS_CALLBACK = hold_tts_callback
+    _TTS_SAMPLE_COUNT = sample_count
     _TTS_CALLBACK_RELEASE.clear()
     _TTS_CALLBACK_WAITING.clear()
     _install_task_tracing()
@@ -267,6 +285,8 @@ def main() -> None:
     parser.add_argument("--trace", required=True)
     parser.add_argument("--control-port", type=int)
     parser.add_argument("--hold-first-tts-callback", action="store_true")
+    parser.add_argument("--hold-tts-callback", type=int, default=0)
+    parser.add_argument("--tts-sample-count", type=int, default=512)
     args = parser.parse_args()
     _TRACE_PATH = args.trace
     logging.basicConfig(
@@ -274,7 +294,13 @@ def main() -> None:
         format="%(levelname)s:%(name)s:%(message)s",
     )
     asyncio.run(
-        _run(args.host, args.port, args.control_port, args.hold_first_tts_callback)
+        _run(
+            args.host,
+            args.port,
+            args.control_port,
+            1 if args.hold_first_tts_callback else args.hold_tts_callback,
+            args.tts_sample_count,
+        )
     )
 
 

@@ -339,6 +339,7 @@ async def test_two_requests_on_one_session_are_serialized(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize("after_plain", [False, True])
 @pytest.mark.parametrize(
     ("stop_status", "expect_warning"),
     [(200, False), (403, True), ("timeout", True)],
@@ -351,11 +352,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
     monkeypatch,
     stop_status,
     expect_warning,
+    after_plain,
 ):
     enable_socket()
     if stop_status == "timeout":
         monkeypatch.setattr(astrbot_conversation, "_STOP_TIMEOUT", 0.01)
     first_delta_seen = asyncio.Event()
+    session_confirmed = asyncio.Event()
+    received_text = []
     release_chat = asyncio.Event()
     chat_transport = []
     chat_bodies = []
@@ -378,7 +382,9 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
             {"type": "session_id", "data": None, "session_id": body["session_id"]},
         )
         if len(chat_bodies) == 1:
-            await send_event(response, {"type": "plain", "data": "尚未完成"})
+            await send_event(response, {"type": "run_started", "data": None})
+            if after_plain:
+                await send_event(response, {"type": "plain", "data": "尚未完成"})
             await release_chat.wait()
             try:
                 await send_event(response, {"type": "plain", "data": "不应出现"})
@@ -415,6 +421,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
     client = await aiohttp_client(app)
     base_url = str(client.make_url("/")).rstrip("/")
     entry, _ = await _setup_agent(hass, base_url)
+    manager = hass.data[DOMAIN][entry.entry_id]["session_manager"]
+    original_confirm = manager.async_confirm_session
+
+    async def confirm_session(session_id):
+        await original_confirm(session_id)
+        session_confirmed.set()
+
+    monkeypatch.setattr(manager, "async_confirm_session", confirm_session)
     chat_logs = []
     user_input = conversation.ConversationInput(
         text="请取消我",
@@ -426,19 +440,25 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
         agent_id="conversation.astrbot",
         extra_system_prompt=None,
     )
+
+    def observe_delta(_log, delta):
+        if content := delta.get("content"):
+            received_text.append(content)
+            first_delta_seen.set()
+
     task = hass.async_create_task(
         _run_assist_conversation(
             hass,
             user_input,
-            lambda _log, delta: (
-                first_delta_seen.set() if delta.get("content") == "尚未完成" else None
-            ),
+            observe_delta,
             chat_logs,
         )
     )
 
     try:
-        await asyncio.wait_for(first_delta_seen.wait(), timeout=5)
+        await asyncio.wait_for(
+            (first_delta_seen if after_plain else session_confirmed).wait(), timeout=5
+        )
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=5)
@@ -448,6 +468,7 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
+    assert received_text == (["尚未完成"] if after_plain else [])
     assert len(chat_bodies) == 1
     assert chat_bodies[0]["username"] == "api_key:key-123"
     assert len(stop_calls) == 1
@@ -713,6 +734,7 @@ async def test_incomplete_sse_stream_is_stopped_and_never_returns_success(
             {"type": "session_id", "data": None, "session_id": body["session_id"]},
         )
         await send_event(response, {"type": "plain", "data": "不完整回答"})
+        await send_event(response, {"type": "complete", "data": None})
         await response.write_eof()
         return response
 

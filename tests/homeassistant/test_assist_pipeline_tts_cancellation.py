@@ -10,6 +10,7 @@ import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 from aiohttp import web
@@ -94,8 +95,9 @@ async def _send_sse(response: web.StreamResponse, event: dict) -> None:
 
 
 @pytest.mark.enable_socket
+@pytest.mark.parametrize("owned", [False, True], ids=["native", "tivoo"])
 async def test_normal_pipeline_completion_closes_all_owned_streams(
-    hass, enable_custom_integrations, aiohttp_client, monkeypatch, tmp_path
+    hass, enable_custom_integrations, aiohttp_client, monkeypatch, tmp_path, owned
 ) -> None:
     """A complete Assist run drains its SSE/TTS/Wyoming owners without Stop."""
     enable_socket()
@@ -290,7 +292,10 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         def track_hass_background(*args, **kwargs):
             task = original_hass_background(*args, **kwargs)
             name = args[1] if len(args) > 1 else kwargs.get("name", "")
-            if name.startswith("tts_load_data_into_cache"):
+            if (
+                name.startswith("tts_load_data_into_cache")
+                or name == "Tivoo TTS producer"
+            ):
                 proxy_tasks.append(task)
                 mark("tts_cache_producer_created")
                 task.add_done_callback(lambda _task: mark("tts_cache_producer_done"))
@@ -333,12 +338,34 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
 
         satellite = P65ControlSatellite(hass, wyoming_entry)
         mark("pipeline_start")
-        await satellite.async_accept_pipeline_from_satellite(
+        pipeline_call = satellite.async_accept_pipeline_from_satellite(
             _audio_stream(),
             start_stage=PipelineStage.STT,
             end_stage=PipelineStage.TTS,
             context=Context(user_id="p6-5b1-ha-user"),
         )
+        if owned:
+            from custom_components.tivoo.audio_resource import (
+                create_pipeline_event_callback,
+            )
+
+            hass.config.internal_url = "http://ha.local:8123"
+
+            class Adapter:
+                async def async_send_tts_play(self, playback_id, url, mime_type):
+                    pass
+
+            callback = create_pipeline_event_callback(hass, Adapter())
+            original_event = satellite.on_pipeline_event
+
+            def on_event(event):
+                original_event(event)
+                callback(event)
+
+            satellite.on_pipeline_event = on_event
+            await callback.async_run(pipeline_call)
+        else:
+            await pipeline_call
         mark("pipeline_done")
 
         await asyncio.wait_for(sse_reader_closed.wait(), timeout=5)
@@ -381,10 +408,14 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         assert audio_data.startswith(b"RIFF")
         assert len(audio_data) > 44
 
-        assert len(tts_text_generators) == 1
-        assert tts_text_generators[0].ag_frame is None
-        assert len(tts_caches) == 1
-        cache = tts_caches[0]
+        if owned:
+            cache = tts.async_get_stream(hass, token)._result_cache.result()
+            assert cache._data_gen.ag_frame is None
+        else:
+            assert len(tts_text_generators) == 1
+            assert tts_text_generators[0].ag_frame is None
+            assert len(tts_caches) == 1
+            cache = tts_caches[0]
         assert cache._result_data == audio_data
         assert cache._loading_error is None
         assert len(proxy_tasks) == 1
@@ -398,7 +429,8 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         assert not pipeline_tasks[0].cancelled()
         assert pipeline_tasks[0].exception() is None
 
-        wyoming_writer_tasks = config_entry_tasks.get("wyoming tts write", [])
+        writer_name = "Tivoo Wyoming TTS writer" if owned else "wyoming tts write"
+        wyoming_writer_tasks = config_entry_tasks.get(writer_name, [])
         assert len(wyoming_writer_tasks) == 1
         assert wyoming_writer_tasks[0].done()
         assert not wyoming_writer_tasks[0].cancelled()
@@ -461,9 +493,9 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         assert lifecycle_names.index(
             "tts_cache_producer_created"
         ) < lifecycle_names.index("tts_cache_producer_done")
-        assert lifecycle_names.index(
-            "wyoming tts write_created"
-        ) < lifecycle_names.index("wyoming tts write_done")
+        assert lifecycle_names.index(f"{writer_name}_created") < lifecycle_names.index(
+            f"{writer_name}_done"
+        )
 
         assert await hass.config_entries.async_unload(astrbot_entry.entry_id)
         assert await hass.config_entries.async_unload(wyoming_entry.entry_id)
@@ -825,10 +857,16 @@ async def test_cancel_before_tts_closes_sse_and_stops_pipeline_once(
 
 
 @pytest.mark.enable_socket
+@pytest.mark.parametrize(
+    "cancel_via",
+    ["baseline", "caller", "playback"],
+    ids=["wav-baseline", "mp3-caller", "mp3-playback"],
+)
 async def test_cancel_during_active_tts_proxy_tracks_all_owners(
-    hass, enable_custom_integrations, aiohttp_client, monkeypatch, tmp_path
+    hass, enable_custom_integrations, aiohttp_client, monkeypatch, tmp_path, cancel_via
 ) -> None:
     """A live Proxy consumer and TTS producer must be observed across Pipeline cancel."""
+    owned = cancel_via != "baseline"
     enable_socket()
     assert SHERPA_PYTHON.is_file()
     assert FAKE_WYOMING_SERVER.is_file()
@@ -860,7 +898,10 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
         str(trace_path),
         "--control-port",
         str(control_port),
-        "--hold-first-tts-callback",
+        "--hold-tts-callback",
+        "2" if owned else "1",
+        "--tts-sample-count",
+        "65536" if owned else "512",
         cwd=ROOT,
         env=server_env,
         stdout=asyncio.subprocess.PIPE,
@@ -875,6 +916,17 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
     sse_reader_closed = asyncio.Event()
     stop_called = asyncio.Event()
     cache_producer_created = asyncio.Event()
+    tcp_eof = asyncio.Event()
+    p7a_finished = asyncio.Event()
+    sent = []
+    conversions = []
+    conversion_generators = []
+    conversion_writers = []
+
+    class Adapter:
+        async def async_send_tts_play(self, playback_id, url, mime_type):
+            sent.append((playback_id, url, mime_type))
+
     confirmed_session_ids: list[str] = []
     stop_calls: list[dict[str, object]] = []
     server_output: list[str] = []
@@ -886,6 +938,13 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
             server_output.append(decoded)
             if "service_starting" in decoded:
                 server_ready.set()
+            if '"event": "tts_tcp_eof"' in decoded:
+                tcp_eof.set()
+            if (
+                '"event": "handler_finished"' in decoded
+                and '"last_provider": "tts_stream"' in decoded
+            ):
+                p7a_finished.set()
             if '"event": "tts_callback_waiting"' in decoded:
                 tts_callback_waiting.set()
             if '"event": "tts_callback"' in decoded:
@@ -951,6 +1010,17 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
                     wyoming_disconnected.set()
 
         monkeypatch.setattr(wyoming_tts, "AsyncTcpClient", TrackedWyomingTtsClient)
+        owned_text_generators = []
+        if owned:
+            original_write = wyoming_tts.WyomingTtsProvider._write_tts_message
+
+            async def track_text(provider, text, client, voice):
+                owned_text_generators.append(text)
+                await original_write(provider, text, client, voice)
+
+            monkeypatch.setattr(
+                wyoming_tts.WyomingTtsProvider, "_write_tts_message", track_text
+            )
 
         async def handle_chat(request: web.Request) -> web.StreamResponse:
             request_body = await request.json()
@@ -1082,7 +1152,12 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
         def track_hass_background(*args, **kwargs):
             task = original_hass_background(*args, **kwargs)
             name = args[1] if len(args) > 1 else kwargs.get("name", "")
-            if name.startswith("tts_load_data_into_cache"):
+            if name == "tts_ffmpeg_conversion":
+                conversion_writers.append(task)
+            if (
+                name.startswith("tts_load_data_into_cache")
+                or name == "Tivoo TTS producer"
+            ):
                 proxy_tasks.append(task)
                 cache_producer_created.set()
             return task
@@ -1101,16 +1176,52 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
         )
 
         satellite = P65ControlSatellite(hass, wyoming_entry)
-        caller_task = asyncio.create_task(
-            satellite.async_accept_pipeline_from_satellite(
-                _audio_stream(),
-                start_stage=PipelineStage.STT,
-                end_stage=PipelineStage.TTS,
-                context=Context(user_id="p6-5b3-ha-user"),
+        if owned:
+            from custom_components.tivoo.audio_resource import (
+                create_pipeline_event_callback,
             )
+
+            assert await async_setup_component(hass, "ffmpeg", {})
+            hass.config.internal_url = "http://ha.local:8123"
+            satellite._attr_tts_options = {"preferred_format": "mp3"}
+            callback = create_pipeline_event_callback(hass, Adapter())
+            original_event = satellite.on_pipeline_event
+
+            def on_event(event):
+                original_event(event)
+                callback(event)
+
+            satellite.on_pipeline_event = on_event
+            original_subprocess = asyncio.create_subprocess_exec
+
+            async def track_subprocess(*args, **kwargs):
+                process = await original_subprocess(*args, **kwargs)
+                if args[0].endswith("ffmpeg"):
+                    conversions.append(process)
+                return process
+
+            monkeypatch.setattr(asyncio, "create_subprocess_exec", track_subprocess)
+            original_convert = tts._async_convert_audio
+
+            def track_convert(*args, **kwargs):
+                generator = original_convert(*args, **kwargs)
+                conversion_generators.append(generator)
+                return generator
+
+            monkeypatch.setattr(tts, "_async_convert_audio", track_convert)
+
+        pipeline_call = satellite.async_accept_pipeline_from_satellite(
+            _audio_stream(),
+            start_stage=PipelineStage.STT,
+            end_stage=PipelineStage.TTS,
+            context=Context(user_id="p6-5b3-ha-user"),
+        )
+        caller_task = asyncio.create_task(
+            callback.async_run(pipeline_call) if owned else pipeline_call
         )
         await asyncio.wait_for(chat_text_sent.wait(), timeout=10)
-        await asyncio.wait_for(cache_producer_created.wait(), timeout=10)
+        if not owned:
+            await asyncio.wait_for(cache_producer_created.wait(), timeout=10)
         await asyncio.wait_for(tts_callback_waiting.wait(), timeout=10)
         assert len(confirmed_session_ids) == 1
         assert satellite._pipeline_task is not None
@@ -1120,6 +1231,134 @@ async def test_cancel_during_active_tts_proxy_tracks_all_owners(
         result_stream = result_streams[0]
         token = result_stream.token
         assert tts.async_get_stream(hass, token) is result_stream
+        if owned:
+            assert len(sent) == 1
+            playback_id, url, mime = sent[0]
+            assert urlsplit(url).path == f"/api/tts_proxy/{token}"
+            assert mime == "audio/mpeg"
+            web_client = await aiohttp_client(
+                hass.http.app, server_kwargs={"handler_cancellation": True}
+            )
+            web_response = await web_client.get(urlsplit(url).path)
+            assert web_response.status == 200
+            assert web_response.content_type == "audio/mpeg"
+            mp3 = await asyncio.wait_for(
+                web_response.content.readexactly(4096), timeout=5
+            )
+            decoder = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "mp3",
+                "-i",
+                "pipe:0",
+                "-f",
+                "s16le",
+                "pipe:1",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            pcm, _ = await asyncio.wait_for(decoder.communicate(mp3), timeout=5)
+            assert decoder.returncode == 0 and pcm
+            assert len(conversions) == 2
+            process = conversions[0]
+            assert process.returncode is None
+            assert not web_response.content.at_eof()
+
+            # Disconnect a second GET while its response write is suspended.
+            # The first GET and the upstream request must stay active.
+            second_writing = asyncio.Event()
+            original_write = web.StreamResponse.write
+
+            async def hold_second_write(response, data):
+                if response.headers.get("Content-Type") == "audio/mpeg":
+                    second_writing.set()
+                    await asyncio.Future()
+                await original_write(response, data)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(web.StreamResponse, "write", hold_second_write)
+                second = await web_client.get(urlsplit(url).path)
+                assert second.status == 200
+                await asyncio.wait_for(second_writing.wait(), timeout=5)
+                cache = result_stream._result_cache.result()
+                assert len(cache._consumers) == 2
+                second.close()
+                async with asyncio.timeout(5):
+                    while len(cache._consumers) != 1:
+                        await asyncio.sleep(0.01)
+            assert not tcp_eof.is_set()
+            assert not await callback.async_cancel("unrelated-playback")
+
+            cancel_task = None
+            if cancel_via == "playback":
+                cancel_task = asyncio.create_task(callback.async_cancel(playback_id))
+            else:
+                caller_task.cancel()
+            await asyncio.wait_for(tcp_eof.wait(), timeout=5)
+            # The caller must wait for the remote request while its model
+            # callback is still blocked, then join the local transcode.
+            done, _ = await asyncio.wait({caller_task}, timeout=0.2)
+            assert not done
+            await p7a_control("release_tts")
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(caller_task, timeout=10)
+            await asyncio.wait_for(p7a_finished.wait(), timeout=5)
+            await asyncio.wait_for(stop_called.wait(), timeout=5)
+            await asyncio.wait_for(sse_reader_closed.wait(), timeout=5)
+            assert stop_calls == [
+                {"session_id": confirmed_session_ids[0], "sse_reader_closed": True}
+            ]
+            if cancel_task is not None:
+                assert await asyncio.wait_for(cancel_task, timeout=5)
+            assert (
+                len(conversion_writers)
+                == len(conversion_generators)
+                == len(proxy_tasks)
+                == 1
+            )
+            assert (
+                conversion_writers[0].done()
+                and conversion_writers[0].exception() is None
+            )
+            assert conversion_generators[0].ag_frame is None
+            assert proxy_tasks[0].done() and proxy_tasks[0].exception() is None
+            assert cache._data_gen.ag_frame is None
+            assert len(owned_text_generators) == 1
+            assert owned_text_generators[0].ag_frame is None
+            writers = config_entry_tasks["Tivoo Wyoming TTS writer"]
+            assert len(writers) == 1 and writers[0].cancelled()
+            assert process.returncode == 0
+            assert process.stdin.is_closing()
+            assert process.stdout.at_eof() and process.stderr.at_eof()
+            assert pipeline_task.cancelled()
+            assert tts.async_get_stream(hass, token) is None
+            assert wyoming_disconnected.is_set()
+            assert cache._consumers is None
+            assert await callback.async_cancel(playback_id)
+            await asyncio.wait_for(web_response.read(), timeout=5)
+            assert web_response.content.at_eof()
+            assert len(sent) == 1
+
+            traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
+            callbacks = [
+                row["callback_result"]
+                for row in traces
+                if row["event"] == "tts_callback"
+            ]
+            assert callbacks == [1, 0]
+            cleanup = next(
+                row for row in traces if row["event"] == "tts_session_cleanup"
+            )
+            assert cleanup["input_task_done"] and cleanup["worker_task_done"]
+            assert not cleanup["input_stopped"]
+            assert {"event": "tts_request_finished", "cancelled": True}.items() <= next(
+                row for row in traces if row["event"] == "tts_request_finished"
+            ).items()
+            return
+
         assert len(tts_caches) == len(tts_text_generators) == len(proxy_tasks) == 1
 
         web_client = await aiohttp_client(hass.http.app)

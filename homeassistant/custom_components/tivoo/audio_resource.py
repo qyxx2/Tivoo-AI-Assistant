@@ -1,17 +1,20 @@
 """HA TTS Proxy URL creation and Assist Pipeline event dispatch for P6."""
 
+import asyncio
 import logging
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from homeassistant.components import tts
 from homeassistant.components.assist_pipeline.models import PipelineEvent
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .transport import Esp32ConnectionAdapter
+from .tts_lifecycle import PipelineTtsOwner
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,25 +153,108 @@ class TtsResourceManager:
             self._resource = None
 
 
-def create_pipeline_event_callback(
-    hass: HomeAssistant, adapter: Esp32ConnectionAdapter
-) -> Callable[[PipelineEvent], None]:
-    """Create a sync HA Pipeline callback with state isolated to one run."""
-    manager = TtsResourceManager(hass, adapter)
+class PipelineTtsEvents:
+    """Bind the public Satellite caller and its TTS events to one run."""
 
-    async def async_handle_event(event: PipelineEvent) -> None:
+    def __init__(self, hass: HomeAssistant, adapter: Esp32ConnectionAdapter) -> None:
+        self._manager = TtsResourceManager(hass, adapter)
+        self._hass = hass
+        self._owner: PipelineTtsOwner | None = None
+        self._caller: asyncio.Task | None = None
+        self._events: set[asyncio.Task] = set()
+        self._playback_id: str | None = None
+        self._cancelled = False
+        self._error_cleanup: asyncio.Task | None = None
+
+    async def async_run(self, pipeline: Coroutine) -> None:
+        """Run and join the public Satellite caller, including TTS on cancellation."""
+        self._caller = asyncio.create_task(pipeline)
         try:
-            await manager.async_handle_pipeline_event(event)
+            await asyncio.shield(self._caller)
+            if self._error_cleanup is not None:
+                await asyncio.shield(self._error_cleanup)
+        except BaseException as err:
+            caller = self._caller
+            if not caller.done() and not self._cancelled:
+                caller.cancel()
+            try:
+                await self._stop_audio()
+            except HomeAssistantError as cleanup_error:
+                _LOGGER.error("Tivoo could not confirm Wyoming TTS cancellation")
+                raise err from cleanup_error
+            finally:
+                await asyncio.gather(caller, return_exceptions=True)
+            raise
+        finally:
+            self._caller = None
+
+    async def async_cancel(self, playback_id: str) -> bool:
+        """Cancel and join only the run associated with this playback ID."""
+        if self._playback_id is None or playback_id != self._playback_id:
+            return False
+        caller = self._caller
+        if caller is not None and not caller.done() and not self._cancelled:
+            caller.cancel()
+        try:
+            await self._stop_audio()
+        finally:
+            if caller is not None:
+                await asyncio.gather(caller, return_exceptions=True)
+        return True
+
+    async def _stop_audio(self) -> None:
+        self._cancelled = True
+        pending = tuple(self._events)
+        for task in pending:
+            task.cancel()
+        try:
+            if self._owner is not None:
+                await self._owner.async_cancel()
+        finally:
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _handle_event(self, event: PipelineEvent) -> None:
+        try:
+            await self._manager.async_handle_pipeline_event(event)
         except HomeAssistantError:
             _LOGGER.warning(
                 "Unable to send TTS resource to ESP32; check the internal URL "
                 "and diagnostic connection"
             )
+        if self._manager._resource is not None:
+            self._playback_id = self._manager._resource.playback_id
 
-    def handle_event(event) -> None:
-        hass.async_create_task(
-            async_handle_event(event),
-            "tivoo_tts_pipeline_event",
+    @callback
+    def __call__(self, event: PipelineEvent) -> None:
+        if self._cancelled:
+            return
+        event_type = str(event.type)
+        if self._caller is not None and event_type == "run-start":
+            output = (event.data or {}).get("tts_output")
+            if (
+                isinstance(output, Mapping)
+                and isinstance(token := output.get("token"), str)
+                and (stream := tts.async_get_stream(self._hass, token)) is not None
+            ):
+                self._owner = PipelineTtsOwner.for_stream(stream)
+        elif self._owner is not None and event_type == "error":
+            task = self._hass.async_create_task(
+                self._stop_audio(), "Tivoo TTS error cleanup"
+            )
+            # The wrapper waits for this path after HA returns from a PipelineError.
+            self._error_cleanup = task
+            return
+        task = self._hass.async_create_task(
+            self._handle_event(event), "tivoo_tts_pipeline_event"
         )
+        if not task.done():
+            self._events.add(task)
+            task.add_done_callback(self._events.discard)
 
-    return handle_event
+
+def create_pipeline_event_callback(
+    hass: HomeAssistant, adapter: Esp32ConnectionAdapter
+) -> PipelineTtsEvents:
+    """Create a per-run HA event callback and TTS lifecycle owner."""
+    return PipelineTtsEvents(hass, adapter)

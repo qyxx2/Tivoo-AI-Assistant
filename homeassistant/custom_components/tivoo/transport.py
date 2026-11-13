@@ -284,14 +284,15 @@ class Esp32ConnectionAdapter:
             frame = encode_message(message_type, payload, self._diagnostic_tx_sequence)
             try:
                 writer.write(frame)
+                # The frame is committed before drain can be cancelled.
+                self._diagnostic_tx_sequence = (
+                    self._diagnostic_tx_sequence + 1
+                ) & 0xFFFFFFFF
                 await writer.drain()
             except (OSError, ConnectionError) as err:
                 raise HomeAssistantError(
                     "ESP32 diagnostic channel failed while sending a message"
                 ) from err
-            self._diagnostic_tx_sequence = (
-                self._diagnostic_tx_sequence + 1
-            ) & 0xFFFFFFFF
 
     async def async_send_tts_play(
         self, playback_id: str, url: str, mime_type: str

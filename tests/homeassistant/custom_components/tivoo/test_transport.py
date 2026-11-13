@@ -1484,3 +1484,37 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
 
 async def _collect_audio(iterator):
     return [chunk async for chunk in iterator]
+
+
+async def test_cancelled_tts_play_drain_consumes_written_sequence():
+    from custom_components.tivoo.diagnostics import TYPE_MIC_CAPTURE_STOP
+
+    written = asyncio.Event()
+    frames = []
+
+    class Writer:
+        def is_closing(self):
+            return False
+
+        def write(self, frame):
+            frames.append(frame)
+            written.set()
+
+        async def drain(self):
+            if len(frames) == 1:
+                await asyncio.Future()
+
+    adapter = transport.Esp32ConnectionAdapter(None)
+    adapter._diagnostic_handshaken = True
+    adapter._writers["diagnostic"] = Writer()
+
+    send = asyncio.create_task(
+        adapter.async_send_tts_play("id", "http://ha", "audio/mpeg")
+    )
+    await written.wait()
+    send.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await send
+    await adapter.async_send_message(TYPE_MIC_CAPTURE_STOP, b"{}")
+
+    assert [int.from_bytes(frame[12:16], "little") for frame in frames] == [0, 1]

@@ -68,21 +68,23 @@
 - [ ] 真实 AstrBot 4.29.4 Chat 收到 run_started 和至少一条 plain 后调用同 owner Stop。
 - [ ] 记录 stopped_count、Stop 后 complete/end、plain 是否继续、session is_running/active_runs。
 - [ ] 清理测试 session；API Key secret 不进入日志或文档。
-- [ ] 扩展 fake endpoint：plain 前取消、plain 后取消、complete 无 end、Stop 403/timeout；断言 SSE close、Stop exactly once、原 CancelledError 传播、lock 释放。
-- [ ] 运行 P3 Conversation tests 与 HA cancellation 集成测试，区分真实服务和 fake 证据。
+- [x] 扩展 fake endpoint：plain 前取消、plain 后取消、complete 无 end、Stop 403/timeout；断言 SSE close、Stop exactly once、原 CancelledError 传播、lock 释放。
+- [x] 运行 P3 Conversation tests 与 HA cancellation 集成测试，区分真实服务和 fake 证据。
 
 ### Task 2：TTS producer/consumer真实 owner
 
 **Files:** 证据确认后修改 `homeassistant/custom_components/tivoo/tts_lifecycle.py` 或 `audio_resource.py`；测试 `tests/homeassistant/test_assist_pipeline_tts_cancellation.py`、`tests/services/sherpa_wyoming/test_server.py`。
 
-- [ ] 用事件屏障追踪 Pipeline caller、ResultStream、TTSCache producer、data_gen、text generator、HTTP queue、Wyoming writer、P7A handler/request/input/worker/callback。
-- [ ] 保留 preferred_format=wav 的已有对照；新增 preferred_format=mp3 的真实 HA 转码用例，运行真实 FFmpeg，验证 Proxy MIME/实际 MP3 可解码。覆盖转换 generator、输入 writer、FFmpeg process/pipes 在活动取消后全部收尾；不得 mock 掉转码再声称生产取消链路通过。代码依据见矩阵 §2.3。
-- [ ] 查找 HA Core 2026.11.0 可用的受支持资源 owner seam。若无，形成一个窄、版本锁定且可回归测试的项目 owner adapter；不得全局 task scan 或卸载 Config Entry。
-- [ ] 冻结可定向调用的取消接口（例如 `async_cancel(playback_id)`），由真正创建 producer 的 owner 执行 cancel/close 并 await。
-- [ ] GET close 只移除自己的 consumer queue；Pipeline cancel 必须取消该 run 的 producer。
-- [ ] 模拟真实 TCP EOF，验证 P7A handler/request/input/worker/callback 全部结束；若有残留，在 P7A request owner 修复。
-- [ ] 取消后无迟到 text/PCM/callback/TTS_PLAY；清理测试屏障不算产品 PASS。
-- [ ] 若无法得到可证明的定向 producer handle，b6 记为 BLOCKED，暂停依赖该能力的端到端验收，不用“设备静音”冒充取消完成。
+- [x] 用事件屏障追踪 Pipeline caller、ResultStream、TTSCache producer、data_gen、text generator、HTTP queue、Wyoming writer、P7A handler/request/input/worker/callback。
+- [x] 保留 preferred_format=wav 的已有对照；新增 preferred_format=mp3 的真实 HA 转码用例，运行真实 FFmpeg，验证 Proxy MIME/实际 MP3 可解码。覆盖转换 generator、输入 writer、FFmpeg process/pipes 在活动取消后全部收尾；不得 mock 掉转码再声称生产取消链路通过。代码依据见矩阵 §2.3。
+- [x] 查找 HA Core 2026.11.0 可用的受支持资源 owner seam。若无，形成一个窄、版本锁定且可回归测试的项目 owner adapter；不得全局 task scan 或卸载 Config Entry。
+- [x] 冻结可定向调用的取消接口（例如 `async_cancel(playback_id)`），由真正创建 producer 的 owner 执行 cancel/close 并 await。
+- [x] GET close 只移除自己的 consumer queue；Pipeline cancel 必须取消该 run 的 producer。
+- [x] 模拟真实 TCP EOF，验证 P7A handler/request/input/worker/callback 全部结束；若有残留，在 P7A request owner 修复。
+- [x] 取消后无迟到 text/PCM/callback/TTS_PLAY；清理测试屏障不算产品 PASS。
+- [x] 已验证定向 producer handle。真实 AstrBot partial-output Stop 因 NAS 不可达待验收，B6 总体保持 BLOCKED。
+
+**执行记录：** [B6 取消链路验收](../reports/2026-11-13-p6-5b6-cancellation-owner-closeout.md)。
 
 **Exit gate:** partial-plain Stop 证据；producer/consumer/Wyoming/P7A owner 清晰；所有旧任务退出、无迟到音频。
 
