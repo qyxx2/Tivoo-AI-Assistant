@@ -18,6 +18,11 @@ from wyoming.server import AsyncEventHandler
 
 _TRACE_PATH = ""
 _TRACE_LOCK = threading.Lock()
+_ACTIVE_HANDLERS = []
+_TTS_CALLBACK_RELEASE = threading.Event()
+_TTS_CALLBACK_WAITING = threading.Event()
+_HOLD_FIRST_TTS_CALLBACK = False
+_TTS_GENERATE_COUNT = 0
 
 
 def trace(event: str, **fields) -> None:
@@ -65,12 +70,19 @@ class FakeRecognizer:
 
 class FakeTts:
     def generate(self, text: str, *, sid: int, speed: float, callback=None):
+        global _TTS_GENERATE_COUNT
+        _TTS_GENERATE_COUNT += 1
         trace("tts_generate", text=text, sid=sid, speed=speed)
         samples = np.linspace(-0.25, 0.25, 512, dtype=np.float32)
+        if _HOLD_FIRST_TTS_CALLBACK and _TTS_GENERATE_COUNT == 1:
+            _TTS_CALLBACK_WAITING.set()
+            trace("tts_callback_waiting")
+            _TTS_CALLBACK_RELEASE.wait()
+            trace("tts_callback_released")
         callback_result = None
         if callback is not None:
             callback_result = callback(samples, 1.0)
-        trace("tts_callback", callback_result=callback_result)
+        trace("tts_callback", text=text, callback_result=callback_result)
         return SimpleNamespace(samples=samples, sample_rate=22_050)
 
 
@@ -141,6 +153,8 @@ def _install_task_tracing() -> None:
     original_run = AsyncEventHandler.run
 
     async def tracked_run(self) -> None:
+        self._p6_5_handler_task = asyncio.current_task()
+        _ACTIVE_HANDLERS.append(self)
         try:
             await original_run(self)
         finally:
@@ -149,12 +163,80 @@ def _install_task_tracing() -> None:
                 last_provider=getattr(self, "_p6_5_last_provider", None),
                 tts_task_pending=self._tts_task is not None,
             )
+            if self in _ACTIVE_HANDLERS:
+                _ACTIVE_HANDLERS.remove(self)
 
     WyomingEventHandler.run = tracked_run
 
 
-async def _run(host: str, port: int) -> None:
+def _task_state(task) -> str | None:
+    if task is None:
+        return None
+    if task.cancelled():
+        return "cancelled"
+    if task.done():
+        return "done"
+    return "pending"
+
+
+async def _handle_control(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
+    try:
+        command = json.loads(await reader.readline())
+        action = command.get("action")
+        if action == "release_tts":
+            _TTS_CALLBACK_RELEASE.set()
+            result = {"released": True}
+        elif action == "status":
+            handlers = []
+            for handler in _ACTIVE_HANDLERS:
+                session = handler._tts_session
+                handlers.append(
+                    {
+                        "provider": handler._provider,
+                        "handler_task": _task_state(
+                            getattr(handler, "_p6_5_handler_task", None)
+                        ),
+                        "tts_request_task": _task_state(handler._tts_task),
+                        "input_task": _task_state(
+                            session._input_task if session else None
+                        ),
+                        "worker_task": _task_state(
+                            session._worker_task if session else None
+                        ),
+                        "session_cancelled": session._cancelled.is_set()
+                        if session
+                        else None,
+                    }
+                )
+            result = {
+                "callback_waiting": _TTS_CALLBACK_WAITING.is_set()
+                and not _TTS_CALLBACK_RELEASE.is_set(),
+                "handlers": handlers,
+            }
+        else:
+            result = {"error": "unknown action"}
+        writer.write(json.dumps(result).encode() + b"\n")
+        await writer.drain()
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+async def _run(
+    host: str, port: int, control_port: int | None, hold_first_tts_callback: bool
+) -> None:
+    global _HOLD_FIRST_TTS_CALLBACK
+    _HOLD_FIRST_TTS_CALLBACK = hold_first_tts_callback
+    _TTS_CALLBACK_RELEASE.clear()
+    _TTS_CALLBACK_WAITING.clear()
     _install_task_tracing()
+    control_server = (
+        await asyncio.start_server(_handle_control, host, control_port)
+        if control_port is not None
+        else None
+    )
     config = ServiceConfig(
         wake_word_phrase="tivoo",
         host=host,
@@ -165,11 +247,16 @@ async def _run(host: str, port: int) -> None:
         stt_recognizer=FakeRecognizer(),
         tts_engine=FakeTts(),
     )
-    await run_server(
-        config,
-        keyword_generator=lambda *_args: None,
-        model_loader=lambda _config: models,
-    )
+    try:
+        await run_server(
+            config,
+            keyword_generator=lambda *_args: None,
+            model_loader=lambda _config: models,
+        )
+    finally:
+        if control_server is not None:
+            control_server.close()
+            await control_server.wait_closed()
 
 
 def main() -> None:
@@ -178,13 +265,17 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--trace", required=True)
+    parser.add_argument("--control-port", type=int)
+    parser.add_argument("--hold-first-tts-callback", action="store_true")
     args = parser.parse_args()
     _TRACE_PATH = args.trace
     logging.basicConfig(
         level=logging.INFO,
         format="%(levelname)s:%(name)s:%(message)s",
     )
-    asyncio.run(_run(args.host, args.port))
+    asyncio.run(
+        _run(args.host, args.port, args.control_port, args.hold_first_tts_callback)
+    )
 
 
 if __name__ == "__main__":
