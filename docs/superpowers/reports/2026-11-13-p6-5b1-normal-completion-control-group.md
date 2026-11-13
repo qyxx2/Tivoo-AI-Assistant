@@ -44,6 +44,8 @@
 7. HA Wyoming TTS 专属 TCP client 执行 disconnect。
 8. P7A TTS session 的 input/worker task 完成，collect task 完成，request reset，单次 TCP handler 的 run() finally 执行；该连接没有遗留 TTS task。
 
+**格式范围补注（b6+ 文档核对）：** 本测试 P65ControlSatellite 显式设置 preferred_format=wav，因此该结果不代表生产 Proxy 默认输出 WAV，也未覆盖 WAV→MP3 的 FFmpeg 生命周期。生产 MP3 已见 P7A 端到端报告；b6 必须补测真实 MP3 转码取消，见 [矩阵 §2.3](../specs/2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md#23-tts-格式证据与生产输出约定)。
+
 ## 3. P7A 请求级证据
 
 测试 trace 文件由真实 P7A WyomingEventHandler / TTSStreamSession 生成。

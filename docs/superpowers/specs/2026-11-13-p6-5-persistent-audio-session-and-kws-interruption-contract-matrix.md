@@ -49,6 +49,14 @@ ESP-SR AFE VAD 表示当前帧是否有人声活动，不判断讲话者身份�
 - 当前 TTS 传输已经是“一次 TCP TTS_PLAY + 一次 HTTP GET + 响应体持续流式读取”，不是多次 GET。P6.5 不增加 TCP 原始 PCM 推送协议。
 - ESP32 复用已锁定的 esp_audio_codec 2.6.2 和 esp_audio_effects 1.4.5 做 MP3 解码/SRC；不从零实现通用 MP3 解码器。
 
+### 2.3 TTS 格式证据与生产输出约定
+
+- 容器代码 `services/sherpa_wyoming/providers/tts.py` 的普通/流式输出均为 Wyoming AudioStart/AudioChunk，负载是 22,050 Hz / Mono / S16LE PCM，不是容器直接编码 MP3。
+- HA Core 2026.11.0 `components/wyoming/tts.py` 返回 `TTSAudioResponse("wav", data_gen())`；`components/tts/__init__.py` 的默认格式是 mp3，按 preferred_format 判断并通过 `_async_convert_audio()` 转码。Satellite 基类把 tts_options 传入 Pipeline 的 tts_audio_output。
+- [生产两轮验收](../reports/2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md) §3 已验证 Proxy 返回 audio/mpeg、FFprobe/FFmpeg 确认 MP3。b1/b3/b4 测试中的 `P65ControlSatellite` 显式设置 preferred_format=wav（`tests/homeassistant/test_assist_pipeline_tts_cancellation.py`），其 WAV 结果不是生产默认格式证据。
+- b7 生产 Tivoo Satellite 显式设置 preferred_format=mp3；b10 维持流式 MP3 解码，其他 MIME 明确报格式不支持，不悄悄按 MP3 解码，也不新增无实际需求的 WAV 解码器。
+- b6 必须验证生产格式下的真实 HA WAV→MP3 转码路径：除现有 owner 外，覆盖转换 generator、输入 writer task、FFmpeg process/pipes 的取消与等待。现有 WAV 用例保留作下游 owner 对照，不能替代 MP3 生产路径验收。
+
 ## 3. 时间窗口与语音交互状态
 
 计时器必须按用途分离，不能把 HA ChatSession 清理、Assist Pipeline 整体超时或 AstrBot 24 小时 session TTL 当成语音助手聆听时间。
@@ -57,7 +65,7 @@ ESP-SR AFE VAD 表示当前帧是否有人声活动，不判断讲话者身份�
 |---|---:|---|
 | 首次 KWS 候选静音超时 | 3 秒 | 首次 VAD speech_start 开始上传后，HA 仍在 WAKE_WORD 阶段且未 Detection；从最近一次 MIC_ACTIVITY speech_end 起计时，有新 speech_start 则重置。由项目会话协调器取消未命中的 Pipeline 并结束上传；不是 HA 默认值 |
 | 首次 KWS 候选总上限 | 15 秒 | 从首次 speech_start 起算的硬上限，不因环境中持续讲话而无限续期；到期仍未 Detection 则结束候选上传。此值是项目隐私/资源策略，不是 HA Pipeline timeout |
-| 唤醒后等待用户开始指令 | 5 秒 | 从 HA 收到 KWS Detection 开始计时；HA 发出 STT_VAD_START（VoiceCommandSegmenter 已检测到命令语音）时取消。超时仍无 STT_VAD_START 则取消空 STT turn，不等 15 秒 segmenter 兜底；唤醒词后连续说命令仍走同一 STT Pipeline |
+| 唤醒后等待用户开始指令 | 5 秒 | 首次唤醒从 HA 收到 KWS Detection 开始计时；打断交接从新轮 STT_START 开始计时（旧轮清理等待不计入）；新轮优先消费 handoff。HA 发出 STT_VAD_START（VoiceCommandSegmenter 已检测到命令语音）时取消。超时仍无 STT_VAD_START 则取消空 STT turn，不等 15 秒 segmenter 兜底；唤醒词后连续说命令仍走同一 STT Pipeline |
 | 命令起始语音 | 0.3 秒 | HA Core 2026.11.0 VoiceCommandSegmenter.speech_seconds 默认值；连续达到阈值后发出 STT_VAD_START，项目用该事件取消 5 秒空命令 watchdog |
 | 最小命令段 | 1.0 秒 | VoiceCommandSegmenter.command_seconds 默认值；含起始语音累计，不是额外增加 1 秒 |
 | 指令结束静音 | 0.7 秒 | 用户命令已开始后，HA VoiceCommandSegmenter.silence_seconds 默认值；P7A 声明 requires_external_vad=true，因此该 segmenter 会被使用 |
@@ -75,7 +83,7 @@ ESP-SR AFE VAD 表示当前帧是否有人声活动，不判断讲话者身份�
 
 - `IDLE_LOCAL`：本地 I2S RX/AEC/VAD 工作；不上传。首次 VAD speech_start 开启 MIC session，进入 `WAKE_WORD_WAIT`。
 - `WAKE_WORD_WAIT`：上传 AEC PCM，HA 运行原有 WAKE_WORD Pipeline。项目协调器从 MIC_ACTIVITY speech_end 起累计 3 秒无新 speech_start；未 Detection 则取消 Pipeline 并回本地待机。首次 speech_start 起另有 15 秒硬上限，防止持续背景说话无限延长上传。
-- `COMMAND_WAIT`：KWS 命中后继续同一 MIC session，HA 同一 Pipeline 进入 STT。AudioSessionCoordinator 从 Detection 开始 5 秒 watchdog；只要 HA 发出 STT_VAD_START 就取消 watchdog 并转为 `COMMAND_CAPTURE`。超时仍无 STT_VAD_START 时取消空 STT turn。
+- `COMMAND_WAIT`：KWS 命中后继续同一 MIC session，HA 同一 Pipeline 进入 STT。AudioSessionCoordinator 首次唤醒从 Detection、打断交接从新轮 STT_START 开始 5 秒 watchdog；只要 HA 发出 STT_VAD_START 就取消 watchdog 并转为 `COMMAND_CAPTURE`。超时仍无 STT_VAD_START 时取消空 STT turn。
 - `COMMAND_CAPTURE`：向现有 STT 输送同一 AEC PCM；按 HA 端点检测结束本轮 STT。
 - `ASSIST_PROCESSING`：KWS 命中后进入 STT；Pipeline 发出 STT_START 时并行启动 side KWS watcher，STT 完成后继续保留该 watcher，覆盖 Intent/Conversation/SSE/TTS 阶段。VAD 活动只上传和观测。
 - `PLAYBACK_ACTIVE`：设备正在播放。只有 NAS KWS Detection 可启动 interruption；VAD speech_start 不停止 DAC。
@@ -146,8 +154,10 @@ ESP-SR AFE VAD 表示当前帧是否有人声活动，不判断讲话者身份�
 
 - TCP MIC ingress 与单轮 Pipeline consumer 解耦。一个 MIC session 持续跨多轮 Pipeline；RUN_END 不能自动触发 MIC_CAPTURE_STOP。
 - HA ingress 统一顺序接收 MIC_PCM，再提供给当前 Pipeline 或 side KWS watcher；同一段 PCM 不得在两个主消费者之间重复或遗漏。
-- 当前 Pipeline 的 WAKE_WORD 阶段使用 HA 自身的 KWS→STT 音频交接；side KWS 在 STT_START 后监听。Detection 命中时记录 HA ingress index，从 Detection 之后开始保留有界 handoff PCM，直到新 STT subscription 接管。
-- KWS Detection 到下一 STT subscription 接管期间的 handoff 上限固定为 15 秒/480,000 bytes（16 kHz S16LE Mono，约 469 KiB），覆盖 P3 Stop 最长 10 秒的现有等待预算并留调度余量；HA 以 ingress index 切出 Detection 之后的音频。超过上限记录明确错误并终止该轮，不无限缓存或静默丢弃开头。
+- 首次 WAKE_WORD 使用 HA 自身 KWS→STT 交接；side KWS 在 STT_START 后监听。side watcher 运行期间维护有界预录；命中后把预录、Provider queued_audio、尚未消费的 ingress 与后续 PCM 按 ingress index 连续交给新 STT，重叠只交付一次。不得等 Detection 回调到达才开始缓存。
+- `providers/wake.py` 返回的 Detection.timestamp 是触发识别结果的 AudioChunk.timestamp，不是模型给出的精确唤醒词结束点。timestamp 只用于关联 ingress，不能据它硬切掉此前全部 PCM。HA `assist_pipeline/default_pipeline.py` 也支持检测前缓冲和 queued_audio；其 WakeWordSettings.audio_seconds_to_buffer 默认 0，不可声称默认已提供预录保护。
+- side watcher 的检测前预录首期取 1 秒/32,000 bytes，属于本项目参数；b9 用“唤醒词紧接命令”和延迟 Detection 用例验证开头不丢失，b11 再按实际声学结果调校，不把该值当成上游保证。
+- 预录与 Detection 到下一 STT subscription 接管音频的 handoff 总上限固定为 15 秒/480,000 bytes（16 kHz S16LE Mono，约 469 KiB），覆盖 P3 Stop 最长 10 秒的现有等待预算并留调度余量；HA 以 ingress index 合并预录及后续音频并去重。超过上限记录明确错误并终止该轮，不无限缓存或静默丢弃开头。
 - 网络背压不得阻塞 ESP32 I2S DMA。P6 的 4 KiB MIC_PCM 载荷上限保持不变。
 
 ## 6. NAS KWS watcher 与确认打断
@@ -171,7 +181,7 @@ ESP-SR AFE VAD 表示当前帧是否有人声活动，不判断讲话者身份�
 3. 取消并 await 旧 `async_accept_pipeline_from_satellite()` caller，由 HA 基类完成 Pipeline task 取消。
 4. P3 关闭旧 SSE reader，并按 AstrBot 取消规格对 owner 匹配 session Stop 一次；在旧 Stop / 清理完成前不对同一 session 并发发新 Chat。
 5. 通过真实 owner 定向取消旧 TTS producer、text generator、HTTP consumer queue、Wyoming writer/TCP 和 P7A request/input/worker/callback。只删除 token、只关闭 GET 或只调用 tts_response_finished 都不算取消成功。
-6. 保留 KWS Detection 前后对应的有界 AEC PCM handoff；旧轮收尾后从 `PipelineStage.STT` 启动新 Pipeline，不要求重复唤醒词。
+6. 保留 KWS Detection 前后对应的有界 AEC PCM handoff；旧轮收尾后从 `PipelineStage.STT` 启动新 Pipeline，不要求重复唤醒词。此新轮的 5 秒 command-start watchdog 从 STT_START 起算，先交付 handoff；旧轮 Stop 等待不触发空命令超时。
 7. 新旧 turn 使用独立 generation/playback_id；旧 AUDIO_STATE 或 stop 不得影响新播放。
 
 ### 6.3 误触发边界
@@ -224,7 +234,7 @@ MIC_ACTIVITY 仅在 VAD 状态切换时发送，不按帧发送能量/置信度�
 | Pipeline caller | Tivoo Assist Satellite | 保存 handle、cancel/await 公开入口 |
 | KWS watcher | AudioSessionCoordinator；推理由 HA Wake Word Provider/P7A | hit 或会话结束时关闭 iterator/Wyoming |
 | AstrBot SSE/Stop | P3 astrbot | 关闭 reader，再 owner-matched Stop 一次 |
-| TTS producer/generator | 实际创建 producer 的 TTS resource owner | 单资源定向 cancel/await |
+| TTS producer/generator/MP3 转码 | 实际创建资源的 owner | 单资源定向 cancel/await；包括转换 generator、writer、FFmpeg process/pipes |
 | HTTP consumer queue | 当前 cache consumer | GET EOF/取消时移除自身登记 |
 | Wyoming/P7A 请求 | 对应 TCP/request owner | EOF/取消后 writer、request、input、worker、callback 收尾 |
 | 最终 PCM/I2S TX | ESP32 audio_output_manager | 所有播放源统一停止 |
@@ -244,11 +254,11 @@ MIC_ACTIVITY 仅在 VAD 状态切换时发送，不按帧发送能量/置信度�
 | P65-A01 | 常驻采集 | I2S RX/AEC/VAD 初始化并持续运行；IDLE 不发 MIC_PCM |
 | P65-A02 | 首次 VAD 上传 | MIC_SESSION_START + AEC 预录；WAKE_WORD Pipeline；同一 MIC session 进入 STT |
 | P65-A03 | wakeword miss | 最近 speech_end 后 3 秒无新 speech_start 或从首次 speech_start 起 15 秒候选硬上限，结束本轮与上传；本地 RX/AEC/VAD 不停 |
-| P65-A04 | wakeword hit 后命令等待 | KWS Detection 后 5 秒内必须出现 STT_VAD_START；连续讲话不增加等待，空命令被取消且不等 15 秒 VAD timeout |
+| P65-A04 | wakeword hit 后命令等待 | 首次唤醒从 Detection、打断交接从新轮 STT_START 起 5 秒内必须出现 STT_VAD_START；旧轮清理超过 5 秒时已有缓存命令仍能识别；连续讲话不增加等待，空命令被取消且不等 15 秒 VAD timeout |
 | P65-A05 | STT endpoint | 验证 P7A requires_external_vad=true 确实使用 HA VoiceCommandSegmenter；默认 0.3 秒起始 speech、1.0 秒最小 command、0.7 秒 silence、15 秒 segmenter timeout；Sherpa 自身硬上限另为 300 秒 |
 | P65-A06 | 跨 Pipeline session | 同一 MIC session 跨两轮以上 Pipeline；队列有界、顺序正确、无旧 PCM 串轮 |
 | P65-A07 | partial SSE 取消 | AstrBot 已输出 plain 后 Stop 生效；reader 关闭、owner Stop 一次、无迟到 plain |
-| P65-A08 | 活动 TTS 取消 | producer/generator/consumer/Wyoming/P7A 全部退出，无迟到 PCM/TTS_PLAY |
+| P65-A08 | 活动 TTS 取消 | producer/generator/MP3 转码 writer/FFmpeg/consumer/Wyoming/P7A 全部退出，无迟到 PCM/TTS_PLAY |
 | P65-A09 | HTTP GET 对照 | GET 单独断开只移除自身 consumer；Pipeline cancel 可定向停止该 run producer |
 | P65-A10 | VAD 误触发防护 | 普通环境人声/电视/噪声的 VAD 活动不停止 TTS、不取消 Pipeline |
 | P65-A11 | KWS 确认打断 | 活动期间真实 KWS Detection 后匹配 AUDIO_STOP、取消旧 run、新 STT 从 STT 开始 |

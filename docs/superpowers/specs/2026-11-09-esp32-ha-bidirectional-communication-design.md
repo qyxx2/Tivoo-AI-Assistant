@@ -418,10 +418,10 @@ AFE 输出的 16 kHz S16LE Mono 增强音频是本项目唯一对外的麦克风
 4. HA 把 PCM Payload 放入当前会话的异步音频队列，并把队列迭代器交给 Tivoo Assist Satellite 的 `async_accept_pipeline_from_satellite()`。
 5. Pipeline 活跃期间 ESP32 必须持续发送音频，包括静音 PCM 帧；本地 VAD 不得在说话间隙擅自结束已启动的 HA Pipeline 音频流。
 6. TTS 或其他音频输出期间，ESP32 的 VAD 只发送 MIC_ACTIVITY speech_start/speech_end，不停止音频、不新建 MIC session。HA side KWS watcher 命中配置唤醒词后，HA 发送匹配 audio_id 的 AUDIO_STOP、取消旧 Pipeline/TTS/AstrBot，并从同一 MIC session 的有界 handoff 以 PipelineStage.STT 启动新轮。
-7. HA Pipeline 正常结束、超时或取消后，HA 发送 MIC_CAPTURE_STOP；ESP32 只停止本次网络上传，保留物理 I²S RX、AEC 与本地 VAD，返回本地监听。
+7. 单轮 Pipeline 正常结束或 KWS 确认打断不结束 MIC 网络会话。只有 P6.5 协调器判定首次 KWS miss/候选超时、空命令超时、follow-up 到期或故障/unload 时，才发送匹配 session_id 的 MIC_CAPTURE_STOP；物理 I²S RX/AEC/VAD 保持运行。
 8. ESP32 在主动结束或设备异常时发送 MIC_SESSION_END；HA 关闭对应音频队列，使异步音频迭代器正常结束。
 
-一个设备同一时间只允许一个活动网络麦克风上传会话。新会话不得静默覆盖旧会话；打断场景需先由 HA 结束旧 Pipeline 输入/取消旧响应，再接管新会话队列。物理麦克风采集可持续存在，不受上传会话结束影响。
+一个设备同一时间只允许一个活动网络麦克风上传会话。新会话不得静默覆盖旧会话；打断场景由 HA 取消旧响应，并让新 Pipeline 接管同一 MIC session 的有界 handoff；不创建新的网络会话。物理麦克风采集可持续存在，不受上传会话结束影响。
 
 ### 6.3 流控与实时性
 
@@ -501,9 +501,9 @@ AUDIO_STATE 状态至少包括 `buffering`、`playing`、`completed`、`stopped`
 
 - TTS_PLAY 中的 mime_type 是 HA 传递的资源类型元数据；ESP32 HTTP Client 还应检查响应状态码和响应 Content-Type，并结合实际容器/帧头识别结果确认格式。不得根据 URL 文件名推断格式。元数据、响应头和实际数据不一致时，报告明确的音频格式错误，不盲目播放。
 - 当前生产路径的首要目标是 audio/mpeg / MP3。MP3 解码后按解码器报告的真实采样率与声道处理；22,050 Hz Mono 是本次生产实测值，不能硬编码成所有未来资源的无条件属性。
-- 保留 HA Core 2026.11.0 Wyoming 流式 TTS 的未知长度 WAV 兼容要求：其流式头可能声明 nframes=0，后续 PCM 按块到达。若最终 Satellite/TTS Proxy 路径返回该资源，ESP32 必须在 HTTP EOF 前持续解析/输出，不能等待 RIFF/data 长度成为已知值或等待整个文件下载完成。该格式与 MP3 是不同的 HTTP 容器路径，不得把 Wyoming 侧 22.05 kHz PCM 简化描述为 HTTP 原始 PCM。
-- ESP32 首期只增加有实际链路依据的解码能力：至少覆盖当前生产实测 MP3，并保留对未知长度流式 WAV 的验证/兼容路径；其他编码格式只有在 HA 实际返回且确有需要时再增加。若部署配置变化导致 HA 返回固件尚不支持的格式，应返回音频格式错误，或由 HA 侧明确配置兼容输出，不在固件中堆叠无需求的解码器。
-- HTTP 数据、解码器输入、解码后 PCM、SRC 输出及播放缓冲均使用有界内存。MP3 帧、WAV header 和 HTTP chunk 边界不得被当成 PCM 样本边界；解码器/SRC 必须跨 HTTP chunk 保留解析及滤波状态。
+- HA Core 2026.11.0 Wyoming integration 将容器的 Wyoming PCM 包装为未知长度 WAV（nframes=0）；HA TTS 再按 preferred_format 转码。P6.5 生产 Satellite 明确设置 preferred_format=mp3，保留既有生产 MP3 路径。未知长度 WAV 的解析属于 HA 转码入口；不据此要求 ESP32 增加 WAV 解码。
+- ESP32 首期只增加有实际链路依据的解码能力：覆盖当前生产实测 MP3，并验证 HA 的未知长度 WAV → MP3 转码路径；其他编码格式只有在 HA 实际返回且确有需要时再增加。若部署配置变化导致 HA 返回固件尚不支持的格式，应返回音频格式错误，或由 HA 侧明确配置兼容输出，不在固件中堆叠无需求的解码器。
+- HTTP 数据、解码器输入、解码后 PCM、SRC 输出及播放缓冲均使用有界内存。MP3 帧和 HTTP chunk 边界不得被当成 PCM 样本边界；解码器/SRC 必须跨 HTTP chunk 保留解析及滤波状态。
 - 解码输出统一经 SRC 转换到 32 kHz；随后复制为左右声道并适配 32-bit I²S Slot。若解码输出已是 32 kHz，则不执行不必要的 SRC。
 - 播放欠载必须计数并上报；网络接收与解码任务不得直接阻塞 I²S TX DMA。
 - AUX 为首选输出；A2DP 不与同一段 AUX 音频并行播放。
@@ -515,7 +515,7 @@ AUDIO_STATE 状态至少包括 `buffering`、`playing`、`completed`、`stopped`
 **全局停止行为：**
 
 - HA 发送 `AUDIO_STOP` 表示停止 ESP32 当前所有可控音频输出及待播队列，不限定为 TTS。可选 `expected_audio_id` 用于保护新播放不被迟到的停止命令误伤；不提供该字段时按全局停止处理。
-- ESP32 的本地 VAD 打断也直接调用同一个 `audio_output_manager.stop_all()` 语义，不通过模拟 TTS 任务停止或仅取消 TTS HTTP Reader 实现。
+- 本地 VAD 只报告活动，不调用停止播放。NAS KWS 确认后由 HA 发送 AUDIO_STOP，设备通过统一 audio_output_manager 停止受控输出。
 - 停止时先阻止新的 PCM 被提交，再取消各活动音源的生产/下载/解码任务，清空软件队列和 I²S TX 待播数据，最后停止/静音当前硬件后端。为了避免爆音允许极短输出淡出，但不得让长缓冲音频在打断后继续播放。
 - 停止成功后通过 AUDIO_STATE 报告每个受影响活动源的最终状态。停止命令必须幂等；重复或过期请求不得造成任务崩溃或意外重新播放。
 
@@ -677,7 +677,7 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 - Pipeline 活跃时静音帧仍持续上送；结束后音频迭代器能正常结束。
 - INMP441 16 kHz 麦克风样本与最终播放参考能按 M/R 交错输入 WROVER-E 的 ESP-SR AFE AEC；输出为单声道增强 PCM，且 VAD、预录与 MIC_PCM 使用同一份处理结果。
 - 播放参考从最终输出 PCM 获取，能正确转换为 16 kHz，并通过参考缓冲补偿 I²S TX/DMA 时延；停止播放后仍处理必要的回声尾部。
-- HA 下发 TTS_PLAY 后，ESP32 能依据响应 MIME/实际容器流式解码；当前生产 MP3 路径可播放，未知长度 WAV（`nframes=0`）路径不得等待 HTTP EOF 后才开始处理。
+- HA 下发 TTS_PLAY 后，ESP32 能依据响应 MIME/实际容器流式解码；生产 Satellite 明确请求 MP3，HA 将上游未知长度 WAV 转码后提供 audio/mpeg；ESP32 流式播放 MP3，其他 MIME 明确报格式不支持。
 - AUDIO_STOP 能停止当前和排队的所有 ESP32 受控音频源，不限 TTS；终止源任务、清空软件/硬件待播数据并反馈 AUDIO_STATE。
 - 解码 PCM 能通过有状态 SRC 转为 32 kHz，并正确填入双声道 32-bit TX Slot；SRC/解码必须跨 HTTP chunk 保留状态，不因 chunk 边界产生断音。
 - INMP441 转出的 16 kHz M 通道和最终播放 16 kHz R 通道按正确时间关系送入 AFE；AFE 的 VAD 播放静音开关保持关闭，以便用户在播放期间仍可打断。
@@ -712,7 +712,7 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 3. **7778 协议测试**：测试头部编码、长度边界、未知类型、错误版本、粘包/拆包和 Sequence。
 4. **HA 集成测试**：使用模拟 ESP32 TCP Server 验证连接、服务下发、音频队列接收、TTS 事件通知和断线恢复；额外验证 AstrBot ChatLog 增量、`stream_response=true`、`tts_start_streaming` 触发提前下载，以及短回答通过 `tts-end` 回退通知。Wyoming TTS 服务测试还需覆盖 `SynthesizeStart/Chunk/Stop`、HA 兼容性完整 `Synthesize` 不会导致重复合成，以及服务以 `SynthesizeStopped` 正常结束音频流。
 5. **AEC 基线测试**：使用 ESP-SR 对应经典 ESP32 target，验证 16 kHz M/R 交错输入、AFE 输出帧、播放参考通道和 VAD；用已知播放参考 + 近端语音/纯回声录音测量回声残留、近端语音保留和资源占用。
-6. **音频联调**：先用已知 PCM/正弦信号验证 32 kHz 全双工 RX/TX、INMP441 24-bit 对齐、32→16 kHz 抗混叠转换和播放参考的 32→16 kHz 时序对齐；再用生产 HTTP MP3 和 nframes=0 WAV 流验证解码、22.05→32 kHz SRC、PCM 缓冲及 I²S 输出。
+6. **音频联调**：先用已知 PCM/正弦信号验证 32 kHz 全双工 RX/TX、INMP441 24-bit 对齐、32→16 kHz 抗混叠转换和播放参考的 32→16 kHz 时序对齐；再用生产 HTTP MP3 验证解码、22.05→32 kHz SRC、PCM 缓冲及 I²S 输出；HA 侧验证上游 nframes=0 WAV 转为 MP3 的流式输出与取消。
 7. **全局停止与打断测试**：分别测试 HA 主动 AUDIO_STOP 和播放期间 NAS KWS Detection 确认打断；另以环境人声/电视声触发 VAD，确认它们不停止音频。验证 TTS 与其他输出源、HTTP/decoder tasks、软件 PCM 队列和 I2S TX 待播缓冲全部停止，麦克风 RX/AEC/VAD 不停止。
 8. **HA 取消联调**：模拟 side KWS Detection 后 HA 发送 AUDIO_STOP、取消 Assist Pipeline、TTS Proxy、Conversation Agent SSE 和 AstrBot session Stop；验证旧播放不会迟到恢复，同一 MIC session 的 handoff 音频不丢失，并从 STT 阶段启动新一轮。
 9. **实机验收**：最后在 Tivoo AUX 播放时持续发送 SPP 图片/动画，同时运行麦克风采集、AEC、VAD 和播放打断。
@@ -724,7 +724,7 @@ HA 服务参数使用语义化数据，例如亮度值、图片路径、文字�
 - 当前 ESP-IDF 版本与 esp32-divoom SPP 代码适配所需的最小改动；全双工 API 及 TX/RX channel 配置必须与该版本匹配。
 - GPIO 最终分配、模块板供电/接地、PCM5102 模块输出电平及 Tivoo AUX 模拟线路连接。
 - INMP441 RX DMA word 的有效位位置、符号处理和增益；必须用已知信号验证 24-bit → S16LE 转换。
-- 实际 HA TTS Proxy 的 MIME/容器覆盖范围，以及 MP3 和未知长度 WAV 在最终 Satellite 路径上的流式解码表现。
+- 最终生产 Satellite 请求 preferred_format=mp3 后的 HTTP MIME/实际编码、HA WAV→MP3 流式转码及 ESP32 MP3 解码表现。
 - esp_audio_codec / esp_audio_effects 的组件版本、MP3 解码支持、22,050 → 32,000 Hz SRC 能力及实际 CPU/RAM 占用。
 - 当前 ESP-SR 版本对经典 ESP32 target 的 AEC/AFE 具体实现、M/R 通道配置、AEC frame size、内存布局及 WROVER-E 上的 CPU/RAM/实时余量；首版不假设 S3 FD AEC 可在经典 ESP32 使用。
 - I²S TX DMA、播放缓冲和声学传播延迟形成的实际播放参考对齐偏移，以及 AEC 参考帧欠载、错位和房间回声尾部的处理参数。

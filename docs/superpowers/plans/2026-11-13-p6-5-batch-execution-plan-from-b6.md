@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 仅在 `feature/p6-5-ha-cancellation-preflight` 从 HEAD `d2deacb` 继续；保留用户已有未提交修改，不 reset、不 stash、不覆盖。
+- 仅在 `feature/p6-5-ha-cancellation-preflight` 从当前最新 HEAD 继续（b0–b5 基线 d2deacb，b6+ 初版文档 7af1e97）；保留用户已有未提交修改，不 reset、不 stash、不覆盖。
 - P6 既有 TCP 7777/7778、TVIO v1 16-byte header、Sequence、旧消息类型和 P5 SPP 行为保持兼容。
 - MIC_PCM 16 kHz / Mono / S16LE、单载荷最大 4 KiB、20 ms 帧建议、有界队列。
 - I2S 同一 controller 全双工 32 kHz / Stereo / 32-bit Slot；INMP441 M + 最终 TX PCM R；经典 ESP32 SR AEC High Performance。
@@ -20,7 +20,7 @@
 - **VAD 绝不单独触发 AUDIO_STOP、Pipeline cancel 或 AstrBot Stop；只有 NAS KWS Detection 可以中断正在处理/播放的回复。**
 - 首次唤醒从 WAKE_WORD；KWS 确认打断和 follow-up 从 STT。
 - 首次 KWS 候选：最近 MIC_ACTIVITY speech_end 后 3 秒无新 speech_start 即取消未命中 WAKE_WORD Pipeline；首次 speech_start 起 15 秒候选硬上限。两者由 AudioSessionCoordinator 实现，HA WakeWordSettings.timeout 默认 None，Assist Satellite 公开入口不暴露该参数。
-- KWS 命中后：从 Detection 开始 5 秒 command-start watchdog；HA STT_VAD_START（VoiceCommandSegmenter 已检测到命令语音）时取消。超时仍无该事件则取消空 STT turn。
+- KWS 命中后：首次唤醒从 Detection、打断交接从新轮 STT_START 开始 5 秒 command-start watchdog；HA STT_VAD_START（VoiceCommandSegmenter 已检测到命令语音）时取消。超时仍无该事件则取消空 STT turn。
 - HA VoiceCommandSegmenter 当前默认：0.3 秒起始 speech、1.0 秒 command_seconds、0.7 秒结束静音、15 秒 segment timeout；Sherpa STT_MAX_SECONDS=300 是另一层上限。follow-up 8 秒从物理播放完成起算。
 - HA VoiceCommandSegmenter 当前默认 15 秒是最大单轮分段超时，不是 follow-up 时长。HA ChatSession 5 分钟和 AstrBot session 24 小时都不是 MIC upload window。
 - P3 是 AstrBot SSE reader 和 owner-matched session Stop 唯一 owner；同一个 session 的 Chat/Stop 必须串行。
@@ -33,7 +33,7 @@
 
 1. 播放/Intent 期间普通环境人声或 VAD 活动：不能停止 TTS/取消 Pipeline；回答后的 8 秒 follow-up 误识别环境讲话只允许启动 STT，不得冒充播放中断（b8/b9/b11）。
 2. TTS 回声或 TTS 文本含唤醒词：AEC R 必须取最终 TX PCM，并有专门 KWS 负样本（b10/b11）。
-3. KWS hit 后用户已经继续说命令：同一有序 MIC ingress 不丢音；Detection 到 STT 接管最多缓存 15 秒/480,000 bytes，覆盖 AstrBot Stop 的 10 秒等待预算，按 HA ingress index 切分，不比较跨设备时钟（b7/b9）。
+3. KWS hit 后用户已经继续说命令：同一有序 MIC ingress 不丢音；检测前预录与 Detection 到 STT 接管音频合计最多缓存 15 秒/480,000 bytes，覆盖 AstrBot Stop 的 10 秒等待预算，按矩阵 §5.3 合并检测前预录、queued_audio 和后续 ingress 并去重，不比较跨设备时钟（b7/b9）。
 4. 已输出 partial plain 后取消：P3 必须关闭 SSE、同 owner Stop 一次，且无迟到文本（b6）。
 5. HTTP GET 断开、Pipeline cancel、TTS producer cancel 是三个独立事件；首次 KWS miss 由 3 秒 speech-end watchdog 与 15 秒候选硬上限收口（b6/b7）。
 
@@ -76,6 +76,7 @@
 **Files:** 证据确认后修改 `homeassistant/custom_components/tivoo/tts_lifecycle.py` 或 `audio_resource.py`；测试 `tests/homeassistant/test_assist_pipeline_tts_cancellation.py`、`tests/services/sherpa_wyoming/test_server.py`。
 
 - [ ] 用事件屏障追踪 Pipeline caller、ResultStream、TTSCache producer、data_gen、text generator、HTTP queue、Wyoming writer、P7A handler/request/input/worker/callback。
+- [ ] 保留 preferred_format=wav 的已有对照；新增 preferred_format=mp3 的真实 HA 转码用例，运行真实 FFmpeg，验证 Proxy MIME/实际 MP3 可解码。覆盖转换 generator、输入 writer、FFmpeg process/pipes 在活动取消后全部收尾；不得 mock 掉转码再声称生产取消链路通过。代码依据见矩阵 §2.3。
 - [ ] 查找 HA Core 2026.11.0 可用的受支持资源 owner seam。若无，形成一个窄、版本锁定且可回归测试的项目 owner adapter；不得全局 task scan 或卸载 Config Entry。
 - [ ] 冻结可定向调用的取消接口（例如 `async_cancel(playback_id)`），由真正创建 producer 的 owner 执行 cancel/close 并 await。
 - [ ] GET close 只移除自己的 consumer queue；Pipeline cancel 必须取消该 run 的 producer。
@@ -92,13 +93,14 @@
 **Files:** `audio_session.py`、`diagnostics.py`、`transport.py`、`__init__.py`、新建/复用 `assist_satellite.py`、P3 `conversation.py`；测试 `test_audio_session.py`、`test_transport.py`、`test_assist_satellite.py`。
 
 - [ ] RED tests：MIC_SESSION_START 创建长期 ingress；多个顺序 iterator/订阅可开始结束而不结束 device upload；session end/stop 只影响匹配 UUID。
-- [ ] 将单次 iterator_claimed 改为一个 ingress + 有界 per-turn subscription/handoff；保持 4 KiB MIC_PCM 上限和旧 session ID 丢弃规则。KWS Detection 后用于新 STT 的 handoff 固定为 15 秒/480,000 bytes，覆盖 P3 Stop 最长 10 秒的现有等待预算，按 HA ingress index 截取 Detection 后的音频。
+- [ ] 将单次 iterator_claimed 改为一个 ingress + 有界 per-turn subscription/handoff；保持 4 KiB MIC_PCM 上限和旧 session ID 丢弃规则。KWS Detection 后用于新 STT 的 handoff 固定为 15 秒/480,000 bytes，覆盖 P3 Stop 最长 10 秒的现有等待预算，按矩阵 §5.3 用 ingress index 合并 1 秒预录、queued_audio 和后续音频；总 handoff 上限包含预录。
 - [ ] 添加有界 pre-roll、KWS-to-STT handoff、队列深度/overflow 结果；不累积无限 PCM。
 - [ ] 新增 MIC_ACTIVITY 0x24：严格校验 UUID、speech_start/speech_end、uptime_ms；仅 HELLO 声明 mic_activity_events 时处理。首次上传顺序为 MIC_SESSION_START → MIC_ACTIVITY speech_start → pre-roll MIC_PCM；验证 TCP Sequence 顺序。
+- [ ] 生产 Tivoo Satellite 通过 tts_options 显式设置 preferred_format=mp3；验证传入真实 HA Pipeline，不能沿用测试 Satellite 的 wav 选项。
 - [ ] AudioSessionCoordinator 独占 session、turn generation、pipeline handle、KWS watcher、playback_id 和 timer；transport 只负责消息分发。
 - [ ] Pipeline RUN_END 不停止 MIC session；只有 wake miss、首次候选 15 秒硬上限、command timeout、follow-up timeout、异常/unload 关闭上传。
 - [ ] 首轮窗口：WAKE_WORD 阶段由 AudioSessionCoordinator 监控 MIC_ACTIVITY；最近 speech_end 后 3 秒无新 speech_start 时取消未命中 Pipeline；从首次 speech_start 起 15 秒候选硬上限。不要依赖 HA WakeWordSettings 默认值（实际为 None），也不要复制 Satellite 基类未公开的参数。
-- [ ] KWS Detection 时启动 5 秒 command-start watchdog；HA STT_VAD_START（VoiceCommandSegmenter 检测到至少 0.3 秒命令语音）到达时取消。超时没有 STT_VAD_START 就取消空 STT turn，不触发 AstrBot Stop（P3 Chat 尚未开始）。
+- [ ] 首次唤醒在 Detection 时启动 5 秒 command-start watchdog；打断交接在新轮 STT_START 时启动并优先消费 handoff，旧轮清理不计入；HA STT_VAD_START（VoiceCommandSegmenter 检测到至少 0.3 秒命令语音）到达时取消。超时没有 STT_VAD_START 就取消空 STT turn，不触发 AstrBot Stop（P3 Chat 尚未开始）。
 - [ ] 定义命令端点测试：HA VoiceCommandSegmenter 默认 0.3 秒起始 speech、1.0 秒 command_seconds、0.7 秒 silence 和 15 秒 timeout；P7A requires_external_vad=true 必须使用此 segmenter，STT_VAD_START 用于取消 5 秒空命令 watchdog。
 - [ ] Follow-up：仅在设备报告真实 playback completed 后启动 8 秒定时器；speech_start 取消 timer 并从 STT 开新 turn；到期 MIC_CAPTURE_STOP 一次，物理采集不停止。
 - [ ] P3 ConversationResult：保留 async_get_result_from_chat_log() 的 response/conversation_id；当 user_input.satellite_id 非 None 且有正常回复时，构造 continue_conversation=True 的 ConversationResult，使 HA 下一轮沿用 AstrBot agent。无 satellite_id 时原样返回 HA ChatLog 派生的 continue_conversation，不改普通文字会话原生问句续聊行为。测试 Satellite override 与普通文字原生行为两条分支。
@@ -137,9 +139,9 @@
 - [ ] 若旧 playback_id 活动，发送匹配 AUDIO_STOP；随后 cancel/await 旧 public Satellite caller。
 - [ ] P3 负责关闭 SSE 并 Stop；Tivoo 不直接调用 AstrBot API。
 - [ ] 等 b6 TTS owner 和下游 Wyoming/P7A request 清理完成后才启动新 STT。
-- [ ] 把 Wyoming Detection.timestamp 映射到 HA 单调 ingress index，保留 Detection 后音频直至新 STT 接管；不得将 ESP32 uptime_ms 与 HA monotonic 直接比较。handoff 上限 15 秒/480,000 bytes，超限显式失败。
+- [ ] Wyoming Detection.timestamp 只关联 HA ingress index，不当作精确唤醒词结束点；按矩阵 §5.3 合并 1 秒检测前预录、queued_audio、未消费 ingress 及后续 PCM，去重后交给新 STT；不得将 ESP32 uptime_ms 与 HA monotonic 直接比较。handoff 上限 15 秒/480,000 bytes，超限显式失败。
 - [ ] 新 Pipeline 从 STT 开始，conversation/session ID 延续 P3；旧 run 迟到事件按 generation 丢弃。
-- [ ] 测试连续两次快速 KWS hit、KWS miss、旧 Stop 延迟、旧 AUDIO_STATE 迟到；新 run 不受旧消息影响。
+- [ ] 测试唤醒词紧接命令及 Detection 回调延迟时命令开头无丢失；旧 Stop 等待超过 5 秒时缓存命令仍可进入新 STT 且不误触发空命令超时；测试连续两次快速 KWS hit、KWS miss、旧 Stop 延迟、旧 AUDIO_STATE 迟到；新 run 不受旧消息影响。
 
 **Exit gate:** AstrBot 尚未回应时和 SSE 输出期间 KWS 可打断；普通 VAD 活动不打断；新命令 PCM 无丢失且从 STT 开始。
 
@@ -150,7 +152,7 @@
 **Files:** 新建/复用 `audio_output_manager.c/.h`、`audio_playback.c/.h`；修改 `audio_resource.c`、`main.c`、`CMakeLists.txt`；测试 `tests/esp32/`。
 
 - [ ] RED tests：playback_id 状态、HTTP EOF/error/stop、decoder error、PCM queue 清空、旧 AUDIO_STOP 不影响新播放。
-- [ ] 用 esp_audio_codec 2.6.2 做实际 MP3 流式解码，不整段缓存；按实际 decoder PCM rate/channel 做 SRC。
+- [ ] 验证生产 Satellite → TTS Proxy 返回 audio/mpeg 且实际为 MP3；未知长度 WAV 在 HA 转码入口处理，不增加固件 WAV 解码。其他 MIME 明确报格式不支持。用 esp_audio_codec 2.6.2 做实际 MP3 流式解码，不整段缓存；按实际 decoder PCM rate/channel 做 SRC。
 - [ ] 统一最终输出到 32 kHz Stereo/32-bit Slot，驱动 PCM5102 AUX；所有受控声音源进入同一 manager。
 - [ ] 从最终 TX PCM 同步生成 16 kHz Mono R，处理 RX/TX 延迟；R underrun/misalignment 可诊断。
 - [ ] AUDIO_STOP 匹配 expected_audio_id 后停止 HTTP reader/decoder/队列/I2S TX；不停止 RX/AEC/VAD/MIC session。
@@ -166,7 +168,7 @@
 
 **Files:** 修复项按 owner 修改；新增 `docs/superpowers/reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md`；更新 README 和本矩阵状态。
 
-- [ ] 实测首次 WAKE_WORD 最近 speech_end 后 3 秒未命中取消、首次 speech_start 起 15 秒硬上限、KWS hit 后 5 秒 command-start timeout、连续 utterance 不额外等待。
+- [ ] 实测首次 WAKE_WORD 最近 speech_end 后 3 秒未命中取消、首次 speech_start 起 15 秒硬上限、首次 KWS hit 后 5 秒 command-start timeout；打断交接从新轮 STT_START 起算，旧 Stop 延迟不误杀缓存命令；连续 utterance 不额外等待。
 - [ ] 实测 VoiceCommandSegmenter 的 0.3 秒 speech start、1.0 秒最小命令、0.7 秒 end-of-speech 和 15 秒单轮 timeout；与 Sherpa 300 秒请求硬限制区分。
 - [ ] 实测 TTS playback active 时普通环境人声/电视声使 VAD activity，但不会停止播放或取消任务。
 - [ ] 实测 NAS KWS 对真实用户唤醒词的命中，并在 AstrBot 等待、SSE plain 后、TTS 生成和 DAC 播放四个阶段分别打断。
