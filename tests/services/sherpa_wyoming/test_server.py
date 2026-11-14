@@ -341,6 +341,65 @@ def test_describe_remains_responsive_while_tts_inference_is_blocked() -> None:
     asyncio.run(scenario())
 
 
+def test_slow_streaming_tts_backpressure_does_not_disconnect_client() -> None:
+    """Normal model backpressure must not be treated as a TCP disconnect."""
+
+    async def scenario() -> None:
+        class SlowFirstTts(FakeTts):
+            def generate(self, text, *, sid, speed, callback=None):
+                self.calls.append(text)
+                samples = np.zeros(256, dtype=np.float32)
+                if not self.started.is_set():
+                    self.started.set()
+                    self.release.wait(2)
+                callback(samples, 1.0)
+                return SimpleNamespace(samples=samples, sample_rate=22_050)
+
+        engine = SlowFirstTts()
+        port = _free_port()
+        config = ServiceConfig(wake_word_phrase="tivoo", host="127.0.0.1", port=port)
+        bundle = ModelBundle(
+            keyword_spotter=FakeKeywordSpotter(),
+            stt_recognizer=FakeRecognizer(),
+            tts_engine=engine,
+        )
+        task = asyncio.create_task(
+            run_server(
+                config,
+                keyword_generator=lambda *_: None,
+                model_loader=lambda _: bundle,
+            )
+        )
+        await _wait_for_server(port)
+        try:
+            reader, writer = await _connect(port)
+            sentence = "这是正常的句子。"
+            chunks = [sentence] * 10
+            await _send(writer, SynthesizeStart())
+            for chunk in chunks:
+                await _send(writer, SynthesizeChunk(text=chunk))
+            await _send(writer, Synthesize(text="".join(chunks)))
+            await _send(writer, SynthesizeStop())
+
+            await _receive(reader, "audio-start")
+            assert await asyncio.to_thread(engine.started.wait, 1)
+            await asyncio.sleep(1.2)
+            engine.release.set()
+
+            for _ in chunks:
+                await _receive(reader, "audio-chunk")
+            await _receive(reader, "synthesize-stopped")
+            assert engine.calls == chunks
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            engine.release.set()
+            await _stop_server(task)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("input_complete", [True, False])
 def test_tcp_eof_cancels_active_tts_with_finished_or_backlogged_input(
     input_complete,

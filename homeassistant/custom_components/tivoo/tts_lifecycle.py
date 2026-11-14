@@ -288,5 +288,7 @@ class PipelineTtsOwner:
             if not self.producer.cancelled():
                 raise
         except TimeoutError as err:
-            self.producer.cancel()
+            if not self.producer.cancelling():
+                self.producer.cancel()
+            await asyncio.gather(self.producer, return_exceptions=True)
             raise HomeAssistantError("HA TTS producer did not exit") from err

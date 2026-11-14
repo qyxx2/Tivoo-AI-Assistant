@@ -2,6 +2,52 @@
 
 #include <limits.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#define TIVOO_CAPTURE_ISR_CODE IRAM_ATTR
+#else
+#define TIVOO_CAPTURE_ISR_CODE
+#endif
+
+void tivoo_dma_eof_tracker_reset(
+    tivoo_dma_eof_tracker_t *tracker, void **buffers, size_t capacity)
+{
+    tracker->buffers = buffers;
+    tracker->capacity = capacity;
+    tracker->count = 0;
+    tracker->index = 0;
+}
+
+size_t TIVOO_CAPTURE_ISR_CODE tivoo_dma_eof_tracker_observe(
+    tivoo_dma_eof_tracker_t *tracker, void *buffer)
+{
+    size_t index = 0;
+    while (index < tracker->count && tracker->buffers[index] != buffer) {
+        ++index;
+    }
+
+    if (index == tracker->count) {
+        if (tracker->count < tracker->capacity) {
+            tracker->buffers[tracker->count++] = buffer;
+            tracker->index = index;
+        }
+        return 0;
+    }
+    if (tracker->count < tracker->capacity) {
+        tracker->index = index;
+        return 0;
+    }
+
+    size_t distance = index >= tracker->index
+        ? index - tracker->index
+        : tracker->capacity - tracker->index + index;
+    if (distance == 0) {
+        distance = tracker->capacity;
+    }
+    tracker->index = index;
+    return distance - 1;
+}
+
 /* 32 kHz low-pass, 6.72 kHz cutoff, Blackman-windowed sinc in Q15.
  * Coefficients sum to 32768 so that DC gain is unity. */
 static const int16_t lowpass[TIVOO_DECIMATOR_TAPS] = {
@@ -50,14 +96,27 @@ size_t tivoo_audio_decimate(
 
 #include "audio_output_manager.h"
 #include "driver/i2s_std.h"
-#include "esp_attr.h"
 #include "sdkconfig.h"
 
 static i2s_chan_handle_t s_rx;
 static i2s_chan_handle_t s_tx;
 static bool s_tx_enabled;
 static bool s_rx_enabled;
+static void *s_rx_dma[TIVOO_OUTPUT_DMA_BLOCKS];
+static tivoo_dma_eof_tracker_t s_rx_dma_tracker;
 static atomic_uint s_rx_overruns;
+static atomic_uint s_rx_missed_eofs;
+
+static bool IRAM_ATTR rx_received(i2s_chan_handle_t handle, i2s_event_data_t *event, void *context)
+{
+    (void)handle;
+    (void)context;
+    const size_t missed = tivoo_dma_eof_tracker_observe(&s_rx_dma_tracker, event->dma_buf);
+    if (missed != 0) {
+        atomic_fetch_add_explicit(&s_rx_missed_eofs, missed, memory_order_relaxed);
+    }
+    return false;
+}
 
 static bool IRAM_ATTR rx_overrun(i2s_chan_handle_t handle, i2s_event_data_t *event, void *context)
 {
@@ -118,7 +177,14 @@ esp_err_t tivoo_audio_capture_start(void)
             .din = CONFIG_TIVOO_I2S_DIN_GPIO,
         },
     };
-    const i2s_event_callbacks_t callbacks = {.on_recv_q_ovf = rx_overrun};
+    const i2s_event_callbacks_t callbacks = {
+        .on_recv = rx_received,
+        .on_recv_q_ovf = rx_overrun,
+    };
+
+    atomic_store_explicit(&s_rx_overruns, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_rx_missed_eofs, 0, memory_order_relaxed);
+    tivoo_dma_eof_tracker_reset(&s_rx_dma_tracker, s_rx_dma, TIVOO_OUTPUT_DMA_BLOCKS);
 
     esp_err_t err = i2s_new_channel(&channels, &s_tx, &s_rx);
     if (err == ESP_OK) {
@@ -156,5 +222,10 @@ esp_err_t tivoo_audio_capture_read(uint32_t *stereo, size_t bytes, size_t *read)
 uint32_t tivoo_audio_capture_overruns(void)
 {
     return atomic_load_explicit(&s_rx_overruns, memory_order_relaxed);
+}
+
+uint32_t tivoo_audio_capture_missed_eofs(void)
+{
+    return atomic_load_explicit(&s_rx_missed_eofs, memory_order_relaxed);
 }
 #endif

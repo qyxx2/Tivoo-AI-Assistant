@@ -41,7 +41,6 @@ from .providers.tts import TTSProvider, TTSStreamSession
 from .providers.wake import WakeWordProvider, WakeWordSession
 
 _LOGGER = logging.getLogger("tivoo.sherpa_wyoming")
-_TTS_INPUT_QUEUE_TIMEOUT = 1
 _ATTRIBUTION = Attribution(
     name="k2-fsa",
     url="https://github.com/k2-fsa/sherpa-onnx",
@@ -337,9 +336,12 @@ class WyomingEventHandler(AsyncEventHandler):
         self._tts_session = self.tts_provider.create_stream_session(
             execution=self.executors.tts
         )
-        self._tts_input = asyncio.Queue(maxsize=2)
+        # Keep TCP ingestion independent of model backpressure so the handler
+        # can continue reading the socket and observe a real EOF. The stream
+        # session owns bounded sentence and PCM queues downstream.
+        self._tts_input = asyncio.Queue()
         self._tts_task = asyncio.create_task(self._forward_streaming_tts())
-        await self._tts_input.put(event)
+        self._tts_input.put_nowait(event)
         return True
 
     async def _handle_streaming_tts(self, event: Event) -> bool:
@@ -351,13 +353,7 @@ class WyomingEventHandler(AsyncEventHandler):
             self._reset_request()
             return True
 
-        try:
-            async with asyncio.timeout(_TTS_INPUT_QUEUE_TIMEOUT):
-                await self._tts_input.put(event)
-        except TimeoutError:
-            # Bound input backpressure so a stalled model cannot keep the TCP
-            # reader from seeing disconnect indefinitely.
-            return False
+        self._tts_input.put_nowait(event)
         if SynthesizeStop.is_type(event.type):
             # Keep reading TCP after the last text event so EOF can cancel the
             # response even while the model is still producing audio.

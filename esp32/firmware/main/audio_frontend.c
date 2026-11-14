@@ -304,6 +304,7 @@ static void capture_task(void *arg)
     uint64_t next_sample = 0;
     uint64_t first_sample = 0;
     uint32_t previous_overruns = 0;
+    uint32_t previous_missed_eofs = 0;
 #ifdef CONFIG_TIVOO_AUDIO_PROBE
     probe_level_t raw_left = {0}, raw_right = {0}, filtered = {0};
     unsigned raw_count = 0, filtered_count = 0;
@@ -320,9 +321,13 @@ static void capture_task(void *arg)
             }
         }
         const uint32_t overruns = tivoo_audio_capture_overruns();
-        if (overruns != previous_overruns) {
-            next_sample += (uint64_t)(overruns - previous_overruns) * (RX_READ_FRAMES / 2U);
+        const uint32_t missed_eofs = tivoo_audio_capture_missed_eofs();
+        const uint32_t lost_blocks =
+            (overruns - previous_overruns) + (missed_eofs - previous_missed_eofs);
+        if (lost_blocks != 0) {
+            next_sample += (uint64_t)lost_blocks * (RX_READ_FRAMES / 2U);
             previous_overruns = overruns;
+            previous_missed_eofs = missed_eofs;
             filled = 0;
             filter = (tivoo_decimator_t){0};
             atomic_fetch_add(&s_reference_misalignments, 1);
@@ -433,11 +438,13 @@ static void fetch_task(void *arg)
             report_ms = now;
             TIVOO_LOGI(TAG,
                 "AFE frames=%" PRIu32 " fetch_errors=%" PRIu32 " feed_errors=%u "
-                "RX errors=%u overruns=%" PRIu32 " mic_peak=%u right_peak=%u feed_max_us=%u "
+                "RX errors=%u overruns=%" PRIu32 " missed_eofs=%" PRIu32
+                " mic_peak=%u right_peak=%u feed_max_us=%u "
                 "ref_underruns=%u ref_misaligned=%u PCM drops=%" PRIu32
                 " pending=%zu stack_min=%u/%u vad=%s",
                 frames, fetch_errors, atomic_load(&s_feed_errors),
                 atomic_load(&s_read_errors), tivoo_audio_capture_overruns(),
+                tivoo_audio_capture_missed_eofs(),
                 atomic_exchange(&s_mic_peak, 0), atomic_exchange(&s_right_peak, 0),
                 atomic_exchange(&s_feed_max_us, 0),
                 atomic_load(&s_reference_underruns), atomic_load(&s_reference_misalignments),
