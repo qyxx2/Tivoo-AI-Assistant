@@ -15,13 +15,14 @@ bool tivoo_output_begin(tivoo_output_queue_t *queue, uint32_t generation)
     queue->generation = generation;
     queue->stopped = false;
     queue->in_dma = false;
+    queue->input_finished = false;
     return true;
 }
 
 size_t tivoo_output_push(tivoo_output_queue_t *queue, uint32_t generation,
     const int16_t *pcm, size_t samples)
 {
-    if (queue->generation != generation || generation == 0 || queue->stopped) {
+    if (queue->generation != generation || generation == 0 || queue->stopped || queue->input_finished) {
         return 0;
     }
     const size_t space = TIVOO_OUTPUT_QUEUE_SAMPLES - queue->count;
@@ -40,7 +41,10 @@ size_t tivoo_output_push(tivoo_output_queue_t *queue, uint32_t generation,
 size_t TX_ISR_CODE tivoo_output_refill(tivoo_output_queue_t *queue, uint32_t *slots, uint32_t due)
 {
     volatile uint32_t *dma = slots;
-    const size_t count = queue->count < TIVOO_OUTPUT_BLOCK ? queue->count : TIVOO_OUTPUT_BLOCK;
+    size_t count = 0;
+    if (queue->in_dma || queue->input_finished || queue->count >= TIVOO_OUTPUT_PREFILL) {
+        count = queue->count < TIVOO_OUTPUT_BLOCK ? queue->count : TIVOO_OUTPUT_BLOCK;
+    }
     for (size_t i = 0; i < count; ++i) {
         const uint32_t sample = (uint32_t)(uint16_t)queue->pcm[queue->read] << 16;
         dma[2 * i] = sample;
@@ -58,6 +62,15 @@ size_t TX_ISR_CODE tivoo_output_refill(tivoo_output_queue_t *queue, uint32_t *sl
         queue->in_dma = true;
     }
     return count;
+}
+
+bool tivoo_output_finish_input(tivoo_output_queue_t *queue, uint32_t generation)
+{
+    if (queue->generation != generation || generation == 0 || queue->stopped) {
+        return false;
+    }
+    queue->input_finished = true;
+    return true;
 }
 
 bool tivoo_output_stop(tivoo_output_queue_t *queue, uint32_t generation)
@@ -116,7 +129,6 @@ static reference_block_t s_reference[REFERENCE_BLOCKS];
 static uint32_t s_completed;
 static uint32_t s_last_pcm;
 static bool s_has_pcm;
-static bool s_draining;
 static unsigned s_underruns;
 static unsigned s_high_water;
 
@@ -128,7 +140,6 @@ bool tivoo_audio_output_begin(uint32_t generation)
     portENTER_CRITICAL(&s_lock);
     const bool started = tivoo_output_begin(&s_queue, generation);
     if (started) {
-        s_draining = false;
         s_underruns = 0;
         s_high_water = 0;
         s_reference_peak = 0;
@@ -175,10 +186,16 @@ void tivoo_audio_output_stop(uint32_t generation)
     portEXIT_CRITICAL(&s_lock);
 }
 
+void tivoo_audio_output_finish_input(uint32_t generation)
+{
+    portENTER_CRITICAL(&s_lock);
+    tivoo_output_finish_input(&s_queue, generation);
+    portEXIT_CRITICAL(&s_lock);
+}
+
 bool tivoo_audio_output_drained(uint32_t generation)
 {
     portENTER_CRITICAL(&s_lock);
-    s_draining = true;
     const bool drained = tivoo_output_drained(&s_queue, generation, s_completed);
     portEXIT_CRITICAL(&s_lock);
     return drained;
@@ -236,7 +253,7 @@ void IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
         s_mute_pending = false;
     }
     const size_t count = tivoo_output_refill(&s_queue, slots, due);
-    if (count == 0 && s_queue.in_dma && !s_draining && !s_queue.stopped) {
+    if (count == 0 && s_queue.in_dma && !s_queue.input_finished && !s_queue.stopped) {
         ++s_underruns;
     }
     reference_block_t *reference = &s_reference[(due - 1) % REFERENCE_BLOCKS];

@@ -425,7 +425,11 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         adapter: Esp32ConnectionAdapter,
     ) -> None:
         self._attr_unique_id = entry_id
-        self._attr_tts_options = {"preferred_format": "mp3"}
+        self._attr_tts_options = {
+            "preferred_format": "mp3",
+            "preferred_sample_rate": 32000,
+            "preferred_sample_channels": 1,
+        }
         self.adapter = adapter
         self.coordinator = AudioSessionCoordinator(self, ingress)
 

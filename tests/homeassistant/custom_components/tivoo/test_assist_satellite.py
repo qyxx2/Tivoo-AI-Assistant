@@ -198,7 +198,11 @@ async def test_production_entity_passes_mp3_to_ha_pipeline(
         await entity.async_accept_pipeline_from_satellite(
             audio, PipelineStage.WAKE_WORD
         )
-    assert upstream.await_args.kwargs["tts_audio_output"] == {"preferred_format": "mp3"}
+    assert upstream.await_args.kwargs["tts_audio_output"] == {
+        "preferred_format": "mp3",
+        "preferred_sample_rate": 32000,
+        "preferred_sample_channels": 1,
+    }
     assert upstream.await_args.kwargs["audio_settings"].silence_seconds == 0.7
 
 

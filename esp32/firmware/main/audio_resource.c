@@ -249,7 +249,7 @@ static bool parse_audio_stop(
 #define HTTP_TIMEOUT_MS 8000
 #define AUDIO_TASK_STACK 7168U
 #define ID_HISTORY 16U
-#define DMA_DRAIN_TIMEOUT_US 250000
+#define DMA_DRAIN_TIMEOUT_US 350000
 
 static SemaphoreHandle_t s_mutex;
 static audio_request_t *s_active_request;
@@ -361,8 +361,16 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
     const char *error = NULL;
     bool started = false;
     uint8_t buffer[HTTP_BUFFER_SIZE];
+    int64_t read_us = 0;
+    int64_t max_read_us = 0;
     while (!atomic_load(&request->stop_requested)) {
+        const int64_t read_start = esp_timer_get_time();
         const int bytes = esp_http_client_read(client, (char *)buffer, sizeof(buffer));
+        const int64_t elapsed = esp_timer_get_time() - read_start;
+        read_us += elapsed;
+        if (elapsed > max_read_us) {
+            max_read_us = elapsed;
+        }
         if (bytes < 0) {
             error = "audio_http_failed";
             break;
@@ -388,6 +396,11 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
             break;
         }
     }
+    if (error == NULL) {
+        tivoo_audio_output_finish_input(request->generation);
+    }
+    ESP_LOGI(TAG, "generation=%lu HTTP read_ms=%ld max_read_ms=%ld",
+        (unsigned long)request->generation, (long)(read_us / 1000), (long)(max_read_us / 1000));
     tivoo_audio_playback_close(playback);
     return error;
 }

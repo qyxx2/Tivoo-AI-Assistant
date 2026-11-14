@@ -6,6 +6,7 @@
 #include "esp_ae_rate_cvt.h"
 #include "esp_audio_simple_dec.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_mp3_dec.h"
 
 #define MP3_FRAME_SAMPLES 1152U
@@ -18,6 +19,10 @@ struct tivoo_audio_playback {
     uint32_t converted_capacity;
     int16_t *converted;
     bool has_pcm;
+    unsigned frames;
+    int64_t decode_us;
+    int64_t src_us;
+    int64_t queue_us;
     int16_t decoded[2 * MP3_FRAME_SAMPLES];
 };
 
@@ -100,6 +105,7 @@ static esp_err_t output_frame(tivoo_audio_playback_t *playback, size_t bytes)
             return err;
         }
     }
+    const int64_t src_start = esp_timer_get_time();
     const int16_t *pcm = playback->decoded;
     if (playback->src != NULL) {
         uint32_t converted = playback->converted_capacity;
@@ -110,7 +116,10 @@ static esp_err_t output_frame(tivoo_audio_playback_t *playback, size_t bytes)
         pcm = playback->converted;
         samples = converted;
     }
+    const int64_t queue_start = esp_timer_get_time();
+    playback->src_us += queue_start - src_start;
     const esp_err_t err = tivoo_audio_output_write(playback->generation, pcm, samples);
+    playback->queue_us += esp_timer_get_time() - queue_start;
     if (err == ESP_OK && samples != 0) {
         playback->has_pcm = true;
     }
@@ -126,8 +135,10 @@ esp_err_t tivoo_audio_playback_feed(tivoo_audio_playback_t *playback, uint8_t *d
             .buffer = (uint8_t *)playback->decoded, .len = sizeof(playback->decoded),
         };
         input.consumed = 0;
+        const int64_t decode_start = esp_timer_get_time();
         const esp_audio_err_t decoded = esp_audio_simple_dec_process(
             playback->decoder, &input, &output);
+        playback->decode_us += esp_timer_get_time() - decode_start;
         if (decoded != ESP_AUDIO_ERR_OK || input.consumed > input.len ||
             (input.consumed == 0 && output.decoded_size == 0) ||
             output.decoded_size > sizeof(playback->decoded)) {
@@ -135,6 +146,7 @@ esp_err_t tivoo_audio_playback_feed(tivoo_audio_playback_t *playback, uint8_t *d
             return ESP_FAIL;
         }
         if (output.decoded_size != 0) {
+            ++playback->frames;
             const esp_err_t err = output_frame(playback, output.decoded_size);
             if (err != ESP_OK) {
                 return err;
@@ -156,6 +168,9 @@ void tivoo_audio_playback_close(tivoo_audio_playback_t *playback)
     if (playback == NULL) {
         return;
     }
+    ESP_LOGI("audio_playback", "generation=%lu frames=%u decode_ms=%ld src_ms=%ld queue_ms=%ld",
+        (unsigned long)playback->generation, playback->frames, (long)(playback->decode_us / 1000),
+        (long)(playback->src_us / 1000), (long)(playback->queue_us / 1000));
     esp_audio_simple_dec_close(playback->decoder);
     if (playback->src != NULL) {
         esp_ae_rate_cvt_close(playback->src);
