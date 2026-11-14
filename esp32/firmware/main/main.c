@@ -4,6 +4,7 @@
 
 #include "audio_frontend.h"
 #include "audio_resource.h"
+#include "audio_output_manager.h"
 #include "diagnostics.h"
 #include "device_status.h"
 #include "hardware_memory.h"
@@ -57,7 +58,7 @@ void app_main(void)
         return;
     }
 
-    err = tivoo_audio_frontend_start(NULL);
+    err = tivoo_audio_frontend_start(tivoo_audio_output_reference);
     if (err != ESP_OK) {
         TIVOO_LOGE(TAG, "Audio frontend initialization failed: %s", esp_err_to_name(err));
     }

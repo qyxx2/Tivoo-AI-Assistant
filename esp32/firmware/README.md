@@ -1,6 +1,6 @@
 # Tivoo ESP32 firmware
 
-This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; Home Assistant owns the Tivoo display codec. The firmware runs the P6.5b8 microphone frontend and the P6 HTTP audio resource reader.
+This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; Home Assistant owns the Tivoo display codec. The firmware runs the P6.5b8 microphone frontend and the P6.5b10 streaming MP3 playback path.
 
 ## Local build
 
@@ -200,7 +200,18 @@ Finally, disable the Wi-Fi AP or remove the ESP32 from the network. Both TCP ses
 
 The P5b4 report records each physical item separately from host-test results.
 
-## P6b5 HTTP audio resource fetch
+## P6.5b10 streaming playback
+
+The ESP32 plays `audio/mpeg` resources from HA TTS Proxy through the shared
+32 kHz I²S controller. The PCM5102 DIN input uses GPIO27 by default. Set
+`TIVOO_I2S_DOUT_GPIO` to -1 to disable playback on a microphone-only board.
+`AUDIO_STATE completed` follows TX DMA drain. A matching `AUDIO_STOP` cancels
+the HTTP stream and mutes queued output while the microphone keeps running.
+
+See the [b10 acceptance report](../../docs/superpowers/reports/2026-11-14-p6-5b10-esp32-playback.md)
+for the wiring and device tests.
+
+## P6b5 HTTP audio resource fetch (historical)
 
 P6b5 consumes `TTS_PLAY` (`playback_id`, absolute HTTP(S) `url`, and expected `mime_type`) on the accepted 7778 diagnostics session. Each resource GET runs in its own FreeRTOS task with a 1 KiB ESP-IDF HTTP receive buffer. `HTTP_EVENT_ON_DATA` forwards each bounded chunk to the registered `tivoo_audio_resource_reader_t`; the callback must consume or copy the bytes before it returns and must not retain the event buffer pointer. With no reader registered, bytes are drained and counted without being buffered.
 

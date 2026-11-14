@@ -22,15 +22,13 @@ typedef struct {
     char url[URL_MAX + 1U];
     char mime_type[MIME_MAX + 1U];
     atomic_bool stop_requested;
-    atomic_bool finished;
     uint64_t bytes_received;
-    bool headers_checked;
-    bool headers_valid;
-    bool reader_failed;
-    int status_code;
     char response_mime[MIME_MAX + 1U];
 #ifdef ESP_PLATFORM
-    esp_http_client_handle_t client;
+    int socket_fd;
+    uint32_t generation;
+    uint32_t peer_generation;
+    bool terminal;
 #endif
 } audio_request_t;
 
@@ -140,7 +138,9 @@ static audio_request_t *create_request(
     (void)snprintf(request->url, sizeof(request->url), "%s", url);
     (void)snprintf(request->mime_type, sizeof(request->mime_type), "%s", mime_type);
     atomic_init(&request->stop_requested, false);
-    atomic_init(&request->finished, false);
+#ifdef ESP_PLATFORM
+    request->socket_fd = -1;
+#endif
     return request;
 }
 
@@ -229,39 +229,56 @@ static bool parse_audio_stop(
 
 #ifdef ESP_PLATFORM
 
+#include "audio_output_manager.h"
+#include "audio_playback.h"
 #include "device_status.h"
 #include "diagnostics.h"
 #include "esp_crt_bundle.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
 
 #define TAG "audio_resource"
 #define TYPE_TTS_PLAY 0x30U
 #define TYPE_AUDIO_STOP 0x31U
 #define TYPE_AUDIO_STATE 0x32U
 #define HTTP_BUFFER_SIZE 1024
+#define HTTP_CONNECT_TIMEOUT_MS 1500
 #define HTTP_TIMEOUT_MS 8000
 #define AUDIO_TASK_STACK 7168U
+#define ID_HISTORY 16U
+#define DMA_DRAIN_TIMEOUT_US 250000
 
 static SemaphoreHandle_t s_mutex;
 static audio_request_t *s_active_request;
-static tivoo_audio_resource_reader_t s_reader;
-static void *s_reader_context;
+static audio_request_t *s_pending_request;
+static uint32_t s_generation;
+static char s_recent_playbacks[ID_HISTORY][37];
+static size_t s_next_playback;
+static char s_recent_stops[ID_HISTORY][37];
+static size_t s_next_stop;
 
-static esp_err_t drain_reader(
-    const uint8_t *data, size_t size, void *context)
+static bool seen_id(char history[ID_HISTORY][37], const char *id)
 {
-    (void)data;
-    (void)size;
-    (void)context;
-    return ESP_OK;
+    for (size_t i = 0; i < ID_HISTORY; ++i) {
+        if (strcmp(history[i], id) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void remember_id(char history[ID_HISTORY][37], size_t *next, const char *id)
+{
+    memcpy(history[*next], id, 37);
+    *next = (*next + 1) % ID_HISTORY;
 }
 
 static void send_audio_state(
-    const audio_request_t *request,
-    const char *state,
-    const char *error_code)
+    const audio_request_t *request, const char *state, const char *error_code,
+    bool retry)
 {
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
@@ -277,100 +294,110 @@ static void send_audio_state(
 
     char *payload = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (payload == NULL) {
-        return;
+    if (payload != NULL) {
+        const size_t size = strlen(payload);
+        const int64_t deadline = esp_timer_get_time() + 250000;
+        while (request->peer_generation != 0 &&
+               request->peer_generation == tivoo_diagnostics_mic_generation()) {
+            if (tivoo_diagnostics_send_mic(request->peer_generation, TYPE_AUDIO_STATE, payload, size)) {
+                break;
+            }
+            if (!retry || esp_timer_get_time() >= deadline) {
+                ESP_LOGW(TAG, "Playback state %s could not be queued", state);
+                break;
+            }
+            vTaskDelay(1);
+        }
+        cJSON_free(payload);
     }
-    (void)tivoo_diagnostics_send_message(
-        TYPE_AUDIO_STATE, (const uint8_t *)payload, strlen(payload));
-    cJSON_free(payload);
-}
-
-static void finish_request(
-    audio_request_t *request,
-    esp_http_client_handle_t client,
-    const char *state,
-    const char *error_code)
-{
-    if (error_code != NULL) {
-        tivoo_report_error(error_code, TAG, "TTS HTTP resource request failed");
-    }
-    send_audio_state(request, state, error_code);
-    (void)tivoo_device_status_set_audio_resource(false, NULL);
-
-    (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
-    if (s_active_request == request) {
-        s_active_request = NULL;
-    }
-    request->client = NULL;
-    (void)xSemaphoreGive(s_mutex);
-
-    if (client != NULL) {
-        (void)esp_http_client_close(client);
-        (void)esp_http_client_cleanup(client);
-    }
-    free(request);
-    vTaskDelete(NULL);
+    ESP_LOGI(TAG, "playback=%s state=%s error=%s", request->playback_id,
+        state, error_code != NULL ? error_code : "-");
 }
 
 static esp_err_t http_event_handler(esp_http_client_event_t *event)
 {
     audio_request_t *request = event->user_data;
-    if (request == NULL) {
-        return ESP_FAIL;
-    }
-
-    switch (event->event_id) {
-    case HTTP_EVENT_ON_HEADER:
-        if (event->header_key != NULL && event->header_value != NULL &&
-            strcasecmp(event->header_key, "Content-Type") == 0) {
-            const size_t length = strlen(event->header_value);
-            if (length <= MIME_MAX) {
-                memcpy(request->response_mime, event->header_value, length + 1U);
-            } else {
-                request->response_mime[0] = '\0';
-            }
+    if (event->event_id == HTTP_EVENT_ON_HEADER && event->header_key != NULL &&
+        event->header_value != NULL && strcasecmp(event->header_key, "Content-Type") == 0) {
+        const size_t length = strlen(event->header_value);
+        if (length <= MIME_MAX) {
+            memcpy(request->response_mime, event->header_value, length + 1U);
+        } else {
+            request->response_mime[0] = '\0';
         }
-        break;
-    case HTTP_EVENT_ON_HEADERS_COMPLETE:
-        request->status_code = esp_http_client_get_status_code(event->client);
-        request->headers_checked = true;
-        request->headers_valid =
-            request->status_code >= 200 && request->status_code < 300 &&
-            media_type_equal(request->response_mime, request->mime_type);
-        break;
-    case HTTP_EVENT_ON_DATA:
-        if (!request->headers_checked || !request->headers_valid ||
-            atomic_load(&request->stop_requested) || request->reader_failed ||
-            event->data == NULL || event->data_len <= 0) {
-            break;
-        }
-
-        (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
-        tivoo_audio_resource_reader_t reader = s_reader;
-        void *reader_context = s_reader_context;
-        (void)xSemaphoreGive(s_mutex);
-
-        if (reader != NULL &&
-            reader((const uint8_t *)event->data, (size_t)event->data_len,
-                   reader_context) != ESP_OK) {
-            request->reader_failed = true;
-            break;
-        }
-        request->bytes_received += (uint64_t)event->data_len;
-        break;
-    default:
-        break;
     }
     return ESP_OK;
 }
 
-static void audio_resource_task(void *context)
+static const char *read_audio(audio_request_t *request, esp_http_client_handle_t client)
 {
-    audio_request_t *request = context;
+    if (esp_http_client_open(client, 0) != ESP_OK) {
+        return "audio_http_failed";
+    }
+    (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
+    request->socket_fd = esp_http_client_get_socket(client);
+    const bool stopped = atomic_load(&request->stop_requested);
+    (void)xSemaphoreGive(s_mutex);
+    if (stopped) {
+        return NULL;
+    }
+    (void)esp_http_client_set_timeout_ms(client, HTTP_TIMEOUT_MS);
+    if (esp_http_client_fetch_headers(client) < 0 && !esp_http_client_is_chunked_response(client)) {
+        return "audio_http_failed";
+    }
+    const int status = esp_http_client_get_status_code(client);
+    if (status < 200 || status >= 300) {
+        return "audio_http_status";
+    }
+    if (!media_type_equal(request->response_mime, request->mime_type)) {
+        return "audio_content_type_mismatch";
+    }
+
+    tivoo_audio_playback_t *playback = tivoo_audio_playback_open(request->generation);
+    if (playback == NULL) {
+        return "audio_decode_failed";
+    }
+
+    const char *error = NULL;
+    bool started = false;
+    uint8_t buffer[HTTP_BUFFER_SIZE];
+    while (!atomic_load(&request->stop_requested)) {
+        const int bytes = esp_http_client_read(client, (char *)buffer, sizeof(buffer));
+        if (bytes < 0) {
+            error = "audio_http_failed";
+            break;
+        }
+        const bool eof = esp_http_client_is_complete_data_received(client);
+        if (bytes == 0 && !eof) {
+            error = "audio_http_failed";
+            break;
+        }
+        request->bytes_received += bytes;
+        if (tivoo_audio_playback_feed(playback, buffer, (size_t)bytes, eof) != ESP_OK) {
+            error = "audio_decode_failed";
+            break;
+        }
+        if (!started && tivoo_audio_playback_has_pcm(playback)) {
+            started = true;
+            send_audio_state(request, "playing", NULL, true);
+        }
+        if (eof && bytes < sizeof(buffer)) {
+            if (!started) {
+                error = "audio_decode_failed";
+            }
+            break;
+        }
+    }
+    tivoo_audio_playback_close(playback);
+    return error;
+}
+
+static const char *stream_audio(audio_request_t *request)
+{
     const esp_http_client_config_t config = {
         .url = request->url,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = HTTP_TIMEOUT_MS,
+        .timeout_ms = HTTP_CONNECT_TIMEOUT_MS,
         .buffer_size = HTTP_BUFFER_SIZE,
         .buffer_size_tx = HTTP_BUFFER_SIZE,
         .event_handler = http_event_handler,
@@ -380,80 +407,122 @@ static void audio_resource_task(void *context)
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == NULL) {
-        atomic_store(&request->finished, true);
-        finish_request(request, NULL, "failed", "audio_http_failed");
-        return;
+        return "audio_http_failed";
     }
-
+    const char *error = read_audio(request, client);
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
-    request->client = client;
+    request->socket_fd = -1;
     (void)xSemaphoreGive(s_mutex);
+    (void)esp_http_client_cleanup(client);
+    return error;
+}
 
-    esp_err_t result = ESP_FAIL;
+static audio_request_t *run_request(audio_request_t *request)
+{
+    (void)tivoo_device_status_set_audio_resource(true, request->playback_id);
+    send_audio_state(request, "buffering", NULL, true);
+
+    const char *error = NULL;
+    bool output = false;
+    (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (!atomic_load(&request->stop_requested)) {
-        result = esp_http_client_perform(client);
+        if (!media_type_equal(request->mime_type, "audio/mpeg")) {
+            error = "audio_format_unsupported";
+        } else if (!tivoo_audio_output_begin(request->generation)) {
+            error = "audio_output_unavailable";
+        } else {
+            output = true;
+        }
     }
+    (void)xSemaphoreGive(s_mutex);
+    if (output) {
+        if (!atomic_load(&request->stop_requested)) {
+            error = stream_audio(request);
+        }
+        if (error != NULL) {
+            tivoo_audio_output_stop(request->generation);
+        }
+        const int64_t deadline = esp_timer_get_time() + DMA_DRAIN_TIMEOUT_US;
+        while (!tivoo_audio_output_drained(request->generation)) {
+            if (esp_timer_get_time() >= deadline) {
+                tivoo_audio_output_stop(request->generation);
+                error = "audio_output_timeout";
+                break;
+            }
+            vTaskDelay(1);
+        }
+        tivoo_audio_output_end(request->generation);
+    }
+    (void)tivoo_device_status_set_audio_resource(false, NULL);
+    (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const bool stopped = atomic_load(&request->stop_requested);
+    request->terminal = true;
+    (void)xSemaphoreGive(s_mutex);
+    send_audio_state(request, stopped ? "stopped" : error != NULL ? "failed" : "completed",
+        stopped ? NULL : error, true);
+    (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
+    remember_id(s_recent_playbacks, &s_next_playback, request->playback_id);
+    audio_request_t *next = s_pending_request;
+    s_active_request = next;
+    s_pending_request = NULL;
+    (void)xSemaphoreGive(s_mutex);
+    return next;
+}
 
-    atomic_store(&request->finished, true);
-    if (atomic_load(&request->stop_requested)) {
-        finish_request(request, client, "stopped", NULL);
-        return;
+static void audio_resource_task(void *context)
+{
+    audio_request_t *request = context;
+    while (request != NULL) {
+        audio_request_t *next = run_request(request);
+        free(request);
+        request = next;
     }
-    if (!request->headers_checked) {
-        finish_request(request, client, "failed", "audio_http_failed");
-        return;
-    }
-    if (request->status_code < 200 || request->status_code >= 300) {
-        finish_request(request, client, "failed", "audio_http_status");
-        return;
-    }
-    if (!request->headers_valid) {
-        finish_request(
-            request, client, "failed", "audio_content_type_mismatch");
-        return;
-    }
-    if (request->reader_failed || result != ESP_OK ||
-        !esp_http_client_is_complete_data_received(client)) {
-        finish_request(request, client, "failed", "audio_http_failed");
-        return;
-    }
-
-    finish_request(request, client, "resource_ready", NULL);
+    vTaskDelete(NULL);
 }
 
 static esp_err_t start_request(audio_request_t *request)
 {
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
+    request->peer_generation = tivoo_diagnostics_mic_generation();
     audio_request_t *active = s_active_request;
-    if (active != NULL) {
-        const bool duplicate =
-            strcmp(active->playback_id, request->playback_id) == 0;
+    audio_request_t *pending = s_pending_request;
+    if (seen_id(s_recent_playbacks, request->playback_id) ||
+        (active != NULL && strcmp(active->playback_id, request->playback_id) == 0) ||
+        (pending != NULL && strcmp(pending->playback_id, request->playback_id) == 0)) {
         (void)xSemaphoreGive(s_mutex);
-        if (!duplicate) {
-            tivoo_report_error("audio_busy", TAG, "Another audio resource is active");
-        }
         free(request);
-        return duplicate ? ESP_OK : ESP_ERR_INVALID_STATE;
+        return ESP_OK;
     }
-    s_active_request = request;
-    (void)xSemaphoreGive(s_mutex);
+    if (pending != NULL || (active != NULL && !active->terminal && !atomic_load(&active->stop_requested))) {
+        send_audio_state(request, "failed", "audio_busy", false);
+        remember_id(s_recent_playbacks, &s_next_playback, request->playback_id);
+        (void)xSemaphoreGive(s_mutex);
+        free(request);
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    (void)tivoo_device_status_set_audio_resource(true, request->playback_id);
-    send_audio_state(request, "buffering", NULL);
-    if (xTaskCreate(
-            audio_resource_task, "tivoo_audio", AUDIO_TASK_STACK, request,
-            tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
-        tivoo_report_error("audio_http_failed", TAG, "Unable to start HTTP task");
-        send_audio_state(request, "failed", "audio_http_failed");
-        (void)tivoo_device_status_set_audio_resource(false, NULL);
-        (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
-        if (s_active_request == request) {
-            s_active_request = NULL;
-        }
+    if (++s_generation == 0) {
+        ++s_generation;
+    }
+    request->generation = s_generation;
+    if (active != NULL) {
+        s_pending_request = request;
+        (void)xSemaphoreGive(s_mutex);
+        return ESP_OK;
+    }
+
+    s_active_request = request;
+    // Keep MP3/SRC off the core that owns the time-sensitive microphone AFE.
+    if (xTaskCreatePinnedToCore(audio_resource_task, "tivoo_audio", AUDIO_TASK_STACK,
+            request, tskIDLE_PRIORITY + 3, NULL, 0) != pdPASS) {
+        s_active_request = NULL;
+        send_audio_state(request, "failed", "audio_task_failed", false);
+        remember_id(s_recent_playbacks, &s_next_playback, request->playback_id);
         (void)xSemaphoreGive(s_mutex);
         free(request);
         return ESP_ERR_NO_MEM;
     }
+    (void)xSemaphoreGive(s_mutex);
     return ESP_OK;
 }
 
@@ -487,11 +556,14 @@ esp_err_t tivoo_audio_resource_init(void)
     if (s_mutex != NULL) {
         return ESP_OK;
     }
+    const esp_err_t err = tivoo_audio_playback_init();
+    if (err != ESP_OK) {
+        return err;
+    }
     s_mutex = xSemaphoreCreateMutex();
     if (s_mutex == NULL) {
         return ESP_ERR_NO_MEM;
     }
-    s_reader = drain_reader;
     return ESP_OK;
 }
 
@@ -526,22 +598,26 @@ esp_err_t tivoo_audio_resource_stop(
     }
 
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
-    audio_request_t *active = s_active_request;
-    if (active == NULL ||
-        (expected_audio_id != NULL && expected_audio_id[0] != '\0' &&
-         strcmp(expected_audio_id, active->playback_id) != 0) ||
-        atomic_load(&active->finished)) {
-        (void)xSemaphoreGive(s_mutex);
-        return ESP_OK;
-    }
-
-    const bool already_stopping = atomic_exchange(&active->stop_requested, true);
-    esp_err_t result = ESP_OK;
-    if (!already_stopping && active->client != NULL) {
-        result = esp_http_client_cancel_request(active->client);
+    if (!seen_id(s_recent_stops, request_id)) {
+        remember_id(s_recent_stops, &s_next_stop, request_id);
+        audio_request_t *request = s_active_request;
+        if (expected_audio_id != NULL && expected_audio_id[0] != '\0' &&
+            (request == NULL || strcmp(expected_audio_id, request->playback_id) != 0)) {
+            request = s_pending_request;
+            if (request != NULL && strcmp(expected_audio_id, request->playback_id) != 0) {
+                request = NULL;
+            }
+        }
+        if (request != NULL && !request->terminal && !atomic_exchange(&request->stop_requested, true)) {
+            tivoo_audio_output_stop(request->generation);
+            if (request->socket_fd >= 0) {
+                // Wake the HTTP worker without modifying ESP-IDF client state from this task.
+                (void)shutdown(request->socket_fd, SHUT_RDWR);
+            }
+        }
     }
     (void)xSemaphoreGive(s_mutex);
-    return result;
+    return ESP_OK;
 }
 
 bool tivoo_audio_resource_handle_message(
@@ -553,18 +629,6 @@ bool tivoo_audio_resource_handle_message(
         handle_audio_stop(payload, size);
     }
     return true;
-}
-
-void tivoo_audio_resource_set_reader(
-    tivoo_audio_resource_reader_t reader, void *context)
-{
-    if (s_mutex == NULL) {
-        return;
-    }
-    (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_reader = reader == NULL ? drain_reader : reader;
-    s_reader_context = context;
-    (void)xSemaphoreGive(s_mutex);
 }
 
 #endif

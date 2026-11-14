@@ -2,6 +2,8 @@ idf_component_register(
     SRCS
         "main.c"
         "audio_resource.c"
+        "audio_playback.c"
+        "audio_output_manager.c"
         "audio_capture.c"
         "audio_frontend.c"
         "device_status.c"

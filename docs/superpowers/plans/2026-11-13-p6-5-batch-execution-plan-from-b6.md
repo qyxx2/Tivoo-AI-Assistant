@@ -159,16 +159,18 @@
 
 **Files:** 新建/复用 `audio_output_manager.c/.h`、`audio_playback.c/.h`；修改 `audio_resource.c`、`main.c`、`CMakeLists.txt`；测试 `tests/esp32/`。
 
-- [ ] RED tests：playback_id 状态、HTTP EOF/error/stop、decoder error、PCM queue 清空、旧 AUDIO_STOP 不影响新播放。
-- [ ] 验证生产 Satellite → TTS Proxy 返回 audio/mpeg 且实际为 MP3；未知长度 WAV 在 HA 转码入口处理，不增加固件 WAV 解码。其他 MIME 明确报格式不支持。用 esp_audio_codec 2.6.2 做实际 MP3 流式解码，不整段缓存；按实际 decoder PCM rate/channel 做 SRC。
+- [x] 主机 RED 与实机回归：playback_id 状态、HTTP EOF/error/stop、decoder error、PCM queue 清空、旧 AUDIO_STOP 不影响新播放。
+- [x] 验证生产 Satellite → TTS Proxy 返回 audio/mpeg 且实际为 MP3；未知长度 WAV 在 HA 转码入口处理，不增加固件 WAV 解码。其他 MIME 明确报格式不支持。用 esp_audio_codec 2.6.2 做实际 MP3 流式解码，不整段缓存；按实际 decoder PCM rate/channel 做 SRC。
 - [ ] 统一最终输出到 32 kHz Stereo/32-bit Slot，驱动 PCM5102 AUX；所有受控声音源进入同一 manager。
-- [ ] 从最终 TX PCM 同步生成 16 kHz Mono R，处理 RX/TX 延迟；R underrun/misalignment 可诊断。
-- [ ] AUDIO_STOP 匹配 expected_audio_id 后停止 HTTP reader/decoder/队列/I2S TX；不停止 RX/AEC/VAD/MIC session。
-- [ ] 只有实际 PCM 已播放完毕并清空 TX queue，才发送 AUDIO_STATE completed；TTS tts-end 不能代替播放结束。
-- [ ] 对旧播放的 stop、HTTP EOF、AUDIO_STATE 终态按 playback_id 去重；generation 隔离新播放。
-- [ ] ESP32 build + host tests；再进行真实 PCM5102/Tivoo AUX 播放及 SPP 并发测试。
+- [x] 从最终 TX PCM 同步生成 16 kHz Mono R，处理 RX/TX 延迟；R underrun/misalignment 可诊断。实际声学延迟待测。
+- [x] AUDIO_STOP 匹配 expected_audio_id 后停止 HTTP reader/decoder/队列/I2S TX；不停止 RX/AEC/VAD/MIC session。
+- [x] 只有实际 PCM 已播放完毕并清空 TX queue，才发送 AUDIO_STATE completed；TTS tts-end 不能代替播放结束。
+- [x] 对旧播放的 stop、HTTP EOF、AUDIO_STATE 终态按 playback_id 去重；generation 隔离新播放。
+- [ ] ESP32 build、主机回归和 SPP 并发已通过。真实 PCM5102/Tivoo AUX 播放待验收。
 
 **Exit gate:** MP3 流式播放、实际 PCM5102 输出、全双工采集和 AEC R 参考联动；AUDIO_STOP 可在 DAC 端快速停音且麦克风不停止。
+
+数字链路结果与剩余硬件验收见 [b10 报告](../reports/2026-11-14-p6-5b10-esp32-playback.md)。
 
 ## P6.5b11 — 端到端声学验收、计时调校与阶段收尾
 

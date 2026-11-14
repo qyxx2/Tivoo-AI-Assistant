@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -19,6 +20,7 @@ size_t tivoo_audio_decimate(
 #include "esp_err.h"
 
 esp_err_t tivoo_audio_capture_start(void);
+bool tivoo_audio_capture_running(void);
 void tivoo_audio_capture_close(void);
 esp_err_t tivoo_audio_capture_read(uint32_t *stereo, size_t bytes, size_t *read);
 uint32_t tivoo_audio_capture_overruns(void);

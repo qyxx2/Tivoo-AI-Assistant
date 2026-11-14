@@ -53,7 +53,7 @@ typedef enum {
 } tivoo_audio_reference_status_t;
 
 /* Non-blocking. Read the aligned, final TX PCM at 16 kHz into R slots
- * reference[2 * i]. NULL selects silence while there is no PCM output owner. */
+ * reference[2 * i], filling unavailable samples with zeros. NULL selects silence while there is no PCM output owner. */
 typedef tivoo_audio_reference_status_t (*tivoo_audio_reference_reader_t)(
     uint64_t first_sample, int16_t *reference, size_t samples);
 esp_err_t tivoo_audio_frontend_start(tivoo_audio_reference_reader_t read_reference);

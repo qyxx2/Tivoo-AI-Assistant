@@ -212,7 +212,7 @@ MCP 是工具调用协议，不是 HA 向 AstrBot 推送用户文本的消息通
 
 - **P5 最小固件必须实现：** Wi-Fi Station 基础联网；TCP 7777 最小单向控制入口，接收 HA 下发的现有 Tivoo 原始帧并交给 SPP；TCP 7778 只实现最终消息封装、HELLO/ACK、诊断日志和错误上报。ESP-IDF 基础日志、固件/启动信息及 Reset Reason 需能回传 HA。HA 通过 Tivoo 集成接收并写入 HA 标准日志。P5 不实现 SPP 返回数据、完整设备状态、音频消息、HTTP 音频资源或 I²S/AEC/VAD。
 - **P6 补齐：** 在 P5 的同一端口和消息封装上完成双向 7777、完整 7778 状态/事件/音频消息与连接管理，以及 TTS 音频 HTTP GET。P5 的基础通路是后续实现的子集，不代表 P6 完成。
-- **P6：** 已完成 ESP32 ↔ HA 双向通信、MIC 消息协议/有界分发接口及 TTS HTTP 资源流读取；不包含 Satellite 或真实麦克风运行时。**P6.5b0–b5：** 取消链路前置调查已完成。**P6.5b6：** 单轮 TTS 取消通过本地集成验证，真实 AstrBot partial-output Stop 已验收。**P6.5b7：** HA 持久 MIC ingress、跨轮 Pipeline 和 follow-up 已通过本地验证。**P6.5b8：** ESP32 常驻 I²S RX/AEC/VAD 已通过上板验证，真人语音启动上传和实机 STOP 待验收。**P6.5b9：** NAS KWS 确认打断和跨轮 PCM 交接已通过本地回归及 NAS 模型测试。**P6.5b10–b11：** I²S TX/PCM5102 全双工播放及端到端声学验收待实施。原 P7/P8 对应条目以新 P6.5 合同和 b6–b11 计划为准，后续阶段不重复实现。
+- **P6：** 已完成 ESP32 ↔ HA 双向通信、MIC 消息协议/有界分发接口及 TTS HTTP 资源流读取；不包含 Satellite 或真实麦克风运行时。**P6.5b0–b5：** 取消链路前置调查已完成。**P6.5b6：** 单轮 TTS 取消通过本地集成验证，真实 AstrBot partial-output Stop 已验收。**P6.5b7：** HA 持久 MIC ingress、跨轮 Pipeline 和 follow-up 已通过本地验证。**P6.5b8：** ESP32 常驻 I²S RX/AEC/VAD 已通过上板验证，真人语音启动上传和实机 STOP 待验收。**P6.5b9：** NAS KWS 确认打断和跨轮 PCM 交接已通过本地回归及 NAS 模型测试。**P6.5b10：** 已实现流式 MP3、I²S TX、AEC 参考和播放终态，数字链路及 SPP 并发已上板验证，PCM5102 模拟输出和声学对齐待验收。**P6.5b11：** 端到端声学验收待实施。原 P7/P8 对应条目以新 P6.5 合同和 b6–b11 计划为准，后续阶段不重复实现。
 
 **P5 合同与实施顺序：**按[P5 ESP32 最小固件合同矩阵](docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md)执行；B0 首先锁定 ESP-IDF/组件版本并完成跨 P5/P6/P7/P8 的兼容性 smoke build，通过后依次完成 Wi-Fi、7778 HELLO/ACK 与日志、7777 单向 SPP，最后通过 HA → ESP32 → Tivoo 完成实机闭环。
 

@@ -48,6 +48,7 @@ size_t tivoo_audio_decimate(
 #ifdef ESP_PLATFORM
 #include <stdatomic.h>
 
+#include "audio_output_manager.h"
 #include "driver/i2s_std.h"
 #include "esp_attr.h"
 #include "sdkconfig.h"
@@ -65,6 +66,19 @@ static bool IRAM_ATTR rx_overrun(i2s_chan_handle_t handle, i2s_event_data_t *eve
     (void)context;
     atomic_fetch_add_explicit(&s_rx_overruns, 1, memory_order_relaxed);
     return false;
+}
+
+static bool IRAM_ATTR tx_sent(i2s_chan_handle_t handle, i2s_event_data_t *event, void *context)
+{
+    (void)handle;
+    (void)context;
+    tivoo_audio_output_dma_sent(event->dma_buf);
+    return false;
+}
+
+bool tivoo_audio_capture_running(void)
+{
+    return s_rx_enabled && s_tx_enabled;
 }
 
 void tivoo_audio_capture_close(void)
@@ -90,9 +104,8 @@ void tivoo_audio_capture_close(void)
 esp_err_t tivoo_audio_capture_start(void)
 {
     i2s_chan_config_t channels = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    channels.dma_desc_num = 12;
-    channels.dma_frame_num = 160;
-    channels.auto_clear_after_cb = true;
+    channels.dma_desc_num = TIVOO_OUTPUT_DMA_BLOCKS;
+    channels.dma_frame_num = TIVOO_OUTPUT_BLOCK;
     const i2s_std_config_t format = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(32000),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
@@ -116,6 +129,10 @@ esp_err_t tivoo_audio_capture_start(void)
     }
     if (err == ESP_OK) {
         err = i2s_channel_register_event_callback(s_rx, &callbacks, NULL);
+    }
+    if (err == ESP_OK) {
+        const i2s_event_callbacks_t tx_callbacks = {.on_sent = tx_sent};
+        err = i2s_channel_register_event_callback(s_tx, &tx_callbacks, NULL);
     }
     if (err == ESP_OK) {
         err = i2s_channel_enable(s_tx);

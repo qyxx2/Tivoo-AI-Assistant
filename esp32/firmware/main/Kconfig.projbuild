@@ -34,9 +34,17 @@ config TIVOO_I2S_DIN_GPIO
 config TIVOO_I2S_DOUT_GPIO
     int "PCM5102 DIN GPIO"
     range -1 33
-    default -1
+    default 27
     help
-        -1 leaves DAC data disconnected. The capture batch uses silent TX DMA.
+        -1 leaves DAC data disconnected and playback unavailable.
+
+config TIVOO_AEC_REFERENCE_DELAY_SAMPLES
+    int "Fixed TX to microphone reference delay in 16 kHz samples"
+    range 0 800
+    default 80
+    help
+        Compensates for digital clock startup skew and the DAC, microphone
+        and acoustic path delay. Tune with a measured loopback.
 
 config TIVOO_AUDIO_PROBE
     bool "Log one-second audio measurements to UART"

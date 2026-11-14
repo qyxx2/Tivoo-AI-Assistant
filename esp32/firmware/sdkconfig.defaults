@@ -30,3 +30,6 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 
 # Allow selected large byte buffers to live in the already-required PSRAM.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+
+# Keep I2S DMA callbacks active while flash temporarily disables cache.
+CONFIG_I2S_ISR_IRAM_SAFE=y

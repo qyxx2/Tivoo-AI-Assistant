@@ -248,14 +248,12 @@ static void feed_afe(uint64_t first_sample)
     if (s_read_reference != NULL) {
         const tivoo_audio_reference_status_t status =
             s_read_reference(first_sample, s_input + 1, s_feed_samples);
-        if (status == TIVOO_AUDIO_REFERENCE_READY) {
-            goto feed;
-        }
         if (status == TIVOO_AUDIO_REFERENCE_UNDERRUN) {
             atomic_fetch_add(&s_reference_underruns, 1);
         } else if (status == TIVOO_AUDIO_REFERENCE_MISALIGNED) {
             atomic_fetch_add(&s_reference_misalignments, 1);
         }
+        goto feed;
     }
     for (size_t i = 0; i < s_feed_samples; ++i) {
         s_input[2 * i + 1] = 0;
@@ -303,7 +301,9 @@ static void capture_task(void *arg)
     tivoo_decimator_t filter = {0};
     int16_t mic[RX_READ_FRAMES / 2];
     size_t filled = 0;
+    uint64_t next_sample = 0;
     uint64_t first_sample = 0;
+    uint32_t previous_overruns = 0;
 #ifdef CONFIG_TIVOO_AUDIO_PROBE
     probe_level_t raw_left = {0}, raw_right = {0}, filtered = {0};
     unsigned raw_count = 0, filtered_count = 0;
@@ -318,6 +318,14 @@ static void capture_task(void *arg)
                 vTaskDelay(1);
                 continue;
             }
+        }
+        const uint32_t overruns = tivoo_audio_capture_overruns();
+        if (overruns != previous_overruns) {
+            next_sample += (uint64_t)(overruns - previous_overruns) * (RX_READ_FRAMES / 2U);
+            previous_overruns = overruns;
+            filled = 0;
+            filter = (tivoo_decimator_t){0};
+            atomic_fetch_add(&s_reference_misalignments, 1);
         }
 #ifdef CONFIG_TIVOO_AUDIO_PROBE
         for (size_t slot = 0; slot < bytes / sizeof(*s_raw); slot += 2) {
@@ -357,10 +365,13 @@ static void capture_task(void *arg)
             if (amplitude > peak) {
                 peak = amplitude;
             }
+            if (filled == 0) {
+                first_sample = next_sample;
+            }
+            ++next_sample;
             s_input[2 * filled++] = mic[i];
             if (filled == s_feed_samples) {
                 feed_afe(first_sample);
-                first_sample += s_feed_samples;
                 filled = 0;
             }
         }
