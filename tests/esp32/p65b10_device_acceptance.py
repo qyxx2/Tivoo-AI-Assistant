@@ -15,7 +15,7 @@ from p65b8_device_acceptance import HEADER
 PCM_MIME = "audio/x-tivoo-pcm-s16le-32000-mono"
 
 
-def serve(audio, address, port, media_type, chunk_size):
+def serve(audio, address, port, media_type, chunk_size, byte_rate=0):
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -39,7 +39,12 @@ def serve(audio, address, port, media_type, chunk_size):
             self.end_headers()
             try:
                 if self.path == "/chunked":
+                    started = time.monotonic()
                     for offset in range(0, len(body), chunk_size):
+                        if byte_rate:
+                            delay = started + offset / byte_rate - time.monotonic()
+                            if delay > 0:
+                                time.sleep(delay)
                         chunk = body[offset : offset + chunk_size]
                         self.wfile.write(
                             f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n"
@@ -208,15 +213,27 @@ def main():
     parser.add_argument("--http-port", type=int, default=18765)
     parser.add_argument("--require-spp", action="store_true")
     parser.add_argument("--pcm", action="store_true")
-    parser.add_argument("--chunk-size", type=int, default=317)
+    parser.add_argument("--chunk-size", type=int)
+    parser.add_argument(
+        "--byte-rate",
+        type=int,
+        default=0,
+        help="Limit chunked HTTP transfer to this many audio bytes per second",
+    )
     args = parser.parse_args()
     media_type = PCM_MIME if args.pcm else "audio/mpeg"
+    chunk_size = (
+        args.chunk_size if args.chunk_size is not None else (4096 if args.pcm else 317)
+    )
+    if chunk_size <= 0 or args.byte_rate < 0:
+        parser.error("chunk size must be positive and byte rate must be nonnegative")
     with serve(
         args.audio.read_bytes(),
         args.http_host,
         args.http_port,
         media_type,
-        args.chunk_size,
+        chunk_size,
+        args.byte_rate,
     ) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

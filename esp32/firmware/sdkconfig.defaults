@@ -33,3 +33,6 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
 # Keep I2S DMA callbacks active while flash temporarily disables cache.
 CONFIG_I2S_ISR_IRAM_SAFE=y
+
+# Keep network receive work off the core running the microphone AFE.
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
