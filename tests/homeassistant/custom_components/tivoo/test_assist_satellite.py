@@ -2,12 +2,14 @@
 
 import asyncio
 from datetime import timedelta
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from custom_components.tivoo.assist_satellite import TivooAssistSatellite
 from custom_components.tivoo.audio_session import AudioSessionManager
+from homeassistant.components import tts
 from homeassistant.components.assist_pipeline.models import (
     PipelineEvent,
     PipelineStage,
@@ -16,6 +18,8 @@ from homeassistant.components.assist_pipeline.models import (
     PipelineEventType as Event,
 )
 from homeassistant.components.assist_pipeline.vad import VoiceCommandSegmenter
+from homeassistant.setup import async_setup_component
+from mutagen.mp3 import MP3
 from pytest_homeassistant.common import async_fire_time_changed
 from test_audio_session import SESSION_1, _start_payload
 
@@ -204,6 +208,35 @@ async def test_production_entity_passes_mp3_to_ha_pipeline(
         "preferred_sample_channels": 1,
     }
     assert upstream.await_args.kwargs["audio_settings"].silence_seconds == 0.7
+
+
+async def test_production_tts_contract_real_ffmpeg_outputs_32k_mono_mp3(
+    hass, satellite
+):
+    """The production Satellite options must drive HA's real FFmpeg conversion."""
+    entity, _, _ = satellite
+    assert await async_setup_component(hass, "ffmpeg", {})
+
+    async def matcha_pcm():
+        # Matcha/Wyoming production audio is 22.05 kHz, 16-bit, mono PCM.
+        yield b"\x00\x00" * (22050 // 4)
+
+    options = entity._attr_tts_options
+    converted = tts._async_convert_audio(
+        hass,
+        None,
+        matcha_pcm(),
+        to_extension=options["preferred_format"],
+        to_sample_rate=options["preferred_sample_rate"],
+        to_sample_channels=options["preferred_sample_channels"],
+        from_pcm_format=tts.PcmFormat(22050, 2, 1),
+    )
+    mp3 = b"".join([chunk async for chunk in converted])
+    info = MP3(BytesIO(mp3)).info
+
+    assert mp3
+    assert info.sample_rate == 32000
+    assert info.channels == 1
 
 
 def test_ha_command_segmentation_defaults():
