@@ -1,4 +1,4 @@
-"""Exercise b10 with a real MP3, a DAC-enabled ESP32 and a free TVIO port."""
+"""Exercise b10 with a real MP3 or 32 kHz mono S16LE PCM, a DAC-enabled ESP32 and a free TVIO port."""
 
 import argparse
 import json
@@ -12,16 +12,24 @@ from pathlib import Path
 
 from p65b8_device_acceptance import HEADER
 
+PCM_MIME = "audio/x-tivoo-pcm-s16le-32000-mono"
 
-def serve(mp3, address, port):
+
+def serve(audio, address, port, media_type, chunk_size):
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
         def do_GET(self):
             if self.path == "/status":
                 self.send_error(503)
                 return
-            body = b"broken MP3" * 200 if self.path == "/invalid" else mp3
+            body = audio
+            if self.path == "/invalid":
+                body = b"\x00" if media_type == PCM_MIME else b"broken MP3" * 200
             self.send_response(200)
-            mime = "audio/wav" if self.path == "/mime" else "audio/mpeg"
+            mime = "audio/wav" if self.path == "/mime" else media_type
             self.send_header("Content-Type", mime)
             if self.path == "/chunked":
                 self.send_header("Transfer-Encoding", "chunked")
@@ -31,14 +39,14 @@ def serve(mp3, address, port):
             self.end_headers()
             try:
                 if self.path == "/chunked":
-                    for offset in range(0, len(body), 317):
-                        chunk = body[offset : offset + 317]
+                    for offset in range(0, len(body), chunk_size):
+                        chunk = body[offset : offset + chunk_size]
                         self.wfile.write(
                             f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n"
                         )
                     self.wfile.write(b"0\r\n\r\n")
                 elif self.path == "/stall":
-                    self.wfile.write(body[:4096])
+                    self.wfile.write(body[:16384])
                     time.sleep(5)
                 else:
                     self.wfile.write(body)
@@ -60,7 +68,7 @@ def verify_spp_control(host):
         print("SPP status response during playback", data.hex())
 
 
-def verify(host, base, require_spp=False):
+def verify(host, base, require_spp=False, media_type="audio/mpeg"):
     sock = socket.create_connection((host, 7778), timeout=20)
     with closing(sock) as connection, sock.makefile("rb") as reader:
         receive = 0
@@ -110,7 +118,7 @@ def verify(host, base, require_spp=False):
                     return body
             raise TimeoutError(f"TVIO {kind:#04x}")
 
-        def play(path, mime="audio/mpeg", ident=None):
+        def play(path, mime=media_type, ident=None):
             ident = ident or str(uuid.uuid4())
             send(0x30, {"playback_id": ident, "mime_type": mime, "url": base + path})
             return ident
@@ -151,6 +159,7 @@ def verify(host, base, require_spp=False):
             verify_spp_control(host)
         stop(str(uuid.uuid4()))
         state(first, "completed")
+        print(f"First completion {1000 * (time.monotonic() - start):.1f} ms")
         assert time.monotonic() - start >= 2.5, "completed ahead of PCM"
         play("/chunked", ident=first)
 
@@ -166,7 +175,10 @@ def verify(host, base, require_spp=False):
         stop(stalled)
         state(next_id, "completed")
 
-        state(play("/invalid"), "failed", "audio_decode_failed")
+        invalid_error = (
+            "audio_pcm_invalid" if media_type == PCM_MIME else "audio_decode_failed"
+        )
+        state(play("/invalid"), "failed", invalid_error)
         state(play("/truncated"), "failed", "audio_http_failed")
         state(play("/status"), "failed", "audio_http_status")
         state(play("/mime"), "failed", "audio_content_type_mismatch")
@@ -186,15 +198,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("esp32_ip")
     parser.add_argument(
-        "mp3", type=Path, help="Real MP3 fixture with at least 3 seconds of PCM"
+        "audio",
+        type=Path,
+        help="MP3 or raw 32 kHz mono S16LE fixture, at least 3 seconds",
     )
     parser.add_argument(
         "--http-host", required=True, help="Fixture address reachable by the ESP32"
     )
     parser.add_argument("--http-port", type=int, default=18765)
     parser.add_argument("--require-spp", action="store_true")
+    parser.add_argument("--pcm", action="store_true")
+    parser.add_argument("--chunk-size", type=int, default=317)
     args = parser.parse_args()
-    with serve(args.mp3.read_bytes(), args.http_host, args.http_port) as server:
+    media_type = PCM_MIME if args.pcm else "audio/mpeg"
+    with serve(
+        args.audio.read_bytes(),
+        args.http_host,
+        args.http_port,
+        media_type,
+        args.chunk_size,
+    ) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -202,6 +225,7 @@ def main():
                 args.esp32_ip,
                 f"http://{args.http_host}:{args.http_port}",
                 args.require_spp,
+                media_type,
             )
         finally:
             server.shutdown()

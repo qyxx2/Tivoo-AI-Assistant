@@ -353,9 +353,11 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
         return "audio_content_type_mismatch";
     }
 
-    tivoo_audio_playback_t *playback = tivoo_audio_playback_open(request->generation);
+    const bool raw_pcm = media_type_equal(request->mime_type, TIVOO_PCM_MIME);
+    const char *format_error = raw_pcm ? "audio_pcm_invalid" : "audio_decode_failed";
+    tivoo_audio_playback_t *playback = tivoo_audio_playback_open(request->generation, raw_pcm);
     if (playback == NULL) {
-        return "audio_decode_failed";
+        return format_error;
     }
 
     const char *error = NULL;
@@ -382,7 +384,7 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
         }
         request->bytes_received += bytes;
         if (tivoo_audio_playback_feed(playback, buffer, (size_t)bytes, eof) != ESP_OK) {
-            error = "audio_decode_failed";
+            error = format_error;
             break;
         }
         if (!started && tivoo_audio_playback_has_pcm(playback)) {
@@ -391,7 +393,7 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
         }
         if (eof && bytes < sizeof(buffer)) {
             if (!started) {
-                error = "audio_decode_failed";
+                error = format_error;
             }
             break;
         }
@@ -439,7 +441,8 @@ static audio_request_t *run_request(audio_request_t *request)
     bool output = false;
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (!atomic_load(&request->stop_requested)) {
-        if (!media_type_equal(request->mime_type, "audio/mpeg")) {
+        if (!media_type_equal(request->mime_type, "audio/mpeg") &&
+            !media_type_equal(request->mime_type, TIVOO_PCM_MIME)) {
             error = "audio_format_unsupported";
         } else if (!tivoo_audio_output_begin(request->generation)) {
             error = "audio_output_unavailable";

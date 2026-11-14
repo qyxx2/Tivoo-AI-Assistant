@@ -19,6 +19,8 @@ struct tivoo_audio_playback {
     uint32_t converted_capacity;
     int16_t *converted;
     bool has_pcm;
+    bool has_low_byte;
+    uint8_t low_byte;
     unsigned frames;
     int64_t decode_us;
     int64_t src_us;
@@ -31,7 +33,7 @@ esp_err_t tivoo_audio_playback_init(void)
     return esp_mp3_dec_register() == ESP_AUDIO_ERR_OK ? ESP_OK : ESP_FAIL;
 }
 
-tivoo_audio_playback_t *tivoo_audio_playback_open(uint32_t generation)
+tivoo_audio_playback_t *tivoo_audio_playback_open(uint32_t generation, bool raw_pcm)
 {
     tivoo_audio_playback_t *playback = calloc(1, sizeof(*playback));
     if (playback == NULL) {
@@ -39,7 +41,7 @@ tivoo_audio_playback_t *tivoo_audio_playback_open(uint32_t generation)
     }
 
     esp_audio_simple_dec_cfg_t config = {.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3};
-    if (esp_audio_simple_dec_open(&config, &playback->decoder) != ESP_AUDIO_ERR_OK) {
+    if (!raw_pcm && esp_audio_simple_dec_open(&config, &playback->decoder) != ESP_AUDIO_ERR_OK) {
         free(playback);
         return NULL;
     }
@@ -126,9 +128,42 @@ static esp_err_t output_frame(tivoo_audio_playback_t *playback, size_t bytes)
     return err;
 }
 
+static esp_err_t feed_pcm(tivoo_audio_playback_t *playback, const uint8_t *data,
+    size_t size, bool eof)
+{
+    while (size != 0) {
+        size_t samples = 0;
+        const size_t capacity = sizeof(playback->decoded) / sizeof(playback->decoded[0]);
+        while (size != 0 && samples < capacity) {
+            const uint8_t byte = *data++;
+            --size;
+            if (playback->has_low_byte) {
+                playback->decoded[samples++] = (int16_t)((uint16_t)byte << 8 | playback->low_byte);
+            } else {
+                playback->low_byte = byte;
+            }
+            playback->has_low_byte = !playback->has_low_byte;
+        }
+        if (samples != 0) {
+            const int64_t started = esp_timer_get_time();
+            const esp_err_t err = tivoo_audio_output_write(
+                playback->generation, playback->decoded, samples);
+            playback->queue_us += esp_timer_get_time() - started;
+            if (err != ESP_OK) {
+                return err;
+            }
+            playback->has_pcm = true;
+        }
+    }
+    return eof && playback->has_low_byte ? ESP_ERR_INVALID_SIZE : ESP_OK;
+}
+
 esp_err_t tivoo_audio_playback_feed(tivoo_audio_playback_t *playback, uint8_t *data,
     size_t size, bool eof)
 {
+    if (playback->decoder == NULL) {
+        return feed_pcm(playback, data, size, eof);
+    }
     esp_audio_simple_dec_raw_t input = {.buffer = data, .len = size, .eos = eof};
     while (input.len != 0) {
         esp_audio_simple_dec_out_t output = {
@@ -168,10 +203,13 @@ void tivoo_audio_playback_close(tivoo_audio_playback_t *playback)
     if (playback == NULL) {
         return;
     }
-    ESP_LOGI("audio_playback", "generation=%lu frames=%u decode_ms=%ld src_ms=%ld queue_ms=%ld",
-        (unsigned long)playback->generation, playback->frames, (long)(playback->decode_us / 1000),
+    ESP_LOGI("audio_playback", "generation=%lu format=%s frames=%u decode_ms=%ld src_ms=%ld queue_ms=%ld",
+        (unsigned long)playback->generation, playback->decoder == NULL ? "pcm" : "mp3",
+        playback->frames, (long)(playback->decode_us / 1000),
         (long)(playback->src_us / 1000), (long)(playback->queue_us / 1000));
-    esp_audio_simple_dec_close(playback->decoder);
+    if (playback->decoder != NULL) {
+        esp_audio_simple_dec_close(playback->decoder);
+    }
     if (playback->src != NULL) {
         esp_ae_rate_cvt_close(playback->src);
     }
