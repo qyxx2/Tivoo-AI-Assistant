@@ -38,4 +38,11 @@ config TIVOO_I2S_DOUT_GPIO
     help
         -1 leaves DAC data disconnected. The capture batch uses silent TX DMA.
 
+config TIVOO_AUDIO_PROBE
+    bool "Log one-second audio measurements to UART"
+    default n
+    help
+        Report raw left/right slot, filtered microphone, and AFE output
+        levels without requiring a network connection or speech detection.
+
 endmenu

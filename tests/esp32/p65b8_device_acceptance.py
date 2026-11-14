@@ -17,20 +17,42 @@ def verify(sock):
     reader = sock.makefile("rb")
     rx_seq = 0
     tx_seq = 0
+    phase = "HANDSHAKE"
+    last_afe_frames = 0
+
+    def read_exact(size):
+        data = reader.read(size)
+        if len(data) != size:
+            raise EOFError(
+                f"{phase}: TVIO connection closed while reading {size} bytes"
+            )
+        return data
 
     def receive():
-        nonlocal rx_seq
+        nonlocal rx_seq, last_afe_frames
         magic, version, kind, flags, length, sequence = HEADER.unpack(
-            reader.read(HEADER.size)
+            read_exact(HEADER.size)
         )
         assert (magic, version, flags, sequence) == (b"TVIO", 1, 0, rx_seq)
         rx_seq += 1
-        data = reader.read(length)
-        assert len(data) == length
+        data = read_exact(length)
         if kind == 0x21:
             assert length == 640
             return kind, data
-        return kind, json.loads(data)
+        body = json.loads(data)
+        if kind == 0x42 and body.get("module") == "audio_frontend":
+            message = body["message"]
+            if message.startswith("AFE frames="):
+                if phase == "BEFORE START":
+                    print(phase, message)
+                if phase != "AFTER STOP":
+                    last_afe_frames = max(last_afe_frames, afe_count(message))
+            elif message.startswith("VAD "):
+                print(phase, body["uptime_ms"], message)
+        return kind, body
+
+    def afe_count(message):
+        return int(message.split()[1].split("=")[1])
 
     def send(kind, body):
         nonlocal tx_seq
@@ -40,12 +62,22 @@ def verify(sock):
 
     def wait_for(kind, predicate=lambda _: True):
         deadline = time.monotonic() + 45
-        while time.monotonic() < deadline:
-            message, data = receive()
-            assert message != 0x33, "VAD emitted AUDIO_INTERRUPTED"
-            if message == kind and predicate(data):
-                return data
-        raise TimeoutError(f"Timed out waiting for TVIO {kind:#x}")
+        original_timeout = sock.gettimeout()
+        try:
+            while (remaining := deadline - time.monotonic()) > 0:
+                sock.settimeout(remaining)
+                try:
+                    message, data = receive()
+                except TimeoutError:
+                    break
+                assert message != 0x33, "VAD emitted AUDIO_INTERRUPTED"
+                if message == kind and predicate(data):
+                    return data
+        finally:
+            sock.settimeout(original_timeout)
+        raise TimeoutError(
+            f"{phase}: no TVIO {kind:#04x}; last AFE frame count {last_afe_frames}"
+        )
 
     kind, hello = receive()
     assert kind == 0x01 and "mic_activity_events" in hello["capabilities"], hello
@@ -56,7 +88,9 @@ def verify(sock):
     status = wait_for(0x11, lambda body: body["request_id"] == request_id)
     print("CONNECTED", status["wifi"]["state"], "SPP", status["spp"]["state"])
     print("READY: speak for 2–3 seconds and then pause.")
+    phase = "BEFORE START"
     session = wait_for(0x20)
+    phase = "STREAMING"
     sid = session["session_id"]
     assert uuid.UUID(sid).version == 4
     assert (
@@ -73,7 +107,6 @@ def verify(sock):
     peak = 0
     speech_end = False
     trailing = 0
-    last_afe_frames = 0
     deadline = time.monotonic() + 25
     while trailing < 10:
         assert time.monotonic() < deadline, "Speech did not return to silence"
@@ -86,10 +119,6 @@ def verify(sock):
                 activity_seen = True
             if data["state"] == "speech_end":
                 speech_end = True
-        elif kind == 0x42 and data["module"] == "audio_frontend":
-            message = data["message"]
-            if message.startswith("AFE frames="):
-                last_afe_frames = int(message.split()[1].split("=")[1])
         elif kind == 0x21:
             assert activity_seen, "PCM arrived before speech_start"
             frames += 1
@@ -104,10 +133,12 @@ def verify(sock):
 
     send(0x23, {"session_id": str(uuid.uuid4()), "reason": "stale_test"})
     wait_for(0x21)
+    phase = "STOP"
     send(0x23, {"session_id": sid, "reason": "b8_acceptance"})
     end = wait_for(0x22)
     assert end["session_id"] == sid
     print("STOP", end)
+    phase = "AFTER STOP"
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
         kind, data = receive()
@@ -115,8 +146,8 @@ def verify(sock):
         if kind == 0x42 and data["module"] == "audio_frontend":
             message = data["message"]
             if message.startswith("AFE frames="):
-                afe_frames = int(message.split()[1].split("=")[1])
-                assert afe_frames > last_afe_frames
+                if afe_count(message) <= last_afe_frames:
+                    continue
                 print("AFTER STOP", message)
                 return
     raise TimeoutError("No AFE telemetry after STOP")

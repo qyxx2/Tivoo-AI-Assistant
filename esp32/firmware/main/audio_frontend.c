@@ -175,6 +175,7 @@ void tivoo_mic_push(tivoo_mic_producer_t *mic, uint32_t generation, bool speech,
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
 #define RX_READ_FRAMES 160U
 #define TAG "audio_frontend"
@@ -271,6 +272,30 @@ feed:
     }
 }
 
+#ifdef CONFIG_TIVOO_AUDIO_PROBE
+typedef struct {
+    int64_t sum;
+    uint64_t squares;
+    uint32_t clipped;
+} probe_level_t;
+
+static void probe_add(probe_level_t *level, int32_t sample)
+{
+    level->sum += sample;
+    level->squares += (uint32_t)(sample * sample);
+    level->clipped += sample <= -32760 || sample >= 32760;
+}
+
+static void probe_report(const char *stage, const probe_level_t *level, unsigned n)
+{
+    const int32_t dc = (int32_t)(level->sum / n);
+    const uint64_t mean_square = level->squares / n;
+    const uint32_t ac_square = (uint32_t)(mean_square - (uint64_t)(dc * dc));
+    ESP_LOGI(TAG, "PROBE %s n=%u dc=%" PRId32 " ac_ms=%" PRIu32 " clipped=%" PRIu32,
+        stage, n, dc, ac_square, level->clipped);
+}
+#endif
+
 static void capture_task(void *arg)
 {
     (void)arg;
@@ -279,6 +304,10 @@ static void capture_task(void *arg)
     int16_t mic[RX_READ_FRAMES / 2];
     size_t filled = 0;
     uint64_t first_sample = 0;
+#ifdef CONFIG_TIVOO_AUDIO_PROBE
+    probe_level_t raw_left = {0}, raw_right = {0}, filtered = {0};
+    unsigned raw_count = 0, filtered_count = 0;
+#endif
 
     for (;;) {
         size_t bytes = 0;
@@ -290,6 +319,19 @@ static void capture_task(void *arg)
                 continue;
             }
         }
+#ifdef CONFIG_TIVOO_AUDIO_PROBE
+        for (size_t slot = 0; slot < bytes / sizeof(*s_raw); slot += 2) {
+            probe_add(&raw_left, tivoo_inmp441_sample(s_raw[slot]) / 256);
+            probe_add(&raw_right, tivoo_inmp441_sample(s_raw[slot + 1]) / 256);
+            if (++raw_count == 32000) {
+                probe_report("raw_left", &raw_left, raw_count);
+                probe_report("raw_right", &raw_right, raw_count);
+                raw_left = (probe_level_t){0};
+                raw_right = (probe_level_t){0};
+                raw_count = 0;
+            }
+        }
+#endif
         unsigned right_peak = atomic_load_explicit(&s_right_peak, memory_order_relaxed);
         for (size_t slot = 1; slot < bytes / sizeof(*s_raw); slot += 2) {
             const int32_t pcm = tivoo_inmp441_sample(s_raw[slot]) / 256;
@@ -303,6 +345,14 @@ static void capture_task(void *arg)
             bytes / (2 * sizeof(*s_raw)), mic);
         unsigned peak = atomic_load_explicit(&s_mic_peak, memory_order_relaxed);
         for (size_t i = 0; i < samples; ++i) {
+#ifdef CONFIG_TIVOO_AUDIO_PROBE
+            probe_add(&filtered, mic[i]);
+            if (++filtered_count == 16000) {
+                probe_report("filtered_left", &filtered, filtered_count);
+                filtered = (probe_level_t){0};
+                filtered_count = 0;
+            }
+#endif
             const unsigned amplitude = mic[i] < 0 ? -(int)mic[i] : mic[i];
             if (amplitude > peak) {
                 peak = amplitude;
@@ -324,6 +374,10 @@ static void fetch_task(void *arg)
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t frames = 0;
     uint32_t fetch_errors = 0;
+#ifdef CONFIG_TIVOO_AUDIO_PROBE
+    probe_level_t enhanced = {0};
+    unsigned enhanced_count = 0, speech_count = 0;
+#endif
     uint64_t report_ms = esp_timer_get_time() / 1000;
     for (;;) {
         afe_fetch_result_t *result =
@@ -334,6 +388,19 @@ static void fetch_task(void *arg)
         if (result != NULL && result->ret_value == ESP_OK && result->data != NULL &&
             result->data_size > 0 && result->data_size % sizeof(int16_t) == 0) {
             const bool speech = result->vad_state == VAD_SPEECH;
+#ifdef CONFIG_TIVOO_AUDIO_PROBE
+            for (size_t i = 0; i < result->data_size / sizeof(int16_t); ++i) {
+                probe_add(&enhanced, result->data[i]);
+                speech_count += speech;
+                if (++enhanced_count == 16000) {
+                    probe_report("enhanced", &enhanced, enhanced_count);
+                    ESP_LOGI(TAG, "PROBE vad speech_samples=%u/16000", speech_count);
+                    enhanced = (probe_level_t){0};
+                    enhanced_count = 0;
+                    speech_count = 0;
+                }
+            }
+#endif
             const bool transition = speech != s_mic.speech;
             /* Every successful fetch enters the history, including silence.
              * vad_cache overlaps that history and would duplicate samples. */
@@ -357,7 +424,7 @@ static void fetch_task(void *arg)
                 "AFE frames=%" PRIu32 " fetch_errors=%" PRIu32 " feed_errors=%u "
                 "RX errors=%u overruns=%" PRIu32 " mic_peak=%u right_peak=%u feed_max_us=%u "
                 "ref_underruns=%u ref_misaligned=%u PCM drops=%" PRIu32
-                " pending=%zu stack_min=%u/%u",
+                " pending=%zu stack_min=%u/%u vad=%s",
                 frames, fetch_errors, atomic_load(&s_feed_errors),
                 atomic_load(&s_read_errors), tivoo_audio_capture_overruns(),
                 atomic_exchange(&s_mic_peak, 0), atomic_exchange(&s_right_peak, 0),
@@ -365,7 +432,8 @@ static void fetch_task(void *arg)
                 atomic_load(&s_reference_underruns), atomic_load(&s_reference_misalignments),
                 s_mic.dropped_frames, s_mic.pending,
                 (unsigned)uxTaskGetStackHighWaterMark(s_feed_task),
-                (unsigned)uxTaskGetStackHighWaterMark(NULL));
+                (unsigned)uxTaskGetStackHighWaterMark(NULL),
+                s_mic.speech ? "speech" : "silence");
         }
     }
 }

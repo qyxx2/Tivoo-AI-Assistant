@@ -18,3 +18,20 @@
 让 HA 释放唯一的 7778 客户端连接，再运行 `python3 -u tests/esp32/p65b8_device_acceptance.py <ESP32_IP> --spp-peer <已配对的 Tivoo MAC>`。等 READY 后在麦克风旁讲话 2–3 秒，然后保持安静。脚本验证事件顺序、二进制 PCM、静音后的持续上传、匹配 STOP 与后续 AFE 遥测。
 
 NAS 原 Tivoo 集成使用固定 capability 列表，会拒绝 B8 HELLO。按确认部署分支已有的 B7 集成 `4ae2c8a` 并保留 B8 固件。HA 已重启，NAS 到 ESP32 的 7777/7778 两路连接均恢复。旧 Tivoo/AstrBot 集成备份位于 NAS 的 `/volume1/docker/tivoo-backups/p65b8-ha.w3W9KS/previous-integrations.tar.gz`。
+
+## 分层复测
+
+1. **先校验 7778 工具。** 运行 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q tests/esp32/test_p65b8_acceptance_tool.py`。测试用分段 TVIO 字节流校验 HELLO/ACK、状态查询、START → ACTIVITY → PCM、静音后继续上传以及 STOP。真机脚本也会打印 START 前收到的 AFE 遥测。
+2. **独立观察采集和 VAD。** 在 `Tivoo I2S audio` 菜单启用 `TIVOO_AUDIO_PROBE`，刷写诊断构建，使用 115200 UART 记录 `PROBE` 行。依次采集 5 秒安静、5 秒靠近麦克风播放固定 1 kHz 音调、5 秒安静。再用真人讲话观察 VAD；纯音只用于验证采集和滤波。每秒比较 `raw_left`、`raw_right`、`filtered_left`、`enhanced` 的 `ac_ms`（去直流均方值）、`dc`、`clipped`，以及 `vad speech_samples`。探针只记录统计值。
+3. **必要时验证电气侧。** 在 ESP32 端用逻辑分析仪同时测 GPIO26/25/34。预期 WS 约 32 kHz、BCLK 约 2.048 MHz，WS 低电平槽在边沿后一个 BCLK 开始传输 24 位数据。确认供电、共地及 SD 的约 100 kΩ 下拉。若需确认槽位，可断电后把 INMP441 L/R 从 GND 改接 3.3 V 再重复纯音，确认原始双槽中音调能量随选槽转移，然后恢复 GND。
+
+| 对照结果 | 下一层定位 |
+|---|---|
+| ESP32 引脚上时钟缺失或 SD 无有效响应 | 先测模块供电、共地、下拉和时钟到达情况。时钟在 ESP32 端也缺失时检查固件时钟与 GPIO 配置 |
+| 引脚上能解出随音调变化的左槽，UART 原始左槽没有对应变化 | 检查 I²S GPIO 配置、DMA 字序、Slot 和位对齐 |
+| 原始左槽有响应，滤波左槽缺失 1 kHz 响应 | 检查左槽提取与降采样 |
+| 滤波左槽有响应，增强输出异常或干净真人语音缺少 VAD 切换 | 检查 AFE 输入格式、配置和 VAD |
+| UART 有 VAD 边沿且 upload=1，7778 已完成握手却没有对应消息 | 检查 producer 和诊断队列，结合已知字节流测试区分接收工具 |
+| UART 有 VAD 边沿但 upload=0 | 确认边沿是否出现在 HELLO_ACK 之后，并检查会话创建和入队 |
+
+2026-11-14 使用探针完成「安静 → 真人说话 → 安静」对照。采到的 68 个一秒窗口中，原始左槽每秒有 62–157 个近满幅样本。滤波左槽和 AFE 输出的去直流均方值中位数分别约 139 万和 140 万，VAD 有 67 个窗口判为全程人声。右槽旧遥测的瞬时满幅无法代表整秒输入，探针的右槽每秒只有 0–3 个近满幅样本。本次确认异常已出现在 AFE 之前的 I²S/DMA 左槽。需要独立解码引脚波形或用已知正常的 I²S 信号源做对照，才能区分电气侧与 I²S 采集配置。
