@@ -176,6 +176,8 @@
 
 **Goal:** 在真实 Tivoo 环境跑通完整唤醒、打断、follow-up 与 session timeout，留下可复现报告。
 
+**本批状态（2026-11-14）：** 已完成自动化回归及计时边界验证。现场勾选项留待后续补测，证据与执行步骤见 [P65-A01–A16 验收报告](../reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md)。
+
 **Files:** 修复项按 owner 修改；新增 `docs/superpowers/reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md`；更新 README 和本矩阵状态。
 
 - [ ] 实测首次 WAKE_WORD 最近 speech_end 后 3 秒未命中取消、首次 speech_start 起 15 秒硬上限、首次 KWS hit 后 5 秒 command-start timeout；打断交接从新轮 STT_START 起算，旧 Stop 延迟不误杀缓存命令；连续 utterance 不额外等待。
@@ -186,8 +188,8 @@
 - [ ] 实测 PCM5102 输出期间 RX/AEC/VAD/MIC upload/KWS 和 SPP 屏幕控制同时工作。
 - [ ] 实测 TTS 实际播放结束后 8 秒 follow-up，无输入到期后停止网络上传并回本地监听；下一轮需要 wake word。
 - [ ] 记录实际 memory、CPU、Wi-Fi/Spp、DMA underrun、AEC reference lag、PCM drop 与队列高水位。
-- [ ] 回归 P3、P6、P7A 与 b6 取消用例；确认取消后无旧 plain、PCM、TTS_PLAY。
-- [ ] 更新 README：P6.5 新范围、b6–b11 状态与剩余限制；保持 P7/P8 文档边界一致。
+- [x] 回归 P3、P6、P7A 与 b6 取消用例；确认取消后无旧 plain、PCM、TTS_PLAY。
+- [x] 更新 README：P6.5 新范围、b6–b11 状态与剩余限制；保持 P7/P8 文档边界一致。
 - [ ] 本批完成后由用户决定是否把后续计划 P7/P8 中已被前移的条目标为 superseded，不擅自删除历史合同。
 
 **Exit gate:** P65-A01–A16 有独立证据和 PASS/GAP/BLOCKED 标记；真实声学测试通过才可宣称全双工 KWS 打断已验收。

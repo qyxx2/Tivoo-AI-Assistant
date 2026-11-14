@@ -21,7 +21,7 @@ from homeassistant.components.assist_pipeline.vad import VoiceCommandSegmenter
 from homeassistant.setup import async_setup_component
 from mutagen.mp3 import MP3
 from pytest_homeassistant.common import async_fire_time_changed
-from test_audio_session import SESSION_1, _start_payload
+from test_audio_session import SESSION_1, SESSION_2, _start_payload
 
 
 @pytest.fixture
@@ -41,9 +41,9 @@ async def satellite(hass):
     await entity.async_will_remove_from_hass()
 
 
-async def activity(manager, state):
+async def activity(manager, state, session_id=SESSION_1):
     await manager.async_handle_activity(
-        {"session_id": SESSION_1, "state": state, "uptime_ms": 1}
+        {"session_id": session_id, "state": state, "uptime_ms": 1}
     )
 
 
@@ -54,8 +54,24 @@ async def tick(hass, seconds):
     await hass.async_block_till_done()
 
 
+@pytest.fixture
+def advance_clock(hass, monkeypatch):
+    """Advance HA's actual timer handles on a cumulative monotonic timeline."""
+    real_time = hass.loop.time
+    offset = 0.0
+    monkeypatch.setattr(hass.loop, "time", lambda: real_time() + offset)
+
+    async def advance(seconds):
+        nonlocal offset
+        offset += seconds
+        await asyncio.sleep(0)
+        await hass.async_block_till_done()
+
+    return advance
+
+
 async def test_upload_survives_run_end_and_starts_followup_after_playback(
-    hass, satellite, monkeypatch
+    hass, satellite, monkeypatch, advance_clock
 ):
     entity, manager, stop = satellite
     adapter = entity.adapter
@@ -130,6 +146,8 @@ async def test_upload_survives_run_end_and_starts_followup_after_playback(
     stop.assert_not_awaited()
     entity.coordinator.on_playback(first_id, "completed")
     assert await asyncio.wait_for(watcher_closed.get(), 1) == "tivoo-wake"
+    await advance_clock(7.9)
+    stop.assert_not_awaited()
     await activity(manager, "speech_start")
     await manager.async_push_pcm(SESSION_1, b"two!")
     assert await asyncio.wait_for(turns.get(), 1) == (PipelineStage.STT, b"two!")
@@ -142,24 +160,44 @@ async def test_upload_survives_run_end_and_starts_followup_after_playback(
 
     entity.coordinator.on_playback(second_id, "completed")
     assert await asyncio.wait_for(watcher_closed.get(), 1) == "tivoo-wake"
-    await tick(hass, 9)
+    await advance_clock(7.9)
+    stop.assert_not_awaited()
+    await advance_clock(0.2)
     stop.assert_awaited_once_with(SESSION_1, "followup_timeout")
+    assert manager.active_session_id is None
+    await manager.async_push_pcm(SESSION_1, b"old!")
+    assert manager.queue_size == 0
+    await manager.async_start_session(_start_payload(SESSION_2), persistent=True)
+    await activity(manager, "speech_start", SESSION_2)
+    await manager.async_push_pcm(SESSION_2, b"new!")
+    assert await asyncio.wait_for(turns.get(), 1) == (PipelineStage.WAKE_WORD, b"new!")
 
 
 @pytest.mark.parametrize(
-    ("events", "seconds", "reason"),
+    ("events", "reason"),
     [
-        (["speech_end"], 4, "wake_miss"),
-        (["speech_end", "speech_start"], 16, "wake_candidate_timeout"),
-        (["detected"], 6, "command_timeout"),
+        (
+            [(1, "speech_end"), (2, "speech_start"), (1, "speech_end"), (2.9, None)],
+            "wake_miss",
+        ),
+        (
+            [(10, "speech_end"), (2, "speech_start"), (2.9, None)],
+            "wake_candidate_timeout",
+        ),
+        (
+            [(4, Event.WAKE_WORD_END), (2, Event.STT_START), (2.9, None)],
+            "command_timeout",
+        ),
     ],
+    ids=["wake_miss", "wake_candidate_timeout", "command_timeout"],
 )
-async def test_stage_watchdogs(hass, satellite, monkeypatch, events, seconds, reason):
+async def test_stage_watchdogs(satellite, monkeypatch, advance_clock, events, reason):
     entity, manager, stop = satellite
     running = asyncio.Event()
     closed = asyncio.Event()
 
     async def pipeline(audio, start_stage):
+        assert start_stage == PipelineStage.WAKE_WORD
         running.set()
         try:
             await asyncio.Future()
@@ -169,17 +207,21 @@ async def test_stage_watchdogs(hass, satellite, monkeypatch, events, seconds, re
     monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
     await activity(manager, "speech_start")
     await asyncio.wait_for(running.wait(), 1)
-    for event in events:
-        if event == "detected":
+    for seconds, event in events:
+        await advance_clock(seconds)
+        stop.assert_not_awaited()
+        if event is Event.WAKE_WORD_END:
             entity.on_pipeline_event(
                 PipelineEvent(
                     Event.WAKE_WORD_END,
                     {"wake_word_output": {"wake_word_id": "tivoo-wake"}},
                 )
             )
-        else:
+        elif event is Event.STT_START:
+            entity.on_pipeline_event(PipelineEvent(event))
+        elif event is not None:
             await activity(manager, event)
-    await tick(hass, seconds)
+    await advance_clock(0.2)
     await asyncio.wait_for(closed.wait(), 1)
     stop.assert_awaited_once_with(SESSION_1, reason)
 
@@ -377,8 +419,20 @@ async def test_disconnect_closes_tts_after_pipeline_return(
     stop.assert_not_awaited()
 
 
-@pytest.mark.parametrize("phase", ["stt", "before_plain", "after_plain", "playback"])
-async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch, phase):
+@pytest.mark.parametrize(
+    ("phase", "command_started"),
+    [
+        ("stt", True),
+        ("before_plain", True),
+        ("after_plain", True),
+        ("tts_generation", True),
+        ("playback", True),
+        ("playback", False),
+    ],
+)
+async def test_confirmed_wake_replaces_active_turn(
+    hass, satellite, monkeypatch, advance_clock, phase, command_started
+):
     from homeassistant.components.wake_word import DetectionResult
 
     entity, manager, stop = satellite
@@ -421,7 +475,8 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
         if stage == PipelineStage.STT:
             entity.on_pipeline_event(PipelineEvent(Event.STT_START))
             await events.put(tuple([await anext(audio) for _ in range(3)]))
-            entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+            if command_started:
+                entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
             await asyncio.Future()
         entity.on_pipeline_event(
             PipelineEvent(
@@ -449,7 +504,7 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
         if phase != "stt":
             entity.on_pipeline_event(PipelineEvent(Event.STT_END))
             entity.on_pipeline_event(PipelineEvent(Event.INTENT_START))
-        if phase in ("after_plain", "playback"):
+        if phase in ("after_plain", "tts_generation", "playback"):
             entity.on_pipeline_event(
                 PipelineEvent(
                     Event.INTENT_PROGRESS,
@@ -458,6 +513,8 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
                     },
                 )
             )
+        if phase in ("tts_generation", "playback"):
+            entity.on_pipeline_event(PipelineEvent(Event.TTS_START))
         if phase == "playback":
             entity.on_pipeline_event(
                 PipelineEvent(Event.INTENT_PROGRESS, {"tts_start_streaming": True})
@@ -473,6 +530,13 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
     try:
         assert await asyncio.wait_for(events.get(), 1) == PipelineStage.WAKE_WORD
         await hass.async_block_till_done()
+        old_id = None
+        if phase == "playback":
+            entity.adapter.async_send_tts_play.assert_awaited_once()
+            old_id = entity.adapter.async_send_tts_play.await_args.args[0]
+            entity.coordinator.on_playback(old_id, "playing")
+        else:
+            entity.adapter.async_send_tts_play.assert_not_awaited()
         await manager.async_push_pcm(SESSION_1, b"pr" * 321)
         await activity(manager, "speech_end")
         await activity(manager, "speech_start")
@@ -485,12 +549,10 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
         assert events.empty()
         pipeline_lookup.assert_called_once_with(hass, "astrbot")
         provider_lookup.assert_called_once_with(hass, "wake_word.sherpa")
+        await advance_clock(6)
+        assert events.empty()
+        stop.assert_not_awaited()
         entity.adapter.async_send_message.assert_not_awaited()
-        old_id = (
-            entity.adapter.async_send_tts_play.await_args.args[0]
-            if phase == "playback"
-            else None
-        )
         hit.set()
         assert await asyncio.wait_for(events.get(), 1) == "closing"
         if old_id:
@@ -505,7 +567,7 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
         else:
             entity.adapter.async_send_message.assert_not_awaited()
         await manager.async_push_pcm(SESSION_1, b"on" * 320)
-        await tick(hass, 6)
+        await advance_clock(6)
         assert events.empty()
         stop.assert_not_awaited()
     finally:
@@ -517,6 +579,13 @@ async def test_confirmed_wake_replaces_active_turn(hass, satellite, monkeypatch,
         b"go" * 320,
         b"on" * 320,
     )
+    await advance_clock(4.9)
+    stop.assert_not_awaited()
+    await advance_clock(0.2)
+    if command_started:
+        stop.assert_not_awaited()
+    else:
+        stop.assert_awaited_once_with(SESSION_1, "command_timeout")
 
 
 async def test_watcher_lifetime_and_successive_interrupts(hass, satellite, monkeypatch):

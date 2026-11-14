@@ -2,7 +2,7 @@
 
 > 日期：2026-11-13  
 > 分支：`feature/p6-5-ha-cancellation-preflight`  
-> 状态：**P6.5 b6+ 实施合同；尚未实现/验收**  
+> 状态：**P6.5 b6+ 实施合同，自动化已回归，现场声学待验收**（[b11 逐项证据](../reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md)）\
 > 适用：ESP32-WROVER-E、Home Assistant Core 2026.11.0、AstrBot 4.29.4、Sherpa Wyoming 现有 P7A 服务  
 > 分批计划：[P6.5 b6 起分批执行计划](../plans/2026-11-13-p6-5-batch-execution-plan-from-b6.md)
 

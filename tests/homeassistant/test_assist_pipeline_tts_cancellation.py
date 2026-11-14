@@ -96,9 +96,15 @@ async def _send_sse(response: web.StreamResponse, event: dict) -> None:
 
 @pytest.mark.enable_socket
 @pytest.mark.parametrize(
-    ("owned", "external_vad"),
-    [(False, False), (True, False), (True, True)],
-    ids=["native", "tivoo", "tivoo-external-vad"],
+    ("owned", "speech_frames", "endpoint_ms"),
+    [
+        (False, None, None),
+        (True, None, None),
+        (True, 15, 1000),
+        (True, 50, 1700),
+        (True, 800, 15000),
+    ],
+    ids=["native", "tivoo", "minimum-command", "end-silence", "segmenter-timeout"],
 )
 async def test_normal_pipeline_completion_closes_all_owned_streams(
     hass,
@@ -107,10 +113,12 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
     monkeypatch,
     tmp_path,
     owned,
-    external_vad,
+    speech_frames,
+    endpoint_ms,
 ) -> None:
     """A complete Assist run drains its SSE/TTS/Wyoming owners without Stop."""
     enable_socket()
+    external_vad = speech_frames is not None
     assert SHERPA_PYTHON.is_file()
     assert FAKE_WYOMING_SERVER.is_file()
 
@@ -373,14 +381,14 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
 
             monkeypatch.setattr(audio_enhancer, "MicroVad", FixtureVad)
 
-            async def command_then_silence():
-                for _ in range(15):
+            async def command_audio():
+                for _ in range(speech_frames):
                     yield b"\x01\x00" * 320
                 for _ in range(50):
                     yield bytes(640)
                 pytest.fail("HA must endpoint the command before input EOF")
 
-            audio = command_then_silence()
+            audio = command_audio()
         mark("pipeline_start")
         pipeline_call = satellite.async_accept_pipeline_from_satellite(
             audio,
@@ -439,7 +447,7 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
             started = events[PipelineEventType.STT_VAD_START]["timestamp"]
             ended = events[PipelineEventType.STT_VAD_END]["timestamp"]
             assert 290 <= started <= 310
-            assert 990 <= ended <= 1020
+            assert endpoint_ms - 10 <= ended <= endpoint_ms + 20
 
         tts_end = next(
             event
