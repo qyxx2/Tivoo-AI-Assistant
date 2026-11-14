@@ -15,6 +15,35 @@ from homeassistant import loader
 DOMAIN = "tivoo"
 DEFAULT_MEDIA_DIRECTORY = "pixelart"
 
+EXPECTED_SERVICES = {
+    "game_control",
+    "play_animation",
+    "set_alarm",
+    "set_audio_source",
+    "set_brightness",
+    "set_datetime",
+    "set_expression",
+    "set_light",
+    "set_memorial",
+    "set_noise_meter",
+    "set_playstate",
+    "set_screen_power",
+    "set_sleep_mode",
+    "set_timer",
+    "set_volume",
+    "set_weather",
+    "show_clock",
+    "show_design",
+    "show_effects",
+    "show_game",
+    "show_image",
+    "show_lyrics",
+    "show_scoreboard",
+    "show_text",
+    "show_visualization",
+    "start_countdown",
+    "stop_countdown",
+}
 
 async def _submit_user_flow(hass, media_directory=DEFAULT_MEDIA_DIRECTORY):
     result = await hass.config_entries.flow.async_init(
@@ -114,16 +143,7 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
     assert hass.services.has_service(DOMAIN, "set_volume")
     assert hass.services.has_service(DOMAIN, "show_image")
     assert hass.services.has_service(DOMAIN, "play_animation")
-    assert set(hass.services.async_services()[DOMAIN]) == {
-        "stop_countdown",
-        "set_volume",
-        "set_expression",
-        "show_text",
-        "start_countdown",
-        "set_brightness",
-        "show_image",
-        "play_animation",
-    }
+    assert set(hass.services.async_services()[DOMAIN]) == EXPECTED_SERVICES
     runtime = hass.data[DOMAIN][entry.entry_id]
     manager = runtime["audio_session_manager"]
     session_id = "11111111-1111-4111-8111-111111111111"
@@ -216,16 +236,7 @@ async def test_config_and_service_descriptions_are_available(
     assert volume["selector"]["number"]["max"] == 100
     assert volume["selector"]["number"]["step"] == 1
 
-    assert set(services[DOMAIN]) == {
-        "stop_countdown",
-        "set_volume",
-        "set_expression",
-        "show_text",
-        "start_countdown",
-        "set_brightness",
-        "show_image",
-        "play_animation",
-    }
+    assert set(services[DOMAIN]) == EXPECTED_SERVICES
     for service in ("show_image", "play_animation"):
         fields = services[DOMAIN][service]["fields"]
         assert set(fields) == {"file", "time"}

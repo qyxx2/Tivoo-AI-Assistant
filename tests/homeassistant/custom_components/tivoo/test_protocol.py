@@ -127,3 +127,166 @@ def test_static_image_service_uses_the_single_image_command():
     )[0]
     assert _payload(packet)[:5] == bytes.fromhex("44 00 0A 0A 04")
     assert _payload(packet)[5] == 0xAA
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_payloads"),
+    [
+        (
+            TivooCommand("set_screen_power", {"value": True}),
+            (bytes.fromhex("45 01 01 01 01 64 00 01 00 00 00"),),
+        ),
+        (
+            TivooCommand("set_screen_power", {"value": False}),
+            (bytes.fromhex("45 01 01 01 01 00 00 00 00 00 00"),),
+        ),
+        (
+            TivooCommand("set_playstate", {"value": "pause"}),
+            (bytes.fromhex("0A 00"),),
+        ),
+        (
+            TivooCommand("set_playstate", {"value": "next"}),
+            (bytes.fromhex("12 01"),),
+        ),
+        (
+            TivooCommand(
+                "show_clock",
+                {
+                    "clock": 3,
+                    "twentyfour": True,
+                    "weather": True,
+                    "temp": True,
+                    "calendar": True,
+                    "color": "#0A141E",
+                    "hot": True,
+                },
+            ),
+            (
+                bytes.fromhex("2D 01"),
+                bytes.fromhex("45 00 01 03 01 01 01 01 0A 14 1E"),
+                bytes.fromhex("26 01"),
+            ),
+        ),
+        (
+            TivooCommand("set_datetime", {"value": "2024-01-02T03:04:05"}),
+            (bytes.fromhex("18 18 14 01 02 03 04 05"),),
+        ),
+        (
+            TivooCommand(
+                "set_weather",
+                {"temperature": 22, "condition": 3, "unit": "C"},
+            ),
+            (bytes.fromhex("5F 16 03"), bytes.fromhex("2B 00")),
+        ),
+        (
+            TivooCommand(
+                "set_light",
+                {
+                    "brightness": 77,
+                    "color": "#FF0080",
+                    "effect": 0,
+                    "power": True,
+                },
+            ),
+            (bytes.fromhex("45 01 FF 00 80 4D 00 01 00 00 00"),),
+        ),
+        (
+            TivooCommand("show_lyrics", {}),
+            (bytes.fromhex("45 06 00 00 00"),),
+        ),
+        (
+            TivooCommand(
+                "show_scoreboard",
+                {"player1": 12, "player2": 34},
+            ),
+            (bytes.fromhex("72 01 01 22 00 0C 00"),),
+        ),
+        (
+            TivooCommand("set_timer", {"value": True}),
+            (bytes.fromhex("72 00 01"),),
+        ),
+        (
+            TivooCommand("set_noise_meter", {"value": False}),
+            (bytes.fromhex("72 02 02"),),
+        ),
+        (
+            TivooCommand("set_audio_source", {"value": "linein"}),
+            (bytes.fromhex("05 02"),),
+        ),
+        (
+            TivooCommand(
+                "set_sleep_mode",
+                {
+                    "value": True,
+                    "time": 45,
+                    "mode": 1,
+                    "frequency": 99.5,
+                    "volume": 50,
+                    "color": "#090909",
+                    "brightness": 60,
+                },
+            ),
+            (bytes.fromhex("40 2D 01 01 5F 09 32 09 09 09 3C"),),
+        ),
+        (
+            TivooCommand("show_design", {"number": 2}),
+            (bytes.fromhex("45 05"), bytes.fromhex("BD 17 02")),
+        ),
+        (
+            TivooCommand("show_effects", {"number": 2}),
+            (bytes.fromhex("45 03 02"),),
+        ),
+        (
+            TivooCommand("show_visualization", {"number": 1}),
+            (bytes.fromhex("45 04 01"),),
+        ),
+        (
+            TivooCommand("show_game", {"index": 2}),
+            (bytes.fromhex("A0 01 02"),),
+        ),
+        (
+            TivooCommand("game_control", {"value": "left"}),
+            (bytes.fromhex("17 01"), bytes.fromhex("21 01")),
+        ),
+    ],
+)
+def test_extended_spp_commands_match_pinned_upstream_vectors(
+    command, expected_payloads
+):
+    packets = encode_command(command)
+    assert tuple(_payload(packet) for packet in packets) == expected_payloads
+
+
+def test_alarm_payload_keeps_the_constrained_upstream_fields():
+    packet = encode_command(
+        TivooCommand(
+            "set_alarm",
+            {
+                "slot": 1,
+                "time": "07:30",
+                "weekdays": ["mon", "tue", "wed", "thu", "fri"],
+                "frequency": 100.3,
+                "volume": 80,
+            },
+        )
+    )[0]
+    assert _payload(packet) == bytes.fromhex("43 01 01 07 1E 3E 00 00 03 0A 50")
+
+
+def test_memorial_payload_matches_esp32_divoom_utf16_golden_shape():
+    packet = encode_command(
+        TivooCommand(
+            "set_memorial",
+            {
+                "slot": 2,
+                "value": "2024-05-06T12:00:00",
+                "text": "Test ",
+            },
+        )
+    )[0]
+    expected = bytes.fromhex(
+        "54 02 01 05 06 0C 00 01 00 54 00 65 00 73 00 74 00 20 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00"
+    )
+    assert _payload(packet) == expected

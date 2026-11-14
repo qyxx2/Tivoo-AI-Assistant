@@ -3,6 +3,8 @@
 > 状态：P4 设计合同（待实现与集成验收）；本文只冻结已由现有规格、HA/AstrBot 源码或本机 Tivoo 协议实现证实的部分。凡现有代码没有定义的字段、资源引用格式和设备能力，明确标为待定，不以示例值冒充正式接口。
 >
 > 基线：Tivoo-AI-Assistant main 当前已实现 P3；Home Assistant Core 2026.11.0；AstrBot 4.29.4。P4 从 main 创建独立分支，本文不包含代码实现。
+>
+> **2026-11-14 当前状态说明：** 下文“七个 Tool / 首版 MVP / 可选扩展”是 P4 当时的阶段边界，不再代表当前运行时工具总量。P5/P6 已接通真实 ESP32→Tivoo SPP 传输后，依据本矩阵 §4 的 Tivoo 型号完整能力清单及固定上游实现，当前 custom_components/tivoo 已扩展为 27 个 Assist/MCP Tool；历史 P4 验收结论仍按当时范围保留。现行工具清单、上游版本和真机补充验收见 ../reports/2026-11-14-tivoo-mcp-spp-capability-expansion.md。
 
 ## 1. P4 目标与边界
 

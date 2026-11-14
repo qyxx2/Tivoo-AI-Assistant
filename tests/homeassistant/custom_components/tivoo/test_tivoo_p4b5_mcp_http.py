@@ -29,13 +29,33 @@ def _restrict_enabled_mcp_test_sockets(request):
 
 
 EXPECTED_TOOLS = {
+    "tivoo__GameControl",
+    "tivoo__PlayAnimation",
+    "tivoo__SetAlarm",
+    "tivoo__SetAudioSource",
+    "tivoo__SetBrightness",
+    "tivoo__SetDateTime",
     "tivoo__SetExpression",
+    "tivoo__SetLight",
+    "tivoo__SetMemorial",
+    "tivoo__SetNoiseMeter",
+    "tivoo__SetPlayState",
+    "tivoo__SetScreenPower",
+    "tivoo__SetSleepMode",
+    "tivoo__SetTimer",
+    "tivoo__SetVolume",
+    "tivoo__SetWeather",
+    "tivoo__ShowClock",
+    "tivoo__ShowDesign",
+    "tivoo__ShowEffects",
+    "tivoo__ShowGame",
+    "tivoo__ShowImage",
+    "tivoo__ShowLyrics",
+    "tivoo__ShowScoreboard",
     "tivoo__ShowText",
+    "tivoo__ShowVisualization",
     "tivoo__StartCountdown",
     "tivoo__StopCountdown",
-    "tivoo__SetVolume",
-    "tivoo__ShowImage",
-    "tivoo__PlayAnimation",
 }
 
 
@@ -133,7 +153,7 @@ def test_p4b5_mcp_http_tests_block_non_loopback_targets():
 
 
 @pytest.mark.enable_socket
-async def test_p4b5_assist_mcp_discovers_all_seven_tools_for_normal_user(
+async def test_p4b5_assist_mcp_discovers_all_tivoo_tools_for_normal_user(
     hass, enable_custom_integrations, aiohttp_client
 ):
     async with _assist_mcp_session(hass, aiohttp_client) as (session, _, user):
@@ -146,16 +166,69 @@ async def test_p4b5_assist_mcp_discovers_all_seven_tools_for_normal_user(
 
 
 @pytest.mark.enable_socket
-async def test_p4b5_streamable_http_calls_all_seven_tivoo_tools(
+async def test_p4b5_streamable_http_calls_all_tivoo_tools(
     hass, enable_custom_integrations, aiohttp_client
 ):
     cases = [
         ("tivoo__SetExpression", {"name": "heart"}, "set_expression"),
         ("tivoo__ShowText", {"value": "Hello"}, "show_text"),
+        ("tivoo__SetBrightness", {"value": 42}, "set_brightness"),
+        ("tivoo__SetScreenPower", {"value": True}, "set_screen_power"),
+        ("tivoo__SetVolume", {"volume": 50}, "set_volume"),
+        ("tivoo__SetPlayState", {"value": "pause"}, "set_playstate"),
+        ("tivoo__ShowClock", {"clock": 1, "color": "red"}, "show_clock"),
+        (
+            "tivoo__SetDateTime",
+            {"value": "2026-11-14T18:30:00"},
+            "set_datetime",
+        ),
+        (
+            "tivoo__SetWeather",
+            {"temperature": 25, "condition": 6, "unit": "C"},
+            "set_weather",
+        ),
+        (
+            "tivoo__SetLight",
+            {"brightness": 75, "color": "red", "effect": 0},
+            "set_light",
+        ),
         ("tivoo__StartCountdown", {"countdown": "01:30"}, "start_countdown"),
         ("tivoo__StopCountdown", {}, "stop_countdown"),
-        ("tivoo__SetVolume", {"volume": 0}, "set_volume"),
-        ("tivoo__SetVolume", {"volume": 100}, "set_volume"),
+        ("tivoo__ShowLyrics", {}, "show_lyrics"),
+        (
+            "tivoo__ShowScoreboard",
+            {"player1": 2, "player2": 1},
+            "show_scoreboard",
+        ),
+        ("tivoo__SetTimer", {"value": True}, "set_timer"),
+        ("tivoo__SetNoiseMeter", {"value": True}, "set_noise_meter"),
+        (
+            "tivoo__SetAlarm",
+            {
+                "slot": 1,
+                "time": "07:30",
+                "weekdays": ["mon", "tue", "wed", "thu", "fri"],
+                "frequency": 100.3,
+                "volume": 80,
+            },
+            "set_alarm",
+        ),
+        (
+            "tivoo__SetMemorial",
+            {
+                "slot": 2,
+                "value": "2026-12-31T00:00:00",
+                "text": "New Year",
+            },
+            "set_memorial",
+        ),
+        ("tivoo__SetAudioSource", {"value": "linein"}, "set_audio_source"),
+        ("tivoo__SetSleepMode", {"value": False}, "set_sleep_mode"),
+        ("tivoo__ShowDesign", {"number": 2}, "show_design"),
+        ("tivoo__ShowEffects", {"number": 2}, "show_effects"),
+        ("tivoo__ShowVisualization", {"number": 1}, "show_visualization"),
+        ("tivoo__ShowGame", {"index": 2}, "show_game"),
+        ("tivoo__GameControl", {"value": "go"}, "game_control"),
         ("tivoo__ShowImage", {"file": "still.png", "time": 55}, "show_image"),
         ("tivoo__PlayAnimation", {"file": "motion.gif", "time": 55}, "play_animation"),
     ]
