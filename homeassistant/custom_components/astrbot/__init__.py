@@ -2,19 +2,20 @@
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_API_KEY_ID,
     CONF_BASE_URL,
     DOMAIN,
+    SERVICE_NEW_CONVERSATION,
     SESSION_STORE_KEY,
     SESSION_STORE_VERSION,
 )
 from .session import AstrBotSessionManager
 
-PLATFORMS = [Platform.CONVERSATION]
+PLATFORMS = [Platform.CONVERSATION, Platform.BUTTON]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -30,14 +31,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "session_manager": session_manager
     }
+
+    async def async_handle_new_conversation(_call: ServiceCall) -> None:
+        """Discard the current AstrBot context for the next user turn."""
+        await session_manager.async_start_new_conversation()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_NEW_CONVERSATION,
+        async_handle_new_conversation,
+    )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload the Conversation platform without deleting its persisted session."""
+    """Unload AstrBot platforms and remove its service."""
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+
+    hass.services.async_remove(DOMAIN, SERVICE_NEW_CONVERSATION)
 
     domain_data = hass.data.get(DOMAIN)
     if domain_data is not None:

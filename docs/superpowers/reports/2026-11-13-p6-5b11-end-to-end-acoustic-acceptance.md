@@ -23,7 +23,7 @@ PASS 表示该行合同有足够的自动化或既有证据。GAP 表示软件�
 | ID | 状态 | 可复现证据与待验收条件 |
 |---|---|---|
 | P65-A01 | PASS | `test_p65b8_audio.py` 验证空闲不发送 PCM；[b8 板级报告][b8]记录空闲 AFE 帧持续增加。 |
-| P65-A02 | GAP | `test_p65b8_acceptance_tool.py` 覆盖 START→ACTIVITY→PCM，主机 C 用例覆盖预录；Satellite 回归验证同一 ingress 进入 WAKE_WORD 和 STT。待验证真人触发后的实际上传与首轮识别。 |
+| P65-A02 | PASS | `test_p65b8_acceptance_tool.py` 覆盖 START→ACTIVITY→PCM，主机 C 用例覆盖预录；Satellite 回归验证同一 ingress 进入 WAKE_WORD 和 STT。11-15 真人触发、实际上传、KWS/STT 和 AUX 回复两轮通过。 |
 | P65-A03 | GAP | `test_stage_watchdogs[wake_miss]`、`[wake_candidate_timeout]` 检查最近 speech_end 后 3 秒和首次 speech_start 后 15 秒，验证取消和 STOP；现场补测停止上传后 AFE 仍运行。 |
 | P65-A04 | GAP | `test_stage_watchdogs[command_timeout]` 验证从 WAKE_WORD_END 命中起算；`test_confirmed_wake_replaces_active_turn` 验证连续 PCM、超过 5 秒的清理延迟、从新 STT_START 起算及空命令超时。现场补测连续说出唤醒词和命令。 |
 | P65-A05 | PASS | `test_normal_pipeline_completion_closes_all_owned_streams` 的三个 endpoint 用例验证 Wyoming 的 `requires_external_vad`、起点和端点。P7A 的 `test_config.py`、`test_stt.py` 分别验证 300 秒默认值和按配置限制请求。 |
@@ -35,9 +35,40 @@ PASS 表示该行合同有足够的自动化或既有证据。GAP 表示软件�
 | P65-A11 | GAP | 播放期模拟 Detection 触发匹配 ID 的 AUDIO_STOP，新轮从 STT 接收有序 PCM；[b9 NAS 记录][b9]有真实模型对直接注入音频的命中和未命中。待验证真人经 INMP441 唤醒、实际 DAC 停音和新命令识别。 |
 | P65-A12 | GAP | 模拟 Detection 已覆盖首个 plain 前、plain 后、TTS 生成中和播放期；[b6 报告][b6]独立验证真实 AstrBot Stop。待验证真实音频触发与运行中四个阶段的组合。 |
 | P65-A13 | BLOCKED | [b10 报告][b10]提供 TX 参考计数，实际 TX→扬声器→麦克风延迟、回声及含唤醒词 TTS 样本待采集。 |
-| P65-A14 | GAP | [b10 报告][b10]记录数字 I²S TX/RX/AEC 与 SPP 对照、RX overrun 和参考错位；待验证 PCM5102 AUX 发声时 RX/AEC/VAD、MIC 上传、KWS 和 7777 SPP 同时工作。 |
+| P65-A14 | GAP | [b10 报告][b10]记录数字 I²S TX/RX/AEC 与 SPP 对照、RX overrun 和参考错位；现场已确认 PCM5102 AUX 清晰出声、AFE 持续运行和播放中 SPP 回包。待验证同一场景中的真实 MIC 上传与 KWS。 |
 | P65-A15 | GAP | follow-up 回归检查 RUN_END/resource_ready 不开窗口、completed 后 7.9 秒内进 STT、8 秒停止 ingress、忽略旧 PCM、新 session 重走 WAKE_WORD；待用真实播放末尾和网络帧复核。 |
 | P65-A16 | PASS | `test_interruption_suppresses_late_tts_events`、follow-up 回归及 `test_p65b10_output.py` 覆盖旧 TTS_PLAY、AUDIO_STATE 和 AUDIO_STOP 对新代次的隔离。 |
+
+## 2026-11-14 现场补测
+
+- NAS 上 HA、AstrBot 与 Sherpa 容器运行，HA 使用配置了 `tivoo-wake` 的 AstrBot Pipeline。ESP32 的 HELLO 报告固件 `0.1.0+e7ca515`。本轮沿用现有部署。
+- 独立下发 NAS 已归档的 32 kHz 单声道 TTS MP3。现场确认 Tivoo AUX 出声清晰。ESP32 首次 `completed` 用时 5,018.0 ms，播放中收到 SPP 状态回包。另一次匹配 STOP 在 67.4 ms 内收到 `stopped`，该值为协议时延，实际停音尚未确认。
+- 测试时 AFE 帧持续增加。两轮完整播放 TX underruns 为 0，PCM 输出队列高水位 5,120 样本，参考峰值 19,326。测试期间 RX overrun、参考 underrun/错位和 PCM drops 保持为 0。累计 DMA missed EOF 保持 313。全双工合同仍缺同一场景下的真实 MIC 上传与 KWS。
+- 现场说出「大肥鱼，告诉我今天是星期几」后未听到回复。串口复现 B8 的持续 `vad=speech`，AFE 帧仍正常增长，7778 未见持续 PCM 上传。现场暂无法断电核对 INMP441，待核对接线或测量 GPIO26/25/34 波形后复测。唤醒超时、打断、回声负样本和 follow-up 的声学闭环仍待验收。
+- 独立播放期间短停 HA 以释放 7777/7778，随后已重启并确认两路恢复连接。
+
+## 2026-11-15 真人唤醒与 TTS 延迟复测
+
+现场两次连续说「大肥鱼，告诉我今天是星期几」，两次都听到 Tivoo AUX 回复。ESP32 探针记录安静时 VAD 为静音、说话时产生 speech_start 并开启上传。两轮均由 Sherpa KWS 命中，STT 返回转写，TTS 生成 PCM，ESP32 播放至 completed。两轮 TX underruns 均为 0。P65-A02 的真人首轮正向链路通过。
+
+| 测量区间 | 第 1 轮 | 第 2 轮 |
+|---|---:|---:|
+| VAD speech_start → KWS 命中 | 1.21 s | 1.30 s |
+| KWS 命中 → STT 返回 | 2.99 s | 3.28 s |
+| STT 返回 → HA 发出 TTS_PLAY | 6.41 s | 9.37 s |
+| TTS_PLAY → ESP32 AUDIO_STATE playing | 2.73 s | 1.15 s |
+| KWS 命中 → AUDIO_STATE playing | 12.13 s | 13.80 s |
+| VAD speech_start → AUDIO_STATE playing（ESP32 单调时钟） | 13.32 s | 15.10 s |
+
+KWS 和 STT 使用 NAS 的 Sherpa 请求完成日志，TTS_PLAY 和 playing 使用同一 NAS 的 7778 抓包时间。playing 表示进入数字播放路径，实际 AUX 首声未采集同步录音，现场听测确认两轮确实出声。VAD speech_start 是设备检测到语音的时刻。两条 KWS 日志请求 ID 为 `03f8a462da39` 和 `5de95107887c`，对应 playback ID 为 `5831175a-39c4-42bd-9296-203718d3c712` 和 `34a4e919-ca31-4eb5-a3d1-fd03f62b39e9`。Sherpa 两轮首 PCM 均为 0.988 s（从 TTS 请求起算）。STT 返回到 TTS_PLAY 是两轮最大的等待区间，本轮未获取 AstrBot 首个 plain 的单独时间。打断与 follow-up 单独验收。
+
+## 2026-11-15 首声延迟分段复测
+
+在生产 HA 2026.11.0 的 AstrBot Pipeline 以 WebSocket 注入同一段现场录音，并用 NAS 抓包核对 AstrBot 可朗读的 SSE `plain`（排除 `chain_type=reasoning`）和 HA Pipeline 事件。单独的文本输入测得，星期短问句从 intent-start 到首个可朗读 plain 为 5.75 秒，到 tts-end 为 7.11 秒，期间未触发流式门槛。三句介绍黄山从 intent-start 到首个可朗读 plain 为 13.40 秒，HA 在 13.66 秒发出 `tts_start_streaming`。HA 2026.11.0 以超过 60 字符或已有正文后触发工具调用来启动流式 TTS。后续一句介绍黄山校验得 3.95 秒到首正文、4.13 秒到流式启动，开放问答仍走 AstrBot。
+
+生产 AstrBot 统计显示原链路使用 `agnes/agnes-2.5-flash`。同一短问句单独对照了 Gemini 2.5、3.1、3.5 Flash Lite 和精简 WebChat 默认提示的方案，首正文时间波动且分布重叠，因此保留生产模型和提示配置。
+
+生产 HA 通过原生会话句子触发部署 `tivoo_local_weekday`、`tivoo_local_date`、`tivoo_local_time`。使用 HA 的 Asia/Shanghai 时区，精确匹配中文问法，并覆盖录音中实测到的唤醒词残留「大飞鱼」。文字复测确认三组查询本地命中。现场录音重放经生产 Pipeline 的 KWS、STT、TTS Proxy，匹配星期问句前两轮耗时 11.80、11.67 秒至首个 HTTP 音频响应，部署后三轮耗时 4.64、4.57、4.71 秒至收到 2048 字节音频，三轮均为热缓存。时间查询新文本一次生成约 1.22 秒。重放未经过物理 Tivoo，现场 7778 抓包窗口内观察到 wake_miss，未得到新配置的 AUX 首声和 completed。
 
 ## 现场补测步骤
 

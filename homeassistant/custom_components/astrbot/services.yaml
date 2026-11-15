@@ -1,0 +1,6 @@
+new_conversation:
+  name: Start new conversation
+  description: >-
+    Discard the current short-term AstrBot conversation context. The next user
+    turn starts with a new AstrBot session; Home Assistant configuration and
+    long-term learned data are unchanged.

@@ -19,8 +19,9 @@
 5. [P3 AstrBot Conversation 合同矩阵](2026-11-09-p3-astrbot-conversation-contract-matrix.md)：稳定 session_id、SSE reader、同 owner session Stop 和串行化约束。
 6. [AstrBot HTTP OpenAPI 推理取消与 SSE 终止规格](2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)：Stop 身份、请求顺序、complete/end 语义和真实 API 测试边界。
 7. [P6.5 b0–b5 前置验证报告](../reports/2026-11-11-ha-cancellation-preflight-report.md)：HA TTSCache producer、HTTP consumer、Wyoming writer 和 P7A request 的 GAP 证据。
+8. [Tivoo 表情状态机规格](2026-11-14-tivoo-expression-state-machine-design.md)及[合同矩阵](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)：只消费本矩阵既有 MIC、Pipeline、KWS 和 AUDIO_STATE 生命周期做显示仲裁，不修改音频时序、打断权或取消语义。
 
-冲突时，本矩阵只覆盖新增音频生命周期、打断判定和 P6.5 新增消息；其他既有字段、端口、格式和服务仍以对应上位合同为准。
+冲突时，本矩阵继续作为音频生命周期、打断判定和 P6.5 新增消息的权威；Tivoo 表情状态机文档只覆盖显示状态、优先级和屏幕门控。其他既有字段、端口、格式和服务仍以对应上位合同为准。
 
 ## 2. 总体决策
 

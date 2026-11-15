@@ -277,7 +277,7 @@ data: {"type":"end","data":""}
 | `user_message_saved` | 忽略正文之外的保存元数据 |
 | `plain` 且 `chain_type` 为空/普通文本 | 将 `data` 字符串作为可见回答增量 |
 | `plain` 且 `chain_type=reasoning` | 不加入 ChatLog、不交给 TTS |
-| `plain` 且 `chain_type=tool_call` 或 `tool_call_result` | 内部工具调用记录，不加入 ChatLog、不交给 TTS |
+| `plain` 且 `chain_type=tool_call` 或 `tool_call_result` | 内部工具调用记录，不加入 ChatLog、不交给 TTS；[Tivoo 表情状态机](2026-11-14-tivoo-expression-state-machine-design.md)可将其作为仅内部 phase 信号观察，但不得改变本合同的可见文本语义 |
 | `agent_stats` | 只作为诊断元数据；不当作压缩事件，不送入 ChatLog |
 | `message_saved` | 忽略保存元数据 |
 | `run_started` | 忽略 Agent 运行开始状态；不得写入 ChatLog |
