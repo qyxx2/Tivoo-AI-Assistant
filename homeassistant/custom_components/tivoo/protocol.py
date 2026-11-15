@@ -6,6 +6,8 @@ formats are adapted from solar2ain/tivoo-control (MIT), pinned in UPSTREAM.md.
 
 from collections.abc import Sequence
 
+from . import device_commands
+
 ANIMATION_CHUNK_SIZE = 200
 SCREEN_SIZE = 16
 MAX_TIVOO_PACKET_SIZE = 4608
@@ -126,6 +128,39 @@ def encode_command(command) -> tuple[bytes, ...]:
     elif name == "set_volume":
         volume = _integer(data["volume"], "volume", 0, 100)
         payloads = [bytes((0x08, volume * 15 // 100))]
+    elif name == "set_screen_power":
+        payloads = [device_commands.screen_power_payload(data["value"])]
+    elif name == "set_playstate":
+        payloads = list(device_commands.playstate_payloads(data["value"]))
+    elif name == "show_clock":
+        payloads = list(
+            device_commands.clock_payloads(
+                data["clock"],
+                twentyfour=data.get("twentyfour", True),
+                weather=data.get("weather", False),
+                temp=data.get("temp", False),
+                calendar=data.get("calendar", False),
+                color=data.get("color"),
+                hot=data.get("hot"),
+            )
+        )
+    elif name == "set_datetime":
+        payloads = [device_commands.datetime_payload(data.get("value"))]
+    elif name == "set_weather":
+        payloads = list(
+            device_commands.weather_payloads(
+                data["temperature"], data["condition"], data.get("unit", "C")
+            )
+        )
+    elif name == "set_light":
+        payloads = [
+            device_commands.light_payload(
+                brightness=data["brightness"],
+                color=data.get("color"),
+                effect=data.get("effect"),
+                power=data.get("power", True),
+            )
+        ]
     elif name == "start_countdown":
         countdown = data["countdown"]
         if (
@@ -142,6 +177,40 @@ def encode_command(command) -> tuple[bytes, ...]:
         payloads = [bytes((0x72, 0x03, 0x01, minutes, seconds))]
     elif name == "stop_countdown":
         payloads = [bytes((0x72, 0x03, 0x00, 0x00, 0x00))]
+    elif name == "show_lyrics":
+        payloads = [device_commands.lyrics_payload()]
+    elif name == "show_scoreboard":
+        payloads = [
+            device_commands.scoreboard_payload(
+                data.get("player1", 0), data.get("player2", 0)
+            )
+        ]
+    elif name == "set_timer":
+        payloads = [device_commands.timer_payload(data["value"])]
+    elif name == "set_noise_meter":
+        payloads = [device_commands.noise_payload(data["value"])]
+    elif name == "set_alarm":
+        payloads = [device_commands.alarm_payload(**data)]
+    elif name == "set_memorial":
+        payloads = [device_commands.memorial_payload(**data)]
+    elif name == "set_audio_source":
+        payloads = list(
+            device_commands.audio_source_payloads(
+                data["value"], frequency=data.get("frequency")
+            )
+        )
+    elif name == "set_sleep_mode":
+        payloads = [device_commands.sleep_payload(**data)]
+    elif name == "show_design":
+        payloads = list(device_commands.design_payloads(data["number"]))
+    elif name == "show_effects":
+        payloads = [device_commands.effects_payload(data["number"])]
+    elif name == "show_visualization":
+        payloads = [device_commands.visualization_payload(data["number"])]
+    elif name == "show_game":
+        payloads = [device_commands.game_payload(data.get("index"))]
+    elif name == "game_control":
+        payloads = list(device_commands.game_control_payloads(data["value"]))
     elif name == "show_image" and len(data.get("frames", [])) == 1:
         image = encode_image_frame(data["frames"][0], timecode=0)
         payloads = [bytes.fromhex("44 00 0A 0A 04") + image]

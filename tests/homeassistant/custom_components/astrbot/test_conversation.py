@@ -100,13 +100,15 @@ async def test_config_entry_registers_and_unloads_conversation_agent(
     assert conversation.async_get_agent(hass, "conversation.astrbot") is None
 
 
+@pytest.mark.parametrize("native_followup", [False, True])
 async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_result(
-    hass, enable_custom_integrations, aiohttp_client
+    hass, enable_custom_integrations, aiohttp_client, native_followup
 ):
     enable_socket()
     first_delta_seen = asyncio.Event()
     allow_first_response_to_finish = asyncio.Event()
     request_bodies = []
+    second_reply = "第二轮回答？" if native_followup else "第二轮回答"
 
     async def send_event(response, payload):
         data = json.dumps(payload, ensure_ascii=False)
@@ -133,7 +135,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
             await allow_first_response_to_finish.wait()
             await send_event(response, {"type": "plain", "data": "第二段"})
         else:
-            await send_event(response, {"type": "plain", "data": "第二轮回答"})
+            await send_event(response, {"type": "plain", "data": second_reply})
         await send_event(response, {"type": "end", "data": ""})
         await response.write_eof()
         return response
@@ -179,6 +181,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
     first_result = first_task.result()
 
     assert isinstance(first_result, conversation.ConversationResult)
+    assert first_result.continue_conversation is True
     assert first_result.conversation_id == "ha-conversation-one"
     assert (
         first_result.response.as_dict()["speech"]["plain"]["speech"] == "第一段第二段"
@@ -201,7 +204,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
         context=Context(user_id="ha-user-id"),
         conversation_id="ha-conversation-two",
         device_id="another-device",
-        satellite_id="another-satellite",
+        satellite_id=None,
         language="en-US",
         agent_id="conversation.astrbot",
         extra_system_prompt="also must not be forwarded",
@@ -210,14 +213,15 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
         hass, second_input, on_delta, chat_logs
     )
 
+    assert second_result.continue_conversation is native_followup
     assert second_result.conversation_id == "ha-conversation-two"
-    assert second_result.response.as_dict()["speech"]["plain"]["speech"] == "第二轮回答"
+    assert second_result.response.as_dict()["speech"]["plain"]["speech"] == second_reply
     second_messages = [
         item for item in chat_logs[1].content if item.role in {"user", "assistant"}
     ]
     assert [item.role for item in second_messages] == ["user", "assistant"]
     assert second_messages[0].content == SECOND_MESSAGE
-    assert second_messages[1].content == "第二轮回答"
+    assert second_messages[1].content == second_reply
 
     assert len(request_bodies) == 2
     for body, message in zip(
@@ -339,6 +343,7 @@ async def test_two_requests_on_one_session_are_serialized(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize("after_plain", [False, True])
 @pytest.mark.parametrize(
     ("stop_status", "expect_warning"),
     [(200, False), (403, True), ("timeout", True)],
@@ -351,11 +356,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
     monkeypatch,
     stop_status,
     expect_warning,
+    after_plain,
 ):
     enable_socket()
     if stop_status == "timeout":
         monkeypatch.setattr(astrbot_conversation, "_STOP_TIMEOUT", 0.01)
     first_delta_seen = asyncio.Event()
+    session_confirmed = asyncio.Event()
+    received_text = []
     release_chat = asyncio.Event()
     chat_transport = []
     chat_bodies = []
@@ -378,7 +386,9 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
             {"type": "session_id", "data": None, "session_id": body["session_id"]},
         )
         if len(chat_bodies) == 1:
-            await send_event(response, {"type": "plain", "data": "尚未完成"})
+            await send_event(response, {"type": "run_started", "data": None})
+            if after_plain:
+                await send_event(response, {"type": "plain", "data": "尚未完成"})
             await release_chat.wait()
             try:
                 await send_event(response, {"type": "plain", "data": "不应出现"})
@@ -415,6 +425,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
     client = await aiohttp_client(app)
     base_url = str(client.make_url("/")).rstrip("/")
     entry, _ = await _setup_agent(hass, base_url)
+    manager = hass.data[DOMAIN][entry.entry_id]["session_manager"]
+    original_confirm = manager.async_confirm_session
+
+    async def confirm_session(session_id):
+        await original_confirm(session_id)
+        session_confirmed.set()
+
+    monkeypatch.setattr(manager, "async_confirm_session", confirm_session)
     chat_logs = []
     user_input = conversation.ConversationInput(
         text="请取消我",
@@ -426,19 +444,25 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
         agent_id="conversation.astrbot",
         extra_system_prompt=None,
     )
+
+    def observe_delta(_log, delta):
+        if content := delta.get("content"):
+            received_text.append(content)
+            first_delta_seen.set()
+
     task = hass.async_create_task(
         _run_assist_conversation(
             hass,
             user_input,
-            lambda _log, delta: (
-                first_delta_seen.set() if delta.get("content") == "尚未完成" else None
-            ),
+            observe_delta,
             chat_logs,
         )
     )
 
     try:
-        await asyncio.wait_for(first_delta_seen.wait(), timeout=5)
+        await asyncio.wait_for(
+            (first_delta_seen if after_plain else session_confirmed).wait(), timeout=5
+        )
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=5)
@@ -448,6 +472,7 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
+    assert received_text == (["尚未完成"] if after_plain else [])
     assert len(chat_bodies) == 1
     assert chat_bodies[0]["username"] == "api_key:key-123"
     assert len(stop_calls) == 1
@@ -713,6 +738,7 @@ async def test_incomplete_sse_stream_is_stopped_and_never_returns_success(
             {"type": "session_id", "data": None, "session_id": body["session_id"]},
         )
         await send_event(response, {"type": "plain", "data": "不完整回答"})
+        await send_event(response, {"type": "complete", "data": None})
         await response.write_eof()
         return response
 

@@ -1,15 +1,19 @@
-"""Bounded microphone-session buffering for the P6 transport contract."""
+"""Bounded microphone ingress and PCM subscriptions."""
 
 import asyncio
 import logging
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 
 from .diagnostics import MAX_MIC_PCM_PAYLOAD
 
 _LOGGER = logging.getLogger("custom_components.tivoo.audio_session")
 PCM_QUEUE_DEPTH = 16
+PREROLL_BYTES = 32_000
+HANDOFF_BYTES = 480_000
 
 
 @dataclass(eq=False, slots=True)
@@ -20,7 +24,10 @@ class _MicSession:
     )
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     data_ready: asyncio.Event = field(default_factory=asyncio.Event)
-    iterator_claimed: bool = False
+    persistent: bool = False
+    history: deque[tuple[int, bytes]] = field(default_factory=deque)
+    tail: int = 0
+    cursors: dict[object, int] = field(default_factory=dict)
 
 
 StopSender = Callable[[str, str], Awaitable[None]]
@@ -41,7 +48,7 @@ def _require_uuid(payload: dict, field_name: str) -> str:
 
 
 class AudioSessionManager:
-    """Keep one active MIC session and at most 16 unconsumed PCM chunks."""
+    """Manage one upload with a bounded history or the legacy P6 queue."""
 
     def __init__(self, stop_sender: StopSender | None = None) -> None:
         self._stop_sender = stop_sender
@@ -49,6 +56,9 @@ class AudioSessionManager:
         self._iterators: set[_MicSession] = set()
         self._interrupted_handler: InterruptedHandler | None = None
         self._shutdown = False
+        self.overflow_count = 0
+        self.on_activity: Callable[[str, str], None] | None = None
+        self.on_end: Callable[[str, str], None] | None = None
 
     @property
     def active_session_id(self) -> str | None:
@@ -62,9 +72,13 @@ class AudioSessionManager:
         """Return the queued chunk count for the active session."""
         if self._active_session is None:
             return 0
+        if self._active_session.persistent:
+            return len(self._active_session.history)
         return self._active_session.queue.qsize()
 
-    async def async_start_session(self, payload: dict) -> None:
+    async def async_start_session(
+        self, payload: dict, *, persistent: bool = False
+    ) -> None:
         """Validate and create the only active network microphone session."""
         if self._shutdown:
             raise ValueError("audio session manager is shut down")
@@ -107,7 +121,7 @@ class AudioSessionManager:
         if any(session.session_id == session_id for session in self._iterators):
             raise ValueError("microphone session_id has already been used")
 
-        self._active_session = _MicSession(session_id)
+        self._active_session = _MicSession(session_id, persistent=persistent)
 
     async def async_push_pcm(self, session_id: str, data: bytes) -> None:
         """Queue one opaque binary PCM chunk for the matching active session."""
@@ -123,10 +137,15 @@ class AudioSessionManager:
         if session is None or session.session_id != session_id:
             return
 
+        if session.persistent:
+            await self._push_ingress(session, data)
+            return
+
         try:
             session.queue.put_nowait(data)
             session.data_ready.set()
         except asyncio.QueueFull:
+            self.overflow_count += 1
             _LOGGER.warning("MIC session queue full; stopping session %s", session_id)
             await self._finish_session(
                 session, "queue_full", notify_device=True, clear=True
@@ -161,11 +180,148 @@ class AudioSessionManager:
         session = self._active_session
         if session is None or session.session_id != session_id:
             raise ValueError("microphone session is not active")
-        if session.iterator_claimed:
+        if session in self._iterators:
             raise ValueError("microphone session already has an audio iterator")
-        session.iterator_claimed = True
+        if session.persistent:
+            raise ValueError("persistent MIC requires an audio subscription")
         self._iterators.add(session)
         return self._iterate_session(session)
+
+    def _ingress(self, session_id: str) -> _MicSession:
+        session = self._active_session
+        if (
+            session is None
+            or session.session_id != session_id
+            or not session.persistent
+        ):
+            raise ValueError("persistent microphone session is not active")
+        return session
+
+    def ingress_offset(self, session_id: str) -> int:
+        """Return the next PCM byte offset on the local ingress timeline."""
+        return self._ingress(session_id).tail
+
+    async def async_handle_activity(self, payload: dict) -> None:
+        """Validate and route speech transitions on the matching ingress."""
+        session_id = _require_uuid(payload, "session_id")
+        state = payload.get("state")
+        uptime_ms = payload.get("uptime_ms")
+        if state not in ("speech_start", "speech_end"):
+            raise ValueError("invalid MIC_ACTIVITY state")
+        if type(uptime_ms) is not int or uptime_ms < 0:
+            raise ValueError("MIC_ACTIVITY uptime_ms must be a non-negative integer")
+        session = self._active_session
+        if (
+            session is not None
+            and session.persistent
+            and session.session_id == session_id
+            and self.on_activity is not None
+        ):
+            self.on_activity(session_id, state)
+
+    async def async_disconnect(self) -> None:
+        """Release the upload owned by the disconnected diagnostic socket."""
+        if (session := self._active_session) is not None:
+            await self._finish_session(
+                session, "disconnected", notify_device=False, clear=True
+            )
+
+    async def _push_ingress(self, session: _MicSession, data: bytes) -> None:
+        new_tail = session.tail + len(data)
+        if (
+            new_tail - min(session.cursors.values(), default=session.tail)
+            > HANDOFF_BYTES
+        ):
+            self.overflow_count += 1
+            _LOGGER.warning(
+                "MIC ingress overflow; stopping session %s", session.session_id
+            )
+            await self._finish_session(
+                session, "handoff_overflow", notify_device=True, clear=True
+            )
+            return
+        session.history.append((session.tail, data))
+        session.tail = new_tail
+        self._trim_ingress(session)
+        session.data_ready.set()
+
+    @staticmethod
+    def _trim_ingress(session: _MicSession) -> None:
+        # Retain the full bounded window for delayed Detection. A pinned
+        # subscription explicitly fails before unread data can be evicted.
+        cutoff = max(0, session.tail - HANDOFF_BYTES)
+        while session.history:
+            offset, data = session.history[0]
+            if offset >= cutoff:
+                break
+            session.history.popleft()
+            if offset + len(data) > cutoff:
+                session.history.appendleft((cutoff, data[cutoff - offset :]))
+
+    @staticmethod
+    def handoff_start(detection_offset: int) -> int:
+        """Return the ingress offset one second before the detection chunk."""
+        return max(0, detection_offset - PREROLL_BYTES)
+
+    def handoff(
+        self, session_id: str, detection_offset: int
+    ) -> AbstractAsyncContextManager[AsyncIterator[bytes]]:
+        """Pin pre-roll and subsequent PCM at its ingress offsets."""
+        session = self._ingress(session_id)
+        if not 0 <= detection_offset <= session.tail or detection_offset % 2:
+            raise ValueError("invalid MIC detection offset")
+        return self.audio_subscription(
+            session_id, start=self.handoff_start(detection_offset)
+        )
+
+    @asynccontextmanager
+    async def audio_subscription(
+        self,
+        session_id: str,
+        *,
+        start: int | None = None,
+        consumer: object | None = None,
+    ) -> AsyncIterator[AsyncIterator[bytes]]:
+        """Open an independently closable PCM cursor."""
+        session = self._ingress(session_id)
+        offset = session.tail if start is None else start
+        if (
+            not max(0, session.tail - HANDOFF_BYTES) <= offset <= session.tail
+            or offset % 2
+        ):
+            raise ValueError("MIC ingress offset outside the retained window")
+        cursor = object() if consumer is None else consumer
+        session.cursors[cursor] = offset
+        stream = self._iterate_ingress(session, cursor)
+        try:
+            yield stream
+        finally:
+            await stream.aclose()
+            session.cursors.pop(cursor, None)
+
+    def release_subscription(self, session_id: str, consumer: object) -> None:
+        """Stop retaining unread PCM once the consumer leaves its audio stage."""
+        session = self._active_session
+        if session is not None and session.session_id == session_id:
+            session.cursors.pop(consumer, None)
+            session.data_ready.set()
+
+    @staticmethod
+    async def _iterate_ingress(
+        session: _MicSession, cursor: object
+    ) -> AsyncIterator[bytes]:
+        while cursor in session.cursors:
+            offset = session.cursors[cursor]
+            for start, data in session.history:
+                if start + len(data) > offset:
+                    session.cursors[cursor] = start + len(data)
+                    yield data[offset - start :]
+                    break
+            else:
+                if session.ended.is_set():
+                    return
+                session.data_ready.clear()
+                await session.data_ready.wait()
 
     async def async_shutdown(self) -> None:
         """Close active and already-created iterators during config-entry unload."""
@@ -214,6 +370,7 @@ class AudioSessionManager:
         if self._active_session is session:
             self._active_session = None
         if clear:
+            session.history.clear()
             while not session.queue.empty():
                 try:
                     session.queue.get_nowait()
@@ -221,6 +378,8 @@ class AudioSessionManager:
                     break
         session.ended.set()
         session.data_ready.set()
+        if session.persistent and self.on_end is not None:
+            self.on_end(session.session_id, reason)
 
         if notify_device and self._stop_sender is not None:
             try:

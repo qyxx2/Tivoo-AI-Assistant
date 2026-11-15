@@ -155,3 +155,345 @@ play_animation:
           step: 1
           mode: box
           unit_of_measurement: ms
+
+set_screen_power:
+  name: Set screen power
+  description: Turn the Tivoo display on or off.
+  fields:
+    value:
+      name: Power
+      required: true
+      selector:
+        boolean:
+
+set_playstate:
+  name: Set play state
+  description: Play, pause, or select the previous or next track.
+  fields:
+    value:
+      name: Action
+      required: true
+      selector:
+        select:
+          options: [previous, pause, play, next]
+
+show_clock:
+  name: Show clock
+  description: Show a Tivoo clock style.
+  fields:
+    clock:
+      name: Clock style
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 6
+          mode: slider
+    twentyfour:
+      name: 24-hour time
+      selector:
+        boolean:
+    weather:
+      name: Show weather
+      selector:
+        boolean:
+    temp:
+      name: Show temperature
+      selector:
+        boolean:
+    calendar:
+      name: Show calendar
+      selector:
+        boolean:
+    color:
+      name: Color
+      selector:
+        text:
+    hot:
+      name: Hot indicator
+      selector:
+        boolean:
+
+set_datetime:
+  name: Set date/time
+  description: Synchronize Tivoo date and time.
+  fields:
+    value:
+      name: ISO date/time
+      selector:
+        text:
+
+set_weather:
+  name: Set weather
+  description: Set temperature and Tivoo weather code.
+  fields:
+    temperature:
+      name: Temperature
+      required: true
+      selector:
+        number:
+          step: any
+    condition:
+      name: Condition code
+      description: Supported codes are 1, 3, 5, 6, 8 and 9.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 9
+          step: 1
+          mode: box
+    unit:
+      name: Unit
+      selector:
+        select:
+          options: [C, F]
+
+set_light:
+  name: Set light mode
+  description: Show Tivoo light mode on the 16x16 display.
+  fields:
+    brightness:
+      name: Brightness
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+    color:
+      name: Color
+      selector:
+        text:
+    effect:
+      name: Effect
+      selector:
+        number:
+          min: 0
+          max: 4
+    power:
+      name: Power
+      selector:
+        boolean:
+
+show_lyrics:
+  name: Show lyrics
+  description: Open the Tivoo lyrics view.
+
+show_scoreboard:
+  name: Show scoreboard
+  description: Open the Tivoo scoreboard and set both scores.
+  fields:
+    player1:
+      name: Player 1
+      selector:
+        number:
+          min: 0
+          max: 65535
+          mode: box
+    player2:
+      name: Player 2
+      selector:
+        number:
+          min: 0
+          max: 65535
+          mode: box
+
+set_timer:
+  name: Set timer
+  description: Start or stop the Tivoo built-in timer.
+  fields:
+    value:
+      name: Running
+      required: true
+      selector:
+        boolean:
+
+set_noise_meter:
+  name: Set noise meter
+  description: Start or stop the Tivoo noise-meter view.
+  fields:
+    value:
+      name: Running
+      required: true
+      selector:
+        boolean:
+
+set_alarm:
+  name: Set alarm
+  description: Configure or clear an alarm slot.
+  fields:
+    slot:
+      name: Slot
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    time:
+      name: Time
+      description: HH:MM; omit to clear the slot.
+      selector:
+        text:
+    weekdays:
+      name: Weekdays
+      selector:
+        select:
+          multiple: true
+          options: [sun, mon, tue, wed, thu, fri, sat]
+    frequency:
+      name: FM frequency
+      selector:
+        number:
+          min: 64
+          max: 108
+          step: 0.1
+    volume:
+      name: Volume
+      selector:
+        number:
+          min: 0
+          max: 100
+
+set_memorial:
+  name: Set memorial
+  description: Configure or clear a memorial/reminder slot.
+  fields:
+    slot:
+      name: Slot
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    value:
+      name: ISO date/time
+      selector:
+        text:
+    text:
+      name: Text
+      selector:
+        text:
+
+set_audio_source:
+  name: Set audio source
+  description: Select Tivoo audio source and optional FM frequency.
+  fields:
+    value:
+      name: Source
+      required: true
+      selector:
+        select:
+          options: [bluetooth, fm, linein, sdcard, usb]
+    frequency:
+      name: FM frequency
+      selector:
+        number:
+          min: 64
+          max: 108
+          step: 0.1
+
+set_sleep_mode:
+  name: Set sleep mode
+  description: Configure or stop Tivoo sleep mode.
+  fields:
+    value:
+      name: Enabled
+      required: true
+      selector:
+        boolean:
+    time:
+      name: Minutes
+      selector:
+        number:
+          min: 0
+          max: 255
+    mode:
+      name: Mode
+      selector:
+        number:
+          min: 0
+          max: 255
+    frequency:
+      name: FM frequency
+      selector:
+        number:
+          min: 64
+          max: 108
+          step: 0.1
+    volume:
+      name: Volume
+      selector:
+        number:
+          min: 0
+          max: 100
+    color:
+      name: Color
+      selector:
+        text:
+    brightness:
+      name: Brightness
+      selector:
+        number:
+          min: 0
+          max: 100
+
+show_design:
+  name: Show design
+  description: Show Tivoo design channel 0-3.
+  fields:
+    number:
+      name: Design
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 3
+
+show_effects:
+  name: Show effects
+  description: Show a Tivoo effects-channel index.
+  fields:
+    number:
+      name: Effect index
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+
+show_visualization:
+  name: Show visualization
+  description: Show a Tivoo visualization index.
+  fields:
+    number:
+      name: Visualization index
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+
+show_game:
+  name: Show game
+  description: Open Tivoo game mode, optionally selecting a game index.
+  fields:
+    index:
+      name: Game index
+      selector:
+        number:
+          min: 0
+          max: 127
+          mode: box
+
+game_control:
+  name: Game control
+  description: Send a control to the active Tivoo game.
+  fields:
+    value:
+      name: Action
+      required: true
+      selector:
+        select:
+          options: [go, left, right, up, down, ok]

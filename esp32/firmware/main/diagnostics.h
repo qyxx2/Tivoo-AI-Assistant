@@ -28,7 +28,16 @@ typedef bool (*tivoo_diagnostics_message_handler_t)(
 typedef void (*tivoo_diagnostics_mic_capture_stop_handler_t)(
     const char *session_id, const char *reason);
 
+#define TVIO_TYPE_MIC_SESSION_START 0x20U
+#define TVIO_TYPE_MIC_PCM 0x21U
+#define TVIO_TYPE_MIC_SESSION_END 0x22U
+#define TVIO_TYPE_MIC_ACTIVITY 0x24U
+
 esp_err_t tivoo_diagnostics_start(void);
+void tivoo_diagnostics_enable_mic_activity(void);
+uint32_t tivoo_diagnostics_mic_generation(void);
+bool tivoo_diagnostics_send_mic(
+    uint32_t generation, uint8_t type, const void *payload, size_t size);
 void tivoo_diagnostics_stop(void);
 
 bool tivoo_diagnostics_send_message(

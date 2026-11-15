@@ -13,3 +13,5 @@ SESSION_STORE_KEY = "astrbot_session"
 SESSION_STORE_VERSION = 1
 SESSION_DATA_VERSION = 1
 SESSION_TTL = timedelta(hours=24)
+
+SERVICE_NEW_CONVERSATION = "new_conversation"

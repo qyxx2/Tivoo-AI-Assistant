@@ -1,6 +1,6 @@
-# Tivoo ESP32 firmware (P5b4)
+# Tivoo ESP32 firmware
 
-This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; it does not run the Tivoo display codec or any audio pipeline.
+This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; Home Assistant owns the Tivoo display codec. The firmware runs the P6.5b8 microphone frontend and the P6.5b10 streaming MP3 playback path.
 
 ## Local build
 
@@ -18,9 +18,15 @@ The default controller mode is Classic-only (`BR_EDR_ONLY`) with Bluedroid and S
 
 At CMake configure time, the firmware version is generated as `0.1.0+<git-short-sha>` from repository HEAD.
 
+## INMP441 capture
+
+The **Tivoo I2S audio** menu defaults to BCLK GPIO26, WS GPIO25, and INMP441 SD GPIO34. Tie L/R to GND to select the left slot. Power the microphone from 3.3 V with a common ground. Verify that SD has a pull-down of about 100 kΩ on the module or wiring because GPIO34 has no internal pull-down. The DAC data GPIO defaults to unused for this capture batch.
+
+Capture uses I2S0 in Philips stereo mode at 32 kHz with 32-bit slots. The frontend applies a low-pass filter before 2:1 decimation and runs the 16 kHz ESP-SR AEC and VAD. Existing local builds can select 240 MHz under **CPU frequency** in menuconfig. The frontend advertises `mic_activity_events` after successful initialization and requires a B7-compatible HA integration for that handshake.
+
 ## Startup and NVS ownership
 
-Startup order is diagnostics worker, `nvs_flash_init()`, Bluetooth Controller/Bluedroid/SPP, TCP listener manager, and then Wi-Fi Station. Bluetooth is never initialized when NVS initialization fails.
+Startup order is diagnostics worker, `nvs_flash_init()`, Bluetooth Controller/Bluedroid/SPP, I²S RX/AEC/VAD frontend, TCP listener manager, and then Wi-Fi Station. Bluetooth is never initialized when NVS initialization fails.
 
 There is deliberately no automatic `nvs_flash_erase()` fallback. An NVS initialization error stops startup and is reported through the existing 7778 diagnostics path. This preserves previously stored Bluetooth bonds instead of silently deleting the entire NVS partition.
 
@@ -194,7 +200,18 @@ Finally, disable the Wi-Fi AP or remove the ESP32 from the network. Both TCP ses
 
 The P5b4 report records each physical item separately from host-test results.
 
-## P6b5 HTTP audio resource fetch
+## P6.5b10 streaming playback
+
+The ESP32 plays `audio/mpeg` resources from HA TTS Proxy through the shared
+32 kHz I²S controller. The PCM5102 DIN input uses GPIO27 by default. Set
+`TIVOO_I2S_DOUT_GPIO` to -1 to disable playback on a microphone-only board.
+`AUDIO_STATE completed` follows TX DMA drain. A matching `AUDIO_STOP` cancels
+the HTTP stream and mutes queued output while the microphone keeps running.
+
+See the [b10 acceptance report](../../docs/superpowers/reports/2026-11-14-p6-5b10-esp32-playback.md)
+for the wiring and device tests.
+
+## P6b5 HTTP audio resource fetch (historical)
 
 P6b5 consumes `TTS_PLAY` (`playback_id`, absolute HTTP(S) `url`, and expected `mime_type`) on the accepted 7778 diagnostics session. Each resource GET runs in its own FreeRTOS task with a 1 KiB ESP-IDF HTTP receive buffer. `HTTP_EVENT_ON_DATA` forwards each bounded chunk to the registered `tivoo_audio_resource_reader_t`; the callback must consume or copy the bytes before it returns and must not retain the event buffer pointer. With no reader registered, bytes are drained and counted without being buffered.
 

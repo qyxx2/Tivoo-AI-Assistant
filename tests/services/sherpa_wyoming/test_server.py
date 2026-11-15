@@ -8,13 +8,15 @@ import time
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from sherpa_wyoming.config import ServiceConfig
 from sherpa_wyoming.models import ModelBundle
-from sherpa_wyoming.run import run_server
+from sherpa_wyoming.run import WyomingEventHandler, run_server
 from wyoming.asr import Transcribe
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.event import async_read_event, async_write_event
 from wyoming.info import Describe
+from wyoming.server import AsyncTcpServer
 from wyoming.tts import Synthesize, SynthesizeChunk, SynthesizeStart, SynthesizeStop
 from wyoming.wake import Detect
 
@@ -335,5 +337,155 @@ def test_describe_remains_responsive_while_tts_inference_is_blocked() -> None:
         finally:
             engine.release.set()
             await _stop_server(server_task)
+
+    asyncio.run(scenario())
+
+
+def test_slow_streaming_tts_backpressure_does_not_disconnect_client() -> None:
+    """Normal model backpressure must not be treated as a TCP disconnect."""
+
+    async def scenario() -> None:
+        class SlowFirstTts(FakeTts):
+            def generate(self, text, *, sid, speed, callback=None):
+                self.calls.append(text)
+                samples = np.zeros(256, dtype=np.float32)
+                if not self.started.is_set():
+                    self.started.set()
+                    self.release.wait(2)
+                callback(samples, 1.0)
+                return SimpleNamespace(samples=samples, sample_rate=22_050)
+
+        engine = SlowFirstTts()
+        port = _free_port()
+        config = ServiceConfig(wake_word_phrase="tivoo", host="127.0.0.1", port=port)
+        bundle = ModelBundle(
+            keyword_spotter=FakeKeywordSpotter(),
+            stt_recognizer=FakeRecognizer(),
+            tts_engine=engine,
+        )
+        task = asyncio.create_task(
+            run_server(
+                config,
+                keyword_generator=lambda *_: None,
+                model_loader=lambda _: bundle,
+            )
+        )
+        await _wait_for_server(port)
+        try:
+            reader, writer = await _connect(port)
+            sentence = "这是正常的句子。"
+            chunks = [sentence] * 10
+            await _send(writer, SynthesizeStart())
+            for chunk in chunks:
+                await _send(writer, SynthesizeChunk(text=chunk))
+            await _send(writer, Synthesize(text="".join(chunks)))
+            await _send(writer, SynthesizeStop())
+
+            await _receive(reader, "audio-start")
+            assert await asyncio.to_thread(engine.started.wait, 1)
+            await asyncio.sleep(1.2)
+            engine.release.set()
+
+            for _ in chunks:
+                await _receive(reader, "audio-chunk")
+            await _receive(reader, "synthesize-stopped")
+            assert engine.calls == chunks
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            engine.release.set()
+            await _stop_server(task)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("input_complete", [True, False])
+def test_tcp_eof_cancels_active_tts_with_finished_or_backlogged_input(
+    input_complete,
+) -> None:
+    """A finished text upload still has a cancellable audio response."""
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        rejected = asyncio.Event()
+        handlers = []
+
+        class CallbackEngine(FakeTts):
+            def generate(self, text, *, sid, speed, callback=None):
+                self.started.set()
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and not self.release.wait(0.01):
+                    if callback(np.zeros(256, dtype=np.float32), 0.5) == 0:
+                        loop.call_soon_threadsafe(rejected.set)
+                        break
+                return SimpleNamespace(samples=np.zeros(256), sample_rate=22_050)
+
+        class TrackingServer(AsyncTcpServer):
+            async def _handler_callback(self, factory, reader, writer):
+                def track(reader, writer):
+                    handler = factory(reader, writer)
+                    assert isinstance(handler, WyomingEventHandler)
+                    handlers.append(handler)
+                    return handler
+
+                await super()._handler_callback(track, reader, writer)
+
+        engine = CallbackEngine()
+        port = _free_port()
+        config = ServiceConfig(wake_word_phrase="tivoo", host="127.0.0.1", port=port)
+        bundle = ModelBundle(
+            keyword_spotter=FakeKeywordSpotter(),
+            stt_recognizer=FakeRecognizer(),
+            tts_engine=engine,
+        )
+        task = asyncio.create_task(
+            run_server(
+                config,
+                keyword_generator=lambda *_: None,
+                model_loader=lambda _: bundle,
+                server_factory=TrackingServer,
+            )
+        )
+        await _wait_for_server(port)
+        try:
+            reader, writer = await _connect(port)
+            await _send(writer, SynthesizeStart())
+            await _send(writer, SynthesizeChunk(text="停止合成。"))
+            if input_complete:
+                await _send(writer, Synthesize(text="停止合成。"))
+                await _send(writer, SynthesizeStop())
+            await _receive(reader, "audio-start")
+            assert await asyncio.to_thread(engine.started.wait, 1)
+            handler = handlers[-1]
+            session = handler._tts_session
+            request = handler._tts_task
+
+            async def wait_until(predicate):
+                async with asyncio.timeout(1):
+                    while not predicate():
+                        await asyncio.sleep(0.01)
+
+            if input_complete:
+                await wait_until(lambda: session._input_stopped)
+            else:
+                for _ in range(10):
+                    await _send(writer, SynthesizeChunk(text="积压。"))
+            writer.write_eof()
+            await asyncio.wait_for(rejected.wait(), 1.8)
+            await wait_until(request.done)
+            await wait_until(
+                lambda: handler._tts_session is None and handler.writer.is_closing()
+            )
+            assert request.cancelled()
+            assert session._input_task.done()
+            assert session._worker_task.done()
+            while event := await asyncio.wait_for(async_read_event(reader), 1):
+                assert event.type != "synthesize-stopped"
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            engine.release.set()
+            await _stop_server(task)
 
     asyncio.run(scenario())

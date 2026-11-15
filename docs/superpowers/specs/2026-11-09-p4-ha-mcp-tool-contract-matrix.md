@@ -3,6 +3,8 @@
 > 状态：P4 设计合同（待实现与集成验收）；本文只冻结已由现有规格、HA/AstrBot 源码或本机 Tivoo 协议实现证实的部分。凡现有代码没有定义的字段、资源引用格式和设备能力，明确标为待定，不以示例值冒充正式接口。
 >
 > 基线：Tivoo-AI-Assistant main 当前已实现 P3；Home Assistant Core 2026.11.0；AstrBot 4.29.4。P4 从 main 创建独立分支，本文不包含代码实现。
+>
+> **2026-11-14 当前状态说明：** 下文“七个 Tool / 首版 MVP / 可选扩展”是 P4 当时的阶段边界，不再代表当前运行时工具总量。P5/P6 已接通真实 ESP32→Tivoo SPP 传输后，依据本矩阵 §4 的 Tivoo 型号完整能力清单及固定上游实现，当前 custom_components/tivoo 已扩展为 27 个 Assist/MCP Tool；历史 P4 验收结论仍按当时范围保留。现行工具清单、上游版本和真机补充验收见 ../reports/2026-11-14-tivoo-mcp-spp-capability-expansion.md。
 
 ## 1. P4 目标与边界
 
@@ -186,6 +188,8 @@ AstrBot 4.29.4 的 MCP Client 对连接关闭错误有自动重连和一次重�
 
 本节是 **经 Tivoo 型号专用上游核实的完整能力覆盖清单**。其中表情预设、文字滚动、图片显示、GIF 动画、屏幕亮度、扬声器音量、倒计时启动和停止属于第一版 MVP；其他行按“可选扩展”或“Excluded”处理。能力按 Tivoo 型号专用实现判定，不将泛 Divoom 清单套用于本机型。核对来源包括：
 
+> **2026-11-14 状态说明：** 本节“首版不实现/可选扩展”记录的是 P4 原始范围，不再代表当前代码实现状态。当前扩展能力以[2026-11-14 Tivoo MCP/SPP 能力扩展报告](../reports/2026-11-14-tivoo-mcp-spp-capability-expansion.md)和现行代码为准；其中屏幕开关已经实现。自动表情所有权、AI mood、恢复与息屏门控由[Tivoo 表情状态机规格](2026-11-14-tivoo-expression-state-machine-design.md)及其[合同矩阵](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)补充约束，P4 已有 Service/Tool 的底层协议合同保持不变。
+
 时钟样式说明：HA 通用服务 Schema 和设备父类接受 0–15，但 solar2ain/tivoo-control 的 Tivoo 专用 README 明确列出样式 0–6。项目只支持 Tivoo，因此服务/Tool 应限制为 0–6，不将通用父类字段范围当成当前型号能力。
 
 Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模式，不代表有独立灯条、背光或键盘灯。
@@ -210,7 +214,7 @@ Light 命令使用 0x45 0x01，是 16×16 像素屏上的纯色/灯效显示模�
 | 图片显示 | `tivoo.show_image` / `tivoo__ShowImage` | 本机 `TivooDisplay.image()`；HA `show_image(file,time)` | `file` 相对 `media_directory`；PNG/JPG/GIF；可选 `time=0–65535 ms` | MVP 必须 |
 | GIF 动画 | `tivoo.play_animation` / `tivoo__PlayAnimation` | `solar2ain/tivoo-control anim(path)`；HA `Image.open()` / `process_image()` GIF 多帧通路 | 只接受 GIF 文件及可选帧间隔；帧目录与 stage JSON 不属于 HA image service 的文件合同 | MVP 必须 |
 | 屏幕亮度 | `tivoo.set_brightness`（HA Service；不注册重复 MCP Tool） | 本机 `TivooDisplay.brightness()`；HA `brightness`；协议 `0x74` | `value: integer 0–100` | MVP 必须（Service only） |
-| 屏幕开关 | `tivoo.set_screen_power` / `tivoo__SetScreenPower` | HA 上游 `on`/`off` → `send_on()`/`send_off()`；本机 `screen_on()`/`screen_off()` | `value: boolean`；不提供原始电源/亮度字节 | 可选扩展（首版不实现） |
+| 屏幕开关 | `tivoo.set_screen_power` / `tivoo__SetScreenPower` | HA 上游 `on`/`off` → `send_on()`/`send_off()`；本机 `screen_on()`/`screen_off()` | `value: boolean`；不提供原始电源/亮度字节 | P4 原始可选扩展；**2026-11-14 现行代码已实现** |
 | 扬声器音量 | `tivoo.set_volume` / `tivoo__SetVolume` | HA `volume` 服务；本机 `TivooDisplay.volume()` / `commands.volume_payload()`；ESP32 `send_volume()`；协议 `0x08`，0–100 映射到设备 0–15 | `volume: integer 0–100`。0 是有效值；handler 必须显式判断 `None`，不能用 `or` 把 0 当缺省 | MVP 必须（P4 首版） |
 | 音乐播放控制 | `tivoo.set_playstate` / `tivoo__SetPlayState` | HA `playstate`；`Divoom.send_playstate()` 支持 `previous/pause/play/next`；本机 SDK 已有 pause/play builder | `value` 仅为 `previous`、`pause`、`play`、`next`；前/下一曲需复用上游 `set playtrack 0x12` 语义，不传任意数字 | 可选扩展（首版不实现） |
 | 时钟显示 | `tivoo.show_clock` / `tivoo__ShowClock` | HA Tivoo 继承 `show_clock()`；ESP32 `0x45 0x00`；本机 `TivooDisplay.clock()` | 必需 `clock: 0–6`（Tivoo 专用 CLI 已列出）；可选 `twentyfour`、`weather`、`temp`、`calendar`、RGB `color`、`hot`。不接受其他型号 `clock_id` | 可选扩展（首版不实现） |

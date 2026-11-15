@@ -17,6 +17,7 @@ from .diagnostics import (
     HA_TO_ESP32_MESSAGE_TYPES,
     SUPPORTED_MESSAGE_TYPES,
     TYPE_AUDIO_INTERRUPTED,
+    TYPE_AUDIO_STATE,
     TYPE_DEVICE_EVENT,
     TYPE_DEVICE_STATUS,
     TYPE_DIAGNOSTIC_LOG,
@@ -24,6 +25,7 @@ from .diagnostics import (
     TYPE_GET_STATUS,
     TYPE_HELLO,
     TYPE_HELLO_ACK,
+    TYPE_MIC_ACTIVITY,
     TYPE_MIC_PCM,
     TYPE_MIC_SESSION_END,
     TYPE_MIC_SESSION_START,
@@ -40,6 +42,17 @@ _LOGGER = logging.getLogger("custom_components.tivoo")
 
 CONTROL_PORT = 7777
 DIAGNOSTIC_PORT = 7778
+
+MIC_ACTIVITY_CAPABILITY = "mic_activity_events"
+_BASE_CAPABILITIES = {
+    "spp_control",
+    "spp_reverse",
+    "remote_diagnostics",
+    "device_status",
+    "device_events",
+    "audio_resource_http",
+    "audio_control",
+}
 
 _ERROR_CODES = {
     "wifi_init_failed",
@@ -121,6 +134,8 @@ class Esp32ConnectionAdapter:
         self._writers: dict[str, asyncio.StreamWriter] = {}
         self._diagnostic_tx_sequence = 0
         self._diagnostic_handshaken = False
+        self._mic_activity_capable = False
+        self._audio_session_manager: AudioSessionManager | None = None
         self._diagnostic_last_pong_at = 0.0
         self._device_status_request_id: str | None = None
         self._clock = clock if clock is not None else time.monotonic
@@ -229,8 +244,21 @@ class Esp32ConnectionAdapter:
     def register_audio_session_manager(self, manager: AudioSessionManager) -> None:
         """Connect P6 MIC and interruption messages to one session manager."""
 
+        self._audio_session_manager = manager
+
         async def handle_session_start(message: DiagnosticMessage) -> None:
-            await manager.async_start_session(self._decode_json(message.payload))
+            payload = self._decode_json(message.payload)
+            await manager.async_start_session(
+                payload, persistent=self._mic_activity_capable
+            )
+            if self._mic_activity_capable and manager.on_activity is None:
+                await manager.async_stop_session(
+                    payload["session_id"], "satellite_unavailable"
+                )
+
+        async def handle_activity(message: DiagnosticMessage) -> None:
+            if self._mic_activity_capable:
+                await manager.async_handle_activity(self._decode_json(message.payload))
 
         async def handle_pcm(message: DiagnosticMessage) -> None:
             session_id = manager.active_session_id
@@ -256,8 +284,25 @@ class Esp32ConnectionAdapter:
 
         self.register_message_handler(TYPE_MIC_SESSION_START, handle_session_start)
         self.register_message_handler(TYPE_MIC_PCM, handle_pcm)
+        self.register_message_handler(TYPE_MIC_ACTIVITY, handle_activity)
         self.register_message_handler(TYPE_MIC_SESSION_END, handle_session_end)
         self.register_message_handler(TYPE_AUDIO_INTERRUPTED, handle_audio_interrupted)
+
+    def register_playback_handler(self, handler: Callable[[str, str], None]) -> None:
+        """Route validated TTS playback status to the satellite."""
+
+        async def handle_playback(message: DiagnosticMessage) -> None:
+            payload = self._decode_json(message.payload)
+            audio_id = payload.get("audio_id")
+            state = payload.get("state")
+            if not isinstance(audio_id, str) or not audio_id or len(audio_id) > 64:
+                raise ValueError("invalid AUDIO_STATE audio_id")
+            if not isinstance(state, str):
+                raise TypeError("invalid AUDIO_STATE state")
+            if payload.get("source") == "tts_http":
+                handler(audio_id, state)
+
+        self.register_message_handler(TYPE_AUDIO_STATE, handle_playback)
 
     def register_message_handler(
         self,
@@ -284,14 +329,15 @@ class Esp32ConnectionAdapter:
             frame = encode_message(message_type, payload, self._diagnostic_tx_sequence)
             try:
                 writer.write(frame)
+                # The frame is committed before drain can be cancelled.
+                self._diagnostic_tx_sequence = (
+                    self._diagnostic_tx_sequence + 1
+                ) & 0xFFFFFFFF
                 await writer.drain()
             except (OSError, ConnectionError) as err:
                 raise HomeAssistantError(
                     "ESP32 diagnostic channel failed while sending a message"
                 ) from err
-            self._diagnostic_tx_sequence = (
-                self._diagnostic_tx_sequence + 1
-            ) & 0xFFFFFFFF
 
     async def async_send_tts_play(
         self, playback_id: str, url: str, mime_type: str
@@ -338,6 +384,7 @@ class Esp32ConnectionAdapter:
                     self._writers.pop(channel, None)
                     if channel == "diagnostic":
                         self._diagnostic_handshaken = False
+                        self._mic_activity_capable = False
                         self._diagnostic_tx_sequence = 0
                         self._device_status_request_id = None
                         self.device_status = None
@@ -349,6 +396,11 @@ class Esp32ConnectionAdapter:
                         await writer.wait_closed()
                     except OSError:
                         pass
+                    if (
+                        channel == "diagnostic"
+                        and self._audio_session_manager is not None
+                    ):
+                        await self._audio_session_manager.async_disconnect()
 
             if not self._stopping:
                 self.states[channel] = "disconnected"
@@ -419,6 +471,9 @@ class Esp32ConnectionAdapter:
 
                         handshaken = True
                         self._diagnostic_handshaken = True
+                        self._mic_activity_capable = (
+                            MIC_ACTIVITY_CAPABILITY in payload["capabilities"]
+                        )
                         self._diagnostic_last_pong_at = self._clock()
                         _LOGGER.info(
                             "ESP32 diagnostic channel ready: %s firmware=%s reset=%s",
@@ -639,20 +694,15 @@ class Esp32ConnectionAdapter:
 
     @staticmethod
     def _validate_hello(payload: dict) -> None:
+        capabilities = payload.get("capabilities")
         if (
             payload.get("device_id") != "tivoo-esp32"
             or not isinstance(payload.get("firmware_version"), str)
             or not payload["firmware_version"]
-            or payload.get("capabilities")
-            != [
-                "spp_control",
-                "spp_reverse",
-                "remote_diagnostics",
-                "device_status",
-                "device_events",
-                "audio_resource_http",
-                "audio_control",
-            ]
+            or not isinstance(capabilities, list)
+            or not all(isinstance(capability, str) for capability in capabilities)
+            or not _BASE_CAPABILITIES.issubset(capabilities)
+            or len(capabilities) != len(set(capabilities))
             or not isinstance(payload.get("reset_reason"), str)
             or not payload["reset_reason"]
             or isinstance(payload.get("protocol_version"), bool)

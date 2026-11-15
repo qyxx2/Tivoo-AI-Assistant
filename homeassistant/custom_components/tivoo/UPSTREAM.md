@@ -31,3 +31,29 @@ The P5b3 `protocol.py` encoder also adapts the pure display-protocol portions of
 - `tivoo/commands.py::volume_payload()` and `countdown_payload()`: audio volume and countdown payload values.
 
 Only the pure Python byte/pixel encoding behavior is adapted. The CLI, Android Bluetooth Bridge, RFCOMM/SPP client, and device connection lifecycle are not imported into Home Assistant. The ESP32 receives complete frames from HA and forwards them unchanged; it does not encode pixels or reimplement payload generation.
+
+## 2026-11-14 Tivoo SPP capability expansion
+
+The Assist/MCP surface was expanded after the original seven-tool P4 MVP by
+cross-checking the Tivoo-specific implementations and golden vectors in:
+
+- d03n3rfr1tz3/esp32-divoom commit e90a77bbade7e92523bfb5b69bc5cb1e4d167520.
+- d03n3rfr1tz3/hass-divoom main commit 0e9959a9009d9f8ce3be79476f464d593d85bc91;
+  especially custom_components/divoom/devices/tivoo.py, devices/divoom.py,
+  and tests/goldens/Tivoo/.
+- solar2ain/tivoo-control commit 6f24deaf631820089259177805d1a6a6615f6d7e.
+
+device_commands.py contains only pure Tivoo/Divoom payload construction.
+Runtime Bluetooth/RFCOMM remains on the ESP32 bridge. The added service/tool
+surface covers screen power, brightness, playback, clock/date-time/weather,
+light mode, Tivoo lyrics and scoreboard, timer/noise meter, alarm/memorial,
+audio source, sleep mode, design/effects/visualization, game/game control,
+plus the original volume/countdown/text/image/animation/presets.
+
+The Tivoo-specific hass-divoom driver explicitly rejects equalizer and
+keyboard-light control; those are not exposed. Raw arbitrary packets are also
+not exposed to MCP. Effects, visualization and game indices are protocol-valid
+but device/App-version dependent, so their tool descriptions do not invent
+semantic index names. The existing ESP32 DEVICE_STATUS/DEVICE_EVENT snapshot
+is transport/device-health state; opaque Tivoo SPP reverse bytes are not
+reclassified as a complete business-state API.

@@ -13,3 +13,44 @@ config TIVOO_WIFI_PASSWORD
         Local Wi-Fi password. Stored in the local sdkconfig and never logged.
 
 endmenu
+
+menu "Tivoo I2S audio"
+
+config TIVOO_I2S_BCLK_GPIO
+    int "Shared BCLK GPIO"
+    range 0 33
+    default 26
+
+config TIVOO_I2S_WS_GPIO
+    int "Shared WS GPIO"
+    range 0 33
+    default 25
+
+config TIVOO_I2S_DIN_GPIO
+    int "INMP441 SD GPIO"
+    range 0 39
+    default 34
+
+config TIVOO_I2S_DOUT_GPIO
+    int "PCM5102 DIN GPIO"
+    range -1 33
+    default 27
+    help
+        -1 leaves DAC data disconnected and playback unavailable.
+
+config TIVOO_AEC_REFERENCE_DELAY_SAMPLES
+    int "Fixed TX to microphone reference delay in 16 kHz samples"
+    range 0 800
+    default 80
+    help
+        Compensates for digital clock startup skew and the DAC, microphone
+        and acoustic path delay. Tune with a measured loopback.
+
+config TIVOO_AUDIO_PROBE
+    bool "Log one-second audio measurements to UART"
+    default n
+    help
+        Report raw left/right slot, filtered microphone, and AFE output
+        levels without requiring a network connection or speech detection.
+
+endmenu

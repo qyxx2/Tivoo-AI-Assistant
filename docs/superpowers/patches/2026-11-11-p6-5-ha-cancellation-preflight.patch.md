@@ -1,9 +1,14 @@
 # P6.5 Patch — HA Assist Pipeline / TTS Proxy 取消链路前置验证
 
-- **状态：** 待执行；P7/P8 取消逻辑实现前的必做验证批次
+- **状态：** P6.5b0–b5 前置调查与模块边界决策已完成；活动 TTS 取消仍为 GAP，依赖该路径的 P7/P8 打断验收保持 BLOCKED
+- **最终汇总：** [P6.5 取消链路前置验证报告](../reports/2026-11-11-ha-cancellation-preflight-report.md)
+- **AstrBot 子链路规格：** [HTTP OpenAPI 推理取消与 SSE 终止](../specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)
+- **P6.5 后续实施合同：** [常驻音频会话与 KWS 确认打断合同矩阵](../specs/2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md)
+- **P6.5 后续分批计划：** [从 b6 开始的分批执行计划](../plans/2026-11-13-p6-5-batch-execution-plan-from-b6.md)
 - **插入位置：** `README.md §10 实施顺序`，P6 之后、P7 之前
 - **目标版本：** 项目固定的 Home Assistant Core 2026.11.0
-- **任务性质：** 只验证、追踪和记录，不在本批次修改生产取消逻辑
+- **原始批次性质：** b0–b5 只验证、追踪和记录，不修改生产取消逻辑。2026-11-13 增补真实 AstrBot 4.29.4 HTTP/Stop 验收记录，详见独立规格；该补充不改变 b0–b5 结果，也不解除活动 TTS GAP。
+- **后续阶段：** P6.5 从 b6 扩展为实现阶段；当前打断策略为“播放期间仅 NAS KWS Detection 有权中断”，ESP32 VAD 只做活动检测/上传门控。b6–b11 的范围以独立合同矩阵和分批计划为准。
 
 ## 1. 目的
 
@@ -110,7 +115,7 @@
 | Pipeline 已结束，但 TTSCache producer / 文本 generator 仍 pending | 记录仍存活任务的准确 owner 与可访问句柄。后续必须在实际拥有该 producer 的 TTS Proxy/资源边界补充定向取消能力；不能把泛化的 `asyncio.all_tasks()` 清理或 `audio_session.py` 中猜测任务名当成修复，也不能把删除 token 当成取消生成。若 HA 没有可用的受支持取消接口，先形成单独设计决策，不在 P7/P8 中偷偷绕过。 |
 | HA Wyoming 连接关闭后 P7A 请求、callback 和 worker 均结束 | 保持 P7A 当前请求级取消实现，不重复添加另一套停止协议。 |
 | Wyoming TCP 已关闭但 P7A 请求仍存活 | 后续修复放在 `services/sherpa_wyoming/providers/tts.py` 的请求/断连边界，并增加连接级回归测试；不把此责任塞入 HA Tivoo 集成。 |
-| P3 SSE reader 关闭且同一 session Stop 正确执行 | 保持 `astrbot` 为 AstrBot 会话 Stop 的唯一 owner；`tivoo` 只取消 Pipeline，不直接调用 AstrBot API。 |
+| P3 SSE reader 关闭且同一 session Stop 正确执行 | 保持 `astrbot` 为 AstrBot 会话 Stop 的唯一 owner；`tivoo` 只取消 Pipeline，不直接调用 AstrBot API。真实接口时序与 owner 约束见 [AstrBot HTTP/SSE 推理取消规格](../specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)。 |
 | P3 SSE / Stop 未按预期结束 | 在 P3 的 `conversation.py`、API 或 session 边界单独修复；不能在 Tivoo 协调器中复制 P3 Stop 逻辑。 |
 | `tts_response_finished()` 只改变 Satellite 状态 | 保持其为响应状态收尾动作；它不能替代 Pipeline、TTS Proxy、Wyoming 或 AstrBot 的取消。 |
 
@@ -145,5 +150,16 @@ git diff --check
 - `docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md` §7.4、§8、§13、§14。
 - `docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md` §7–§10。
 - `docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md` 的 SSE/Stop 取消合同。
+- `docs/superpowers/specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md` 的真实 API 调用流程、owner 约束和运行验证。
 - `docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md` §9.7 的 Wyoming TTS 请求取消合同。
 - 当前开发环境中 HA Core 2026.11.0 的 Assist Satellite、Assist Pipeline、TTS Proxy 和 Wyoming TTS 源码。
+
+
+## 7. P6.5 b6+ 实施阶段入口
+
+本 patch 保留 b0–b5 的历史调查结论，不再作为后续实现的唯一计划。P6.5 当前正式实施范围、VAD/KWS 权限边界、3 秒首次 KWS 候选静音 watchdog、15 秒候选总上限、5 秒命令起始窗口、8 秒 follow-up 窗口、跨 Pipeline MIC session、NAS KWS 并行 watcher 和全双工 DAC 验收，统一以：
+
+- [P6.5 常驻音频会话与 KWS 确认打断合同矩阵](../specs/2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md)
+- [P6.5 b6–b11 分批执行计划](../plans/2026-11-13-p6-5-batch-execution-plan-from-b6.md)
+
+为准。**播放期间不得由 ESP32 VAD 单独发送 AUDIO_INTERRUPTED 或停止 DAC；只有 HA 侧 Sherpa KWS 有效 Detection 才能发送匹配 AUDIO_STOP 并开始旧轮取消。**

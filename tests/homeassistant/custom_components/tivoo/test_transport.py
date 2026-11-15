@@ -151,6 +151,8 @@ async def test_config_entry_starts_and_stops_both_connections(
         runtime = hass.data[DOMAIN][entry.entry_id]
         adapter = runtime["connection_adapter"]
         assert callable(runtime["pipeline_event_callback_factory"])
+        await hass.async_block_till_done()
+        assert hass.states.get("assist_satellite.tivoo") is not None
         await _wait_for_state(adapter, "control", "connected")
         await _wait_for_state(adapter, "diagnostic", "connected")
         await asyncio.wait_for(control_mac_received.wait(), 1)
@@ -1329,15 +1331,18 @@ async def test_p6_error_codes_are_accepted_and_sensitive_diagnostic_text_is_reda
     assert caplog.text.count("audio_http_failed") >= 2
 
 
+@pytest.mark.parametrize("activity_capable", [False, True])
 async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
-    monkeypatch, socket_enabled
+    monkeypatch, socket_enabled, activity_capable
 ):
     import json
 
     from custom_components.tivoo.audio_session import AudioSessionManager
     from custom_components.tivoo.diagnostics import (
         TYPE_AUDIO_INTERRUPTED,
+        TYPE_AUDIO_STATE,
         TYPE_GET_STATUS,
+        TYPE_MIC_ACTIVITY,
         TYPE_MIC_PCM,
         TYPE_MIC_SESSION_END,
         TYPE_MIC_SESSION_START,
@@ -1349,6 +1354,8 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
     pcm = bytes(range(256)) * 2 + bytes(range(128))
     iterator_ready = asyncio.Event()
     handled_interrupts = []
+    activities = []
+    playback_states = []
 
     async def control_handler(reader, writer):
         await reader.read()
@@ -1369,6 +1376,8 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
             ],
             "reset_reason": "ESP_RST_POWERON",
         }
+        if activity_capable:
+            hello["capabilities"].append("mic_activity_events")
         writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
         await writer.drain()
         assert (await _read_tvio_message(reader))[0:2] == (0x02, 0)
@@ -1407,15 +1416,33 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
         )
         writer.write(
             stale_end
-            + _tvio_message(TYPE_MIC_PCM, 4, pcm)
+            + _tvio_message(
+                TYPE_MIC_ACTIVITY,
+                4,
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "state": "speech_start",
+                        "uptime_ms": True,
+                    }
+                ).encode(),
+            )
+            + _tvio_message(
+                TYPE_MIC_ACTIVITY,
+                5,
+                json.dumps(
+                    {"session_id": session_id, "state": "speech_start", "uptime_ms": 1}
+                ).encode(),
+            )
+            + _tvio_message(TYPE_MIC_PCM, 6, pcm)
             + _tvio_message(
                 TYPE_MIC_SESSION_END,
-                5,
+                7,
                 json.dumps({"session_id": session_id, "reason": "completed"}).encode(),
             )
             + _tvio_message(
                 TYPE_AUDIO_INTERRUPTED,
-                6,
+                8,
                 json.dumps(
                     {
                         "interrupt_id": interrupt_id,
@@ -1423,6 +1450,13 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
                         "source": "tts_http",
                         "reason": "near_end_vad",
                     }
+                ).encode(),
+            )
+            + _tvio_message(
+                TYPE_AUDIO_STATE,
+                9,
+                json.dumps(
+                    {"audio_id": audio_id, "source": "tts_http", "state": "completed"}
                 ).encode(),
             )
         )
@@ -1439,6 +1473,9 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
     )
 
     manager = AudioSessionManager()
+    manager.on_activity = lambda sid, state: activities.append(
+        (sid, state, manager.queue_size)
+    )
 
     async def on_interrupted(payload):
         handled_interrupts.append(payload)
@@ -1448,6 +1485,9 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
         "127.0.0.1", "11:75:58:97:49:98", retry_interval=5
     )
     adapter.register_audio_session_manager(manager)
+    adapter.register_playback_handler(
+        lambda audio_id, state: playback_states.append((audio_id, state))
+    )
     await adapter.async_start()
     try:
         for _ in range(200):
@@ -1455,15 +1495,23 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
                 break
             await asyncio.sleep(0.01)
         assert manager.active_session_id == session_id
-        iterator = manager.async_audio_iterator(session_id)
-        iterator_ready.set()
-
-        received = await asyncio.wait_for(_collect_audio(iterator), timeout=2)
+        if activity_capable:
+            async with manager.audio_subscription(session_id) as iterator:
+                iterator_ready.set()
+                received = await asyncio.wait_for(_collect_audio(iterator), timeout=2)
+        else:
+            iterator = manager.async_audio_iterator(session_id)
+            iterator_ready.set()
+            received = await asyncio.wait_for(_collect_audio(iterator), timeout=2)
+        assert activities == (
+            [(session_id, "speech_start", 0)] if activity_capable else []
+        )
         for _ in range(200):
-            if handled_interrupts:
+            if playback_states:
                 break
             await asyncio.sleep(0.01)
         assert received == [pcm]
+        assert playback_states == [(audio_id, "completed")]
         assert handled_interrupts == [
             {
                 "interrupt_id": interrupt_id,
@@ -1484,3 +1532,71 @@ async def test_audio_session_messages_dispatch_binary_pcm_and_interruption(
 
 async def _collect_audio(iterator):
     return [chunk async for chunk in iterator]
+
+
+async def test_cancelled_tts_play_drain_consumes_written_sequence():
+    from custom_components.tivoo.diagnostics import TYPE_MIC_CAPTURE_STOP
+
+    written = asyncio.Event()
+    frames = []
+
+    class Writer:
+        def is_closing(self):
+            return False
+
+        def write(self, frame):
+            frames.append(frame)
+            written.set()
+
+        async def drain(self):
+            if len(frames) == 1:
+                await asyncio.Future()
+
+    adapter = transport.Esp32ConnectionAdapter(None)
+    adapter._diagnostic_handshaken = True
+    adapter._writers["diagnostic"] = Writer()
+
+    send = asyncio.create_task(
+        adapter.async_send_tts_play("id", "http://ha", "audio/mpeg")
+    )
+    await written.wait()
+    send.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await send
+    await adapter.async_send_message(TYPE_MIC_CAPTURE_STOP, b"{}")
+
+    assert [int.from_bytes(frame[12:16], "little") for frame in frames] == [0, 1]
+
+
+async def test_persistent_upload_is_stopped_when_satellite_is_unavailable():
+    import json
+    from unittest.mock import AsyncMock
+
+    from custom_components.tivoo.audio_session import AudioSessionManager
+    from custom_components.tivoo.diagnostics import (
+        TYPE_MIC_SESSION_START,
+        DiagnosticMessage,
+    )
+
+    session_id = "11111111-1111-4111-8111-111111111111"
+    stop = AsyncMock()
+    manager = AudioSessionManager(stop)
+    adapter = transport.Esp32ConnectionAdapter(None)
+    adapter.register_audio_session_manager(manager)
+    adapter._mic_activity_capable = True
+    payload = {
+        "session_id": session_id,
+        "sample_rate": 16000,
+        "channels": 1,
+        "sample_format": "s16le",
+        "frame_duration_ms": 20,
+        "preroll_ms": 500,
+        "trigger_source": "idle_vad",
+    }
+
+    await adapter._message_handlers[TYPE_MIC_SESSION_START](
+        DiagnosticMessage(TYPE_MIC_SESSION_START, 0, 1, json.dumps(payload).encode())
+    )
+
+    assert manager.active_session_id is None
+    stop.assert_awaited_once_with(session_id, "satellite_unavailable")

@@ -547,7 +547,7 @@ def test_c_outbound_api_covers_all_esp32_to_ha_message_types(tmp_path):
         _handshake(client)
         time.sleep(0.1)
 
-        outgoing = [0x04, 0x11, 0x20, 0x22, 0x32, 0x33, 0x40, 0x41]
+        outgoing = [0x04, 0x11, 0x20, 0x22, 0x24, 0x32, 0x33, 0x40, 0x41]
         frames = []
         for message_type in outgoing:
             _command(process, f"send {message_type:#x} 7b7d")

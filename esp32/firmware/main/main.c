@@ -2,7 +2,9 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
+#include "audio_frontend.h"
 #include "audio_resource.h"
+#include "audio_output_manager.h"
 #include "diagnostics.h"
 #include "device_status.h"
 #include "hardware_memory.h"
@@ -54,6 +56,11 @@ void app_main(void)
     if (err != ESP_OK) {
         tivoo_report_error("spp_init_failed", TAG, "classic_spp_start_failed");
         return;
+    }
+
+    err = tivoo_audio_frontend_start(tivoo_audio_output_reference);
+    if (err != ESP_OK) {
+        TIVOO_LOGE(TAG, "Audio frontend initialization failed: %s", esp_err_to_name(err));
     }
 
     err = network_listeners_start(

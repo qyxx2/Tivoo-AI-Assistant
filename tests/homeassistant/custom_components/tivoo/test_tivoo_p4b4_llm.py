@@ -95,13 +95,33 @@ async def test_p4b4_media_tools_are_registered_for_assist(
 
     media_tools = {tool.name: tool for tool in api.tools if tool.integration == DOMAIN}
     assert set(media_tools) == {
+        "tivoo__GameControl",
+        "tivoo__PlayAnimation",
+        "tivoo__SetAlarm",
+        "tivoo__SetAudioSource",
+        "tivoo__SetBrightness",
+        "tivoo__SetDateTime",
         "tivoo__SetExpression",
+        "tivoo__SetLight",
+        "tivoo__SetMemorial",
+        "tivoo__SetNoiseMeter",
+        "tivoo__SetPlayState",
+        "tivoo__SetScreenPower",
+        "tivoo__SetSleepMode",
+        "tivoo__SetTimer",
+        "tivoo__SetVolume",
+        "tivoo__SetWeather",
+        "tivoo__ShowClock",
+        "tivoo__ShowDesign",
+        "tivoo__ShowEffects",
+        "tivoo__ShowGame",
+        "tivoo__ShowImage",
+        "tivoo__ShowLyrics",
+        "tivoo__ShowScoreboard",
         "tivoo__ShowText",
+        "tivoo__ShowVisualization",
         "tivoo__StartCountdown",
         "tivoo__StopCountdown",
-        "tivoo__SetVolume",
-        "tivoo__ShowImage",
-        "tivoo__PlayAnimation",
     }
     for name in MEDIA_TOOLS:
         tool = media_tools[name]

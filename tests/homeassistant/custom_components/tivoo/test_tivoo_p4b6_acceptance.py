@@ -101,13 +101,33 @@ async def test_tivoo_actions_are_explicit_tools_and_do_not_accept_entity_targets
             tool.name: tool for tool in tools.tools if tool.name.startswith("tivoo__")
         }
         assert set(tivoo_tools) == {
+            "tivoo__GameControl",
+            "tivoo__PlayAnimation",
+            "tivoo__SetAlarm",
+            "tivoo__SetAudioSource",
+            "tivoo__SetBrightness",
+            "tivoo__SetDateTime",
             "tivoo__SetExpression",
+            "tivoo__SetLight",
+            "tivoo__SetMemorial",
+            "tivoo__SetNoiseMeter",
+            "tivoo__SetPlayState",
+            "tivoo__SetScreenPower",
+            "tivoo__SetSleepMode",
+            "tivoo__SetTimer",
+            "tivoo__SetVolume",
+            "tivoo__SetWeather",
+            "tivoo__ShowClock",
+            "tivoo__ShowDesign",
+            "tivoo__ShowEffects",
+            "tivoo__ShowGame",
+            "tivoo__ShowImage",
+            "tivoo__ShowLyrics",
+            "tivoo__ShowScoreboard",
             "tivoo__ShowText",
+            "tivoo__ShowVisualization",
             "tivoo__StartCountdown",
             "tivoo__StopCountdown",
-            "tivoo__SetVolume",
-            "tivoo__ShowImage",
-            "tivoo__PlayAnimation",
         }
         assert "homeassistant__call_action" not in {tool.name for tool in tools.tools}
 
