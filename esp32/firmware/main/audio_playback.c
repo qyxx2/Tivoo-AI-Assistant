@@ -5,6 +5,7 @@
 #include "audio_output_manager.h"
 #include "esp_ae_rate_cvt.h"
 #include "esp_audio_simple_dec.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_mp3_dec.h"
@@ -35,7 +36,7 @@ esp_err_t tivoo_audio_playback_init(void)
 
 tivoo_audio_playback_t *tivoo_audio_playback_open(uint32_t generation, bool raw_pcm)
 {
-    tivoo_audio_playback_t *playback = calloc(1, sizeof(*playback));
+    tivoo_audio_playback_t *playback = heap_caps_calloc(1, sizeof(*playback), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (playback == NULL) {
         return NULL;
     }
@@ -75,7 +76,8 @@ static esp_err_t configure_src(tivoo_audio_playback_t *playback, uint32_t rate)
             &playback->converted_capacity) != ESP_AE_ERR_OK) {
         return ESP_FAIL;
     }
-    playback->converted = malloc(playback->converted_capacity * sizeof(int16_t));
+    playback->converted = heap_caps_malloc(
+        playback->converted_capacity * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     return playback->converted == NULL ? ESP_ERR_NO_MEM : ESP_OK;
 }
 

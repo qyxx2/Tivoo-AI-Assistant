@@ -373,6 +373,10 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
         if (elapsed > max_read_us) {
             max_read_us = elapsed;
         }
+        if (bytes == -ESP_ERR_HTTP_EAGAIN) {
+            // Keep the stream and decoder open while I2S fills the gap with silence.
+            continue;
+        }
         if (bytes < 0) {
             error = "audio_http_failed";
             break;
