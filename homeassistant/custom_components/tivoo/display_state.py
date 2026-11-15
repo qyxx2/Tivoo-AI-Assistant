@@ -17,6 +17,9 @@ _LOGGER = logging.getLogger(__name__)
 IDLE_PRESETS = ("standby", "smiley", "sleepy", "sun", "fish")
 IDLE_MIN_SECONDS = 30.0
 IDLE_MAX_SECONDS = 90.0
+CANDIDATE_HOLD_SECONDS = 0.7
+CANDIDATE_PROBABILITY = 0.35
+CANDIDATE_COOLDOWN_SECONDS = 10.0
 
 
 class DisplayState(str, Enum):
@@ -141,6 +144,9 @@ class ExpressionCoordinator:
         self._intents: dict[DisplayState, _Intent] = {}
         self._idle_command: TivooCommand | None = None
         self._idle_timer: asyncio.TimerHandle | None = None
+        self._candidate_timer: asyncio.TimerHandle | None = None
+        self._candidate_generation: str | None = None
+        self._candidate_cooldown_until = 0.0
         self._lock = asyncio.Lock()
         self._power_dirty = False
         self._spp_connected = True
@@ -178,6 +184,7 @@ class ExpressionCoordinator:
     async def async_shutdown(self) -> None:
         self._shutdown = True
         self._cancel_idle_timer()
+        self._cancel_candidate()
         for state in tuple(self._intents):
             self._remove_intent(state)
         self._active_generation = None
@@ -187,6 +194,7 @@ class ExpressionCoordinator:
         """Set a new turn as authoritative; a late event from an old turn is inert."""
         if self._shutdown or generation == self._active_generation:
             return
+        self._cancel_candidate()
         self._active_generation = generation
         self._clear_session_intents()
         if self._started:
@@ -201,9 +209,92 @@ class ExpressionCoordinator:
     async def async_end_generation(self, generation: str) -> None:
         if generation != self._active_generation or self._shutdown:
             return
+        self._cancel_candidate()
         self._active_generation = None
         self._clear_session_intents()
         await self._async_recompute()
+
+    def _cancel_candidate(self) -> None:
+        if self._candidate_timer is not None:
+            self._candidate_timer.cancel()
+            self._candidate_timer = None
+        self._candidate_generation = None
+
+    def begin_candidate(self, generation: str) -> None:
+        """A first wake-word candidate earns a display chance after sustained speech."""
+        if self._shutdown or generation != self._active_generation:
+            return
+        self._cancel_candidate()
+        self._candidate_generation = generation
+        loop = asyncio.get_running_loop()
+        if loop.time() < self._candidate_cooldown_until:
+            return
+        self._candidate_timer = loop.call_later(
+            CANDIDATE_HOLD_SECONDS, self._activate_candidate, generation
+        )
+
+    def _activate_candidate(self, generation: str) -> None:
+        self._candidate_timer = None
+        if (
+            self._shutdown
+            or generation != self._active_generation
+            or generation != self._candidate_generation
+        ):
+            return
+        loop = asyncio.get_running_loop()
+        if (
+            loop.time() < self._candidate_cooldown_until
+            or random.random() >= CANDIDATE_PROBABILITY
+        ):
+            return
+        self._candidate_cooldown_until = loop.time() + CANDIDATE_COOLDOWN_SECONDS
+        task = asyncio.create_task(
+            self.async_set_intent(
+                DisplayState.ACTIVE_LISTENING,
+                build_expression_command("standby"),
+                generation=generation,
+            )
+        )
+        task.add_done_callback(self._log_background_failure)
+
+    def end_candidate(self, generation: str) -> None:
+        """Speech end or wake confirmation cancels only the matching candidate."""
+        if generation != self._active_generation:
+            return
+        if self._candidate_generation == generation:
+            self._cancel_candidate()
+        task = asyncio.create_task(
+            self.async_clear_intent(
+                DisplayState.ACTIVE_LISTENING, generation=generation
+            )
+        )
+        task.add_done_callback(self._log_background_failure)
+
+    async def async_enter_thinking(self, generation: str) -> None:
+        if self._shutdown or generation != self._active_generation:
+            return
+        for state in (
+            DisplayState.WAKE_CONFIRMED,
+            DisplayState.ACTIVE_LISTENING,
+            DisplayState.FOLLOWUP_WAIT,
+        ):
+            self._remove_intent(state)
+        await self.async_set_intent(
+            DisplayState.THINKING,
+            build_expression_command("thinking"),
+            generation=generation,
+        )
+
+    async def async_enter_followup(self, generation: str) -> None:
+        if self._shutdown or generation != self._active_generation:
+            return
+        self._cancel_candidate()
+        self._clear_session_intents()
+        await self.async_set_intent(
+            DisplayState.FOLLOWUP_WAIT,
+            build_expression_command("standby"),
+            generation=generation,
+        )
 
     async def async_set_intent(
         self,

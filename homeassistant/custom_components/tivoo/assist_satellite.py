@@ -20,13 +20,14 @@ from homeassistant.components.assist_satellite import (
     AssistSatelliteEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
 from .audio_resource import PipelineTtsEvents
 from .audio_session import AudioSessionManager
 from .const import DOMAIN
+from .display_state import DisplayState, ExpressionCoordinator, build_expression_command
 from .transport import Esp32ConnectionAdapter
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ async def async_setup_entry(
                 entry.entry_id,
                 runtime["audio_session_manager"],
                 runtime["connection_adapter"],
+                runtime["display_coordinator"],
             )
         ]
     )
@@ -56,6 +58,7 @@ class _Turn:
     """Identity and playback state for one Pipeline generation."""
 
     session_id: str
+    context: Context
     tts: PipelineTtsEvents
     waiting_for_wake: bool
     task: asyncio.Task | None = None
@@ -72,16 +75,23 @@ class AudioSessionCoordinator:
     """Own Pipeline turns and speech timers independently of network ingress."""
 
     def __init__(
-        self, entity: TivooAssistSatellite, ingress: AudioSessionManager
+        self,
+        entity: TivooAssistSatellite,
+        ingress: AudioSessionManager,
+        display: ExpressionCoordinator,
     ) -> None:
         self.entity = entity
         self.ingress = ingress
+        self.display = display
         self._session_id: str | None = None
         self._turn: _Turn | None = None
         self._timers: dict[str, Callable[[], None]] = {}
         self._followup = False
         self._closing: asyncio.Future | None = None
         self._event_turn: _Turn | None = None
+
+    def _show(self, coroutine, name: str) -> None:
+        self.entity.hass.async_create_task(coroutine, f"Tivoo display {name}")
 
     def _cancel_timer(self, reason: str) -> None:
         if cancel := self._timers.pop(reason, None):
@@ -118,6 +128,7 @@ class AudioSessionCoordinator:
             if state == "speech_start":
                 self._session_id = session_id
                 self._start_turn(PipelineStage.WAKE_WORD)
+                self.display.begin_candidate(self._turn.context.id)
             return
 
         turn = self._turn
@@ -127,9 +138,12 @@ class AudioSessionCoordinator:
             self._start_turn(PipelineStage.STT)
         elif turn.waiting_for_wake:
             if state == "speech_start":
+                self.display.begin_candidate(turn.context.id)
                 self._cancel_timer("wake_miss")
-            elif "wake_miss" not in self._timers:
-                self._arm(3, "wake_miss")
+            else:
+                self.display.end_candidate(turn.context.id)
+                if "wake_miss" not in self._timers:
+                    self._arm(3, "wake_miss")
 
     def _start_turn(
         self,
@@ -137,6 +151,7 @@ class AudioSessionCoordinator:
         *,
         interrupted: _Turn | None = None,
         start: int | None = None,
+        confirmed: bool = False,
     ) -> None:
         self._clear_timers()
         self._followup = False
@@ -148,11 +163,31 @@ class AudioSessionCoordinator:
             start = self.ingress.ingress_offset(session_id)
         turn = _Turn(
             session_id,
+            Context(),
             PipelineTtsEvents(self.entity.hass, self.entity.adapter),
             waiting_for_wake=stage == PipelineStage.WAKE_WORD,
         )
         previous = self._turn
         self._turn = turn
+        self.display.begin_generation(turn.context.id)
+        if confirmed:
+            self._show(
+                self.display.async_set_intent(
+                    DisplayState.WAKE_CONFIRMED,
+                    build_expression_command("question"),
+                    generation=turn.context.id,
+                ),
+                "wake confirmed",
+            )
+        elif stage is PipelineStage.STT:
+            self._show(
+                self.display.async_set_intent(
+                    DisplayState.ACTIVE_LISTENING,
+                    build_expression_command("standby"),
+                    generation=turn.context.id,
+                ),
+                "followup listening",
+            )
         if turn.waiting_for_wake:
             self._arm(15, "wake_candidate_timeout")
         if previous is not None and interrupted is None:
@@ -199,7 +234,9 @@ class AudioSessionCoordinator:
                 self._event_turn = turn
                 try:
                     await turn.tts.async_run(
-                        self.entity.async_accept_pipeline_from_satellite(audio, stage)
+                        self.entity.async_accept_pipeline_from_satellite(
+                            audio, stage, context=turn.context
+                        )
                     )
                 finally:
                     self._event_turn = None
@@ -308,7 +345,10 @@ class AudioSessionCoordinator:
                 turn.interrupted = True
                 turn.tts.stop_dispatch()
                 self._start_turn(
-                    PipelineStage.STT, interrupted=turn, start=start_offset
+                    PipelineStage.STT,
+                    interrupted=turn,
+                    start=start_offset,
+                    confirmed=True,
                 )
                 return
 
@@ -330,6 +370,15 @@ class AudioSessionCoordinator:
             case PipelineEventType.WAKE_WORD_END:
                 if turn.waiting_for_wake and (event.data or {}).get("wake_word_output"):
                     turn.waiting_for_wake = False
+                    self.display.end_candidate(turn.context.id)
+                    self._show(
+                        self.display.async_set_intent(
+                            DisplayState.WAKE_CONFIRMED,
+                            build_expression_command("question"),
+                            generation=turn.context.id,
+                        ),
+                        "wake confirmed",
+                    )
                     self._clear_timers()
                     self._arm(5, "command_timeout")
             case PipelineEventType.STT_START:
@@ -341,8 +390,29 @@ class AudioSessionCoordinator:
                 self._cancel_timer("command_timeout")
             case PipelineEventType.STT_VAD_END | PipelineEventType.STT_END:
                 self.ingress.release_subscription(turn.session_id, turn)
+                if event.type is PipelineEventType.STT_END:
+                    text = ((event.data or {}).get("stt_output") or {}).get("text")
+                    if (
+                        turn.command_started
+                        and not turn.error
+                        and isinstance(text, str)
+                        and text.strip()
+                    ):
+                        self._show(
+                            self.display.async_enter_thinking(turn.context.id),
+                            "thinking",
+                        )
+                    else:
+                        self.display.end_candidate(turn.context.id)
+                        self._show(
+                            self.display.async_clear_intent(
+                                DisplayState.WAKE_CONFIRMED, generation=turn.context.id
+                            ),
+                            "empty STT",
+                        )
             case PipelineEventType.ERROR:
                 turn.error = True
+                self._show(self.display.async_end_generation(turn.context.id), "error")
 
     @callback
     def on_playback(self, playback_id: str, state: str) -> None:
@@ -350,10 +420,25 @@ class AudioSessionCoordinator:
         turn = self._turn
         if turn is None or turn.tts.playback_id != playback_id or self._followup:
             return
-        if state == "completed":
+        if state == "playing":
+            self._show(
+                self.display.async_set_intent(
+                    DisplayState.SPEAKING,
+                    build_expression_command("music"),
+                    generation=turn.context.id,
+                ),
+                "speaking",
+            )
+        elif state == "completed":
             turn.playback_completed = True
             self._open_followup()
         elif state in ("stopped", "interrupted", "failed"):
+            self._show(
+                self.display.async_clear_intent(
+                    DisplayState.SPEAKING, generation=turn.context.id
+                ),
+                "playback stopped",
+            )
             self._arm(0, "playback_failed")
 
     def _open_followup(self) -> None:
@@ -361,6 +446,11 @@ class AudioSessionCoordinator:
             self._stop_watcher(self._turn)
         self.entity.tts_response_finished()
         self._followup = True
+        if self._turn is not None:
+            self._show(
+                self.display.async_enter_followup(self._turn.context.id),
+                "followup wait",
+            )
         self._arm(8, "followup_timeout")
 
     @callback
@@ -373,6 +463,9 @@ class AudioSessionCoordinator:
         self._clear_timers()
         turn, self._turn = self._turn, None
         if turn is not None:
+            self._show(
+                self.display.async_end_generation(turn.context.id), "session end"
+            )
             tasks = {turn.task, self._stop_watcher(turn)}
             event_turn = self._event_turn
             if event_turn is not None and not event_turn.interrupted:
@@ -423,6 +516,7 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         entry_id: str,
         ingress: AudioSessionManager,
         adapter: Esp32ConnectionAdapter,
+        display: ExpressionCoordinator,
     ) -> None:
         self._attr_unique_id = entry_id
         self._attr_tts_options = {
@@ -431,7 +525,8 @@ class TivooAssistSatellite(AssistSatelliteEntity):
             "preferred_sample_channels": 1,
         }
         self.adapter = adapter
-        self.coordinator = AudioSessionCoordinator(self, ingress)
+        self.display = display
+        self.coordinator = AudioSessionCoordinator(self, ingress, display)
 
     async def async_added_to_hass(self) -> None:
         """Bind transport callbacks after the entity is ready."""

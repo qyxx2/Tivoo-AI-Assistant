@@ -9,6 +9,11 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from custom_components.tivoo.assist_satellite import TivooAssistSatellite
 from custom_components.tivoo.audio_session import AudioSessionManager
+from custom_components.tivoo.display_state import (
+    DisplayState,
+    ExpressionCoordinator,
+    build_expression_command,
+)
 from homeassistant.components import tts
 from homeassistant.components.assist_pipeline.models import (
     PipelineEvent,
@@ -22,6 +27,7 @@ from homeassistant.setup import async_setup_component
 from mutagen.mp3 import MP3
 from pytest_homeassistant.common import async_fire_time_changed
 from test_audio_session import SESSION_1, SESSION_2, _start_payload
+from test_display_state import RecordingAdapter
 
 
 @pytest.fixture
@@ -31,7 +37,9 @@ async def satellite(hass):
     adapter = SimpleNamespace(
         async_send_tts_play=AsyncMock(), register_playback_handler=Mock()
     )
-    entity = TivooAssistSatellite("test-entry", manager, adapter)
+    display = ExpressionCoordinator(RecordingAdapter())
+    await display.async_start()
+    entity = TivooAssistSatellite("test-entry", manager, adapter, display)
     entity.hass = hass
     entity.async_write_ha_state = Mock()
     await entity.async_added_to_hass()
@@ -39,6 +47,7 @@ async def satellite(hass):
     yield entity, manager, stop
     await manager.async_shutdown()
     await entity.async_will_remove_from_hass()
+    await display.async_shutdown()
 
 
 async def activity(manager, state, session_id=SESSION_1):
@@ -100,7 +109,7 @@ async def test_upload_survives_run_end_and_starts_followup_after_playback(
         ),
     )
 
-    async def pipeline(audio, start_stage):
+    async def pipeline(audio, start_stage, *, context):
         await turns.put((start_stage, await anext(audio)))
         if start_stage == PipelineStage.WAKE_WORD:
             entity.on_pipeline_event(
@@ -196,7 +205,7 @@ async def test_stage_watchdogs(satellite, monkeypatch, advance_clock, events, re
     running = asyncio.Event()
     closed = asyncio.Event()
 
-    async def pipeline(audio, start_stage):
+    async def pipeline(audio, start_stage, *, context):
         assert start_stage == PipelineStage.WAKE_WORD
         running.set()
         try:
@@ -296,7 +305,7 @@ async def test_long_reply_does_not_pin_stt_cursor(hass, satellite, monkeypatch):
     processing = asyncio.Event()
     release = asyncio.Event()
 
-    async def pipeline(audio, start_stage):
+    async def pipeline(audio, start_stage, *, context):
         await anext(audio)
         entity.on_pipeline_event(
             PipelineEvent(
@@ -330,7 +339,7 @@ async def test_reconnect_waits_for_cancelled_pipeline_cleanup(satellite, monkeyp
     release = asyncio.Event()
     received = asyncio.Queue()
 
-    async def pipeline(audio, start_stage):
+    async def pipeline(audio, start_stage, *, context):
         if not first_running.is_set():
             first_running.set()
             try:
@@ -391,7 +400,7 @@ async def test_disconnect_closes_tts_after_pipeline_return(
 
     entity.adapter.async_send_tts_play.side_effect = send
 
-    async def pipeline(audio, start_stage):
+    async def pipeline(audio, start_stage, *, context):
         entity.on_pipeline_event(
             PipelineEvent(
                 Event.RUN_START,
@@ -470,7 +479,7 @@ async def test_confirmed_wake_replaces_active_turn(
         provider_lookup,
     )
 
-    async def pipeline(audio, stage):
+    async def pipeline(audio, stage, *, context):
         await events.put(stage)
         if stage == PipelineStage.STT:
             entity.on_pipeline_event(PipelineEvent(Event.STT_START))
@@ -574,6 +583,8 @@ async def test_confirmed_wake_replaces_active_turn(
         cleanup.set()
 
     assert await asyncio.wait_for(events.get(), 1) == PipelineStage.STT
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.WAKE_CONFIRMED
     assert await asyncio.wait_for(events.get(), 1) == (
         b"pr" * 321,
         b"go" * 320,
@@ -609,7 +620,7 @@ async def test_watcher_lifetime_and_successive_interrupts(hass, satellite, monke
         ),
     )
 
-    async def pipeline(audio, stage):
+    async def pipeline(audio, stage, *, context):
         await turns.put(stage)
         if stage == PipelineStage.WAKE_WORD:
             await anext(audio)
@@ -646,3 +657,171 @@ async def test_watcher_lifetime_and_successive_interrupts(hass, satellite, monke
     stop.assert_not_awaited()
     await hits.put(DetectionResult("tivoo-wake", "Tivoo", None))
     assert await asyncio.wait_for(turns.get(), 1) == PipelineStage.STT
+
+
+async def test_voice_display_context_kws_stt_playback_and_followup(
+    hass, satellite, monkeypatch
+):
+    entity, manager, stop = satellite
+    display = entity.display
+    turns = asyncio.Queue()
+    first_released = asyncio.Event()
+
+    async def pipeline(audio, stage, *, context):
+        await turns.put((stage, context))
+        if stage == PipelineStage.WAKE_WORD:
+            await first_released.wait()
+        else:
+            await asyncio.Future()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await activity(manager, "speech_start")
+    stage, context = await asyncio.wait_for(turns.get(), 1)
+    assert stage == PipelineStage.WAKE_WORD
+    assert context.id == display.active_generation
+    entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.IDLE
+    entity.on_pipeline_event(
+        PipelineEvent(
+            Event.WAKE_WORD_END, {"wake_word_output": {"wake_word_id": "tivoo-wake"}}
+        )
+    )
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.WAKE_CONFIRMED
+    entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+    entity.on_pipeline_event(PipelineEvent(Event.STT_END, {"stt_output": {"text": ""}}))
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.IDLE
+    entity.on_pipeline_event(
+        PipelineEvent(Event.STT_END, {"stt_output": {"text": "开灯"}})
+    )
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.THINKING
+    entity.on_pipeline_event(PipelineEvent(Event.TTS_START))
+    entity.on_pipeline_event(PipelineEvent(Event.TTS_END))
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.THINKING
+
+    # Simulate the playback ID generated by the real TTS resource owner.
+    entity.coordinator._turn.tts._manager.playback_id = "current"
+    entity.coordinator.on_playback("other", "playing")
+    assert display.desired_state is DisplayState.THINKING
+    entity.coordinator.on_playback("current", "playing")
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.SPEAKING
+    entity.coordinator.on_playback("current", "completed")
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.FOLLOWUP_WAIT
+    first_released.set()
+    await hass.async_block_till_done()
+
+    await activity(manager, "speech_start")
+    stage2, context2 = await asyncio.wait_for(turns.get(), 1)
+    assert stage2 == PipelineStage.STT
+    assert context2.id != context.id
+    assert display.active_generation == context2.id
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.ACTIVE_LISTENING
+    entity.coordinator.on_playback("current", "playing")
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.ACTIVE_LISTENING
+    await manager.async_disconnect()
+    await hass.async_block_till_done()
+    assert display.active_generation is None
+    assert display.desired_state is DisplayState.IDLE
+    stop.assert_not_awaited()
+
+
+async def test_voice_display_failed_stt_error_and_old_generation_are_isolated(
+    hass, satellite, monkeypatch
+):
+    entity, manager, _ = satellite
+    display = entity.display
+    turns = asyncio.Queue()
+
+    async def pipeline(audio, stage, *, context):
+        await turns.put((stage, context))
+        await asyncio.Future()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await activity(manager, "speech_start")
+    _, old_context = await asyncio.wait_for(turns.get(), 1)
+    entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+    entity.on_pipeline_event(
+        PipelineEvent(Event.STT_END, {"stt_output": {"text": " "}})
+    )
+    await hass.async_block_till_done()
+    assert display.desired_state is not DisplayState.THINKING
+    # A superseding turn makes old callbacks ineffective even if queued.
+    display.begin_generation("new-turn")
+    await display.async_set_intent(
+        DisplayState.SPEAKING, build_expression_command("music"), generation="new-turn"
+    )
+    await display.async_end_generation(old_context.id)
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.SPEAKING
+
+
+async def test_satellite_platform_reuses_runtime_display(hass):
+    from custom_components.tivoo.assist_satellite import async_setup_entry
+    from custom_components.tivoo.const import DOMAIN
+
+    display = ExpressionCoordinator(RecordingAdapter())
+    ingress = AudioSessionManager(AsyncMock())
+    adapter = SimpleNamespace()
+    hass.data.setdefault(DOMAIN, {})["entry"] = {
+        "display_coordinator": display,
+        "audio_session_manager": ingress,
+        "connection_adapter": adapter,
+    }
+    add = Mock()
+    await async_setup_entry(hass, SimpleNamespace(entry_id="entry"), add)
+    entity = add.call_args.args[0][0]
+    assert entity.display is display
+    assert entity.coordinator.display is display
+    assert entity.coordinator.ingress is ingress
+    hass.data[DOMAIN].pop("entry")
+    if not hass.data[DOMAIN]:
+        hass.data.pop(DOMAIN)
+
+
+async def test_satellite_first_speech_candidate_uses_display_hold_and_cooldown(
+    hass, satellite, monkeypatch
+):
+    import custom_components.tivoo.display_state as module
+
+    entity, manager, _ = satellite
+    monkeypatch.setattr(module.random, "random", lambda: 0.0)
+    monkeypatch.setattr(module, "CANDIDATE_HOLD_SECONDS", 0.03)
+    monkeypatch.setattr(module, "CANDIDATE_COOLDOWN_SECONDS", 0.2)
+    started = asyncio.Event()
+
+    async def pipeline(audio, stage, *, context):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await activity(manager, "speech_start")
+    await asyncio.wait_for(started.wait(), 1)
+    await asyncio.sleep(0.015)
+    assert entity.display.desired_state is DisplayState.IDLE
+    await asyncio.sleep(0.045)
+    assert entity.display.desired_state is DisplayState.ACTIVE_LISTENING
+    await activity(manager, "speech_end")
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.IDLE
+    await activity(manager, "speech_start")
+    await asyncio.sleep(0.045)
+    assert entity.display.desired_state is DisplayState.IDLE
+    entity.on_pipeline_event(
+        PipelineEvent(
+            Event.WAKE_WORD_END, {"wake_word_output": {"wake_word_id": "tivoo-wake"}}
+        )
+    )
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.WAKE_CONFIRMED
+    entity.on_pipeline_event(PipelineEvent(Event.ERROR))
+    await hass.async_block_till_done()
+    assert entity.display.active_generation is None
+    assert entity.display.desired_state is DisplayState.IDLE

@@ -387,3 +387,44 @@ async def test_b1_repeated_explicit_command_replays_while_visible():
     assert adapter.displays[-1] == command
     assert len(adapter.displays) == count + 1
     await coordinator.async_shutdown()
+
+
+async def test_voice_candidate_hold_probability_cooldown_and_stale_timer(monkeypatch):
+    import custom_components.tivoo.display_state as module
+
+    monkeypatch.setattr(module, "CANDIDATE_HOLD_SECONDS", 0.02, raising=False)
+    monkeypatch.setattr(module, "CANDIDATE_COOLDOWN_SECONDS", 0.12, raising=False)
+    monkeypatch.setattr(module.random, "random", lambda: 0.8)
+    adapter = RecordingAdapter()
+    display = ExpressionCoordinator(adapter)
+    await display.async_start()
+    display.begin_generation("a")
+    display.begin_candidate("a")
+    await asyncio.sleep(0.01)
+    display.end_candidate("a")
+    await asyncio.sleep(0.03)
+    assert display.desired_state is DisplayState.IDLE  # short noise
+
+    display.begin_candidate("a")
+    await asyncio.sleep(0.04)
+    assert display.desired_state is DisplayState.IDLE  # random miss
+    display.end_candidate("a")
+    monkeypatch.setattr(module.random, "random", lambda: 0.1)
+    display.begin_candidate("a")
+    await asyncio.sleep(0.04)
+    assert display.desired_state is DisplayState.ACTIVE_LISTENING
+    display.end_candidate("a")
+    await asyncio.sleep(0.01)
+    assert display.desired_state is DisplayState.IDLE
+    display.begin_candidate("a")
+    await asyncio.sleep(0.04)
+    assert display.desired_state is DisplayState.IDLE  # 10s cooldown
+    display.end_candidate("a")
+
+    display.begin_generation("b")
+    display.begin_candidate("b")
+    display.begin_generation("c")
+    await asyncio.sleep(0.04)
+    assert display.active_generation == "c"
+    assert display.desired_state is DisplayState.IDLE
+    await display.async_shutdown()

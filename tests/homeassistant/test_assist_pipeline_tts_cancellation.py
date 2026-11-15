@@ -359,11 +359,15 @@ async def test_normal_pipeline_completion_closes_all_owned_streams(
         if external_vad:
             from custom_components.tivoo.assist_satellite import TivooAssistSatellite
             from custom_components.tivoo.audio_session import AudioSessionManager
+            from custom_components.tivoo.display_state import ExpressionCoordinator
             from homeassistant.components.assist_pipeline import audio_enhancer
 
             assert await async_setup_component(hass, "ffmpeg", {})
             satellite = TivooAssistSatellite(
-                wyoming_entry.entry_id, AudioSessionManager(), SimpleNamespace()
+                wyoming_entry.entry_id,
+                AudioSessionManager(),
+                SimpleNamespace(),
+                ExpressionCoordinator(SimpleNamespace()),
             )
             satellite.hass = hass
             satellite.platform = SimpleNamespace(config_entry=wyoming_entry)
