@@ -71,6 +71,7 @@ from .const import (
     SERVICE_STOP_COUNTDOWN,
 )
 from .device_commands import AUDIO_SOURCES, GAME_CONTROLS, WEATHER_CODES
+from .display_state import build_expression_command
 from .media import load_media_frames
 from .presets.emotion_presets import EMOTION_PRESETS
 from .presets.presets import PRESETS
@@ -82,6 +83,33 @@ WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
 PLAYSTATES = ("previous", "pause", "play", "next")
 PRESET_REGISTRY = {**PRESETS, **EMOTION_PRESETS}
 VISIBLE_PRESETS = frozenset(PRESET_REGISTRY)
+
+REPLAYABLE_DISPLAY_SERVICES = frozenset(
+    {
+        SERVICE_SET_EXPRESSION,
+        SERVICE_SHOW_TEXT,
+        SERVICE_SHOW_IMAGE,
+        SERVICE_PLAY_ANIMATION,
+        SERVICE_SHOW_CLOCK,
+        SERVICE_SET_LIGHT,
+        SERVICE_SHOW_LYRICS,
+        SERVICE_SHOW_SCOREBOARD,
+        SERVICE_SHOW_DESIGN,
+        SERVICE_SHOW_EFFECTS,
+        SERVICE_SHOW_VISUALIZATION,
+        SERVICE_SHOW_GAME,
+    }
+)
+SCREEN_ACTION_SERVICES = frozenset(
+    {
+        SERVICE_START_COUNTDOWN,
+        SERVICE_STOP_COUNTDOWN,
+        SERVICE_SET_TIMER,
+        SERVICE_SET_NOISE_METER,
+        SERVICE_SET_SLEEP_MODE,
+        SERVICE_GAME_CONTROL,
+    }
+)
 
 
 def _integer_between(value: object, name: str, minimum: int, maximum: int) -> int:
@@ -177,9 +205,16 @@ def _validate_memorial_text(value: object) -> str:
 
 def _simple_handler(runtime: dict, service: str):
     async def handler(call: ServiceCall) -> None:
-        await runtime["command_adapter"].async_execute(
-            TivooCommand(name=service, data=dict(call.data))
-        )
+        command = TivooCommand(name=service, data=dict(call.data))
+        display = runtime["display_coordinator"]
+        if service == SERVICE_SET_SCREEN_POWER:
+            await display.async_set_screen_power(call.data[ATTR_VALUE])
+        elif service in REPLAYABLE_DISPLAY_SERVICES:
+            await display.async_set_explicit(command)
+        elif service in SCREEN_ACTION_SERVICES:
+            await display.async_execute_screen_action(command)
+        else:
+            await runtime["command_adapter"].async_execute(command)
 
     return handler
 
@@ -189,18 +224,8 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
 
     async def async_set_expression(call: ServiceCall) -> None:
         name = call.data[ATTR_NAME]
-        description, factory = PRESET_REGISTRY[name]
-        frames, delays = factory()
-        await runtime["command_adapter"].async_execute(
-            TivooCommand(
-                name=SERVICE_SET_EXPRESSION,
-                data={
-                    ATTR_NAME: name,
-                    "description": description,
-                    "frames": frames,
-                    "delays": delays,
-                },
-            )
+        await runtime["display_coordinator"].async_set_explicit(
+            build_expression_command(name)
         )
 
     async def async_show_text(call: ServiceCall) -> None:
@@ -222,7 +247,7 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
             font_size=options[ATTR_FONT_SIZE],
             font=options[ATTR_FONT],
         )
-        await runtime["command_adapter"].async_execute(
+        await runtime["display_coordinator"].async_set_explicit(
             TivooCommand(
                 name=SERVICE_SHOW_TEXT,
                 data={
@@ -243,7 +268,7 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         data = {ATTR_FILE: file, "frames": frames, "delays": delays}
         if time is not None:
             data[ATTR_TIME] = time
-        await runtime["command_adapter"].async_execute(
+        await runtime["display_coordinator"].async_set_explicit(
             TivooCommand(name=SERVICE_SHOW_IMAGE, data=data)
         )
 
@@ -262,14 +287,18 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         data = {ATTR_FILE: file, "frames": frames, "delays": delays}
         if time is not None:
             data[ATTR_TIME] = time
-        await runtime["command_adapter"].async_execute(
+        await runtime["display_coordinator"].async_set_explicit(
             TivooCommand(name=SERVICE_PLAY_ANIMATION, data=data)
         )
 
     simple_schemas = {
         SERVICE_STOP_COUNTDOWN: vol.Schema({}, extra=vol.PREVENT_EXTRA),
         SERVICE_SET_VOLUME: vol.Schema(
-            {vol.Required(ATTR_VOLUME): lambda value: _integer_between(value, ATTR_VOLUME, 0, 100)},
+            {
+                vol.Required(ATTR_VOLUME): lambda value: _integer_between(
+                    value, ATTR_VOLUME, 0, 100
+                )
+            },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_START_COUNTDOWN: vol.Schema(
@@ -277,7 +306,11 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SET_BRIGHTNESS: vol.Schema(
-            {vol.Required(ATTR_VALUE): lambda value: _integer_between(value, ATTR_VALUE, 0, 100)},
+            {
+                vol.Required(ATTR_VALUE): lambda value: _integer_between(
+                    value, ATTR_VALUE, 0, 100
+                )
+            },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SET_SCREEN_POWER: vol.Schema(
@@ -288,7 +321,9 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         ),
         SERVICE_SHOW_CLOCK: vol.Schema(
             {
-                vol.Required(ATTR_CLOCK): lambda value: _integer_between(value, ATTR_CLOCK, 0, 6),
+                vol.Required(ATTR_CLOCK): lambda value: _integer_between(
+                    value, ATTR_CLOCK, 0, 6
+                ),
                 vol.Optional(ATTR_TWENTYFOUR, default=True): bool,
                 vol.Optional(ATTR_WEATHER, default=False): bool,
                 vol.Optional(ATTR_TEMP, default=False): bool,
@@ -311,9 +346,13 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         ),
         SERVICE_SET_LIGHT: vol.Schema(
             {
-                vol.Required(ATTR_BRIGHTNESS): lambda value: _integer_between(value, ATTR_BRIGHTNESS, 0, 100),
+                vol.Required(ATTR_BRIGHTNESS): lambda value: _integer_between(
+                    value, ATTR_BRIGHTNESS, 0, 100
+                ),
                 vol.Optional(ATTR_COLOR): _validate_color,
-                vol.Optional(ATTR_EFFECT): lambda value: _integer_between(value, ATTR_EFFECT, 0, 4),
+                vol.Optional(ATTR_EFFECT): lambda value: _integer_between(
+                    value, ATTR_EFFECT, 0, 4
+                ),
                 vol.Optional(ATTR_POWER, default=True): bool,
             },
             extra=vol.PREVENT_EXTRA,
@@ -321,8 +360,12 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         SERVICE_SHOW_LYRICS: vol.Schema({}, extra=vol.PREVENT_EXTRA),
         SERVICE_SHOW_SCOREBOARD: vol.Schema(
             {
-                vol.Optional(ATTR_PLAYER1, default=0): lambda value: _integer_between(value, ATTR_PLAYER1, 0, 65535),
-                vol.Optional(ATTR_PLAYER2, default=0): lambda value: _integer_between(value, ATTR_PLAYER2, 0, 65535),
+                vol.Optional(ATTR_PLAYER1, default=0): lambda value: _integer_between(
+                    value, ATTR_PLAYER1, 0, 65535
+                ),
+                vol.Optional(ATTR_PLAYER2, default=0): lambda value: _integer_between(
+                    value, ATTR_PLAYER2, 0, 65535
+                ),
             },
             extra=vol.PREVENT_EXTRA,
         ),
@@ -334,17 +377,23 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         ),
         SERVICE_SET_ALARM: vol.Schema(
             {
-                vol.Optional(ATTR_SLOT, default=0): lambda value: _integer_between(value, ATTR_SLOT, 0, 255),
+                vol.Optional(ATTR_SLOT, default=0): lambda value: _integer_between(
+                    value, ATTR_SLOT, 0, 255
+                ),
                 vol.Optional(ATTR_TIME): _validate_time,
                 vol.Optional(ATTR_WEEKDAYS): [vol.In(WEEKDAYS)],
                 vol.Optional(ATTR_FREQUENCY): _validate_frequency,
-                vol.Optional(ATTR_VOLUME, default=100): lambda value: _integer_between(value, ATTR_VOLUME, 0, 100),
+                vol.Optional(ATTR_VOLUME, default=100): lambda value: _integer_between(
+                    value, ATTR_VOLUME, 0, 100
+                ),
             },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SET_MEMORIAL: vol.Schema(
             {
-                vol.Optional(ATTR_SLOT, default=0): lambda value: _integer_between(value, ATTR_SLOT, 0, 255),
+                vol.Optional(ATTR_SLOT, default=0): lambda value: _integer_between(
+                    value, ATTR_SLOT, 0, 255
+                ),
                 vol.Optional(ATTR_VALUE): _validate_datetime,
                 vol.Optional("text", default="Home Assistant"): _validate_memorial_text,
             },
@@ -360,29 +409,53 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
         SERVICE_SET_SLEEP_MODE: vol.Schema(
             {
                 vol.Required(ATTR_VALUE): bool,
-                vol.Optional(ATTR_TIME, default=120): lambda value: _integer_between(value, ATTR_TIME, 0, 255),
-                vol.Optional(ATTR_MODE, default=0): lambda value: _integer_between(value, ATTR_MODE, 0, 255),
+                vol.Optional(ATTR_TIME, default=120): lambda value: _integer_between(
+                    value, ATTR_TIME, 0, 255
+                ),
+                vol.Optional(ATTR_MODE, default=0): lambda value: _integer_between(
+                    value, ATTR_MODE, 0, 255
+                ),
                 vol.Optional(ATTR_FREQUENCY): _validate_frequency,
-                vol.Optional(ATTR_VOLUME, default=100): lambda value: _integer_between(value, ATTR_VOLUME, 0, 100),
+                vol.Optional(ATTR_VOLUME, default=100): lambda value: _integer_between(
+                    value, ATTR_VOLUME, 0, 100
+                ),
                 vol.Optional(ATTR_COLOR, default="black"): _validate_color,
-                vol.Optional(ATTR_BRIGHTNESS, default=100): lambda value: _integer_between(value, ATTR_BRIGHTNESS, 0, 100),
+                vol.Optional(ATTR_BRIGHTNESS, default=100): lambda value: (
+                    _integer_between(value, ATTR_BRIGHTNESS, 0, 100)
+                ),
             },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SHOW_DESIGN: vol.Schema(
-            {vol.Required(ATTR_NUMBER): lambda value: _integer_between(value, ATTR_NUMBER, 0, 3)},
+            {
+                vol.Required(ATTR_NUMBER): lambda value: _integer_between(
+                    value, ATTR_NUMBER, 0, 3
+                )
+            },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SHOW_EFFECTS: vol.Schema(
-            {vol.Required(ATTR_NUMBER): lambda value: _integer_between(value, ATTR_NUMBER, 0, 255)},
+            {
+                vol.Required(ATTR_NUMBER): lambda value: _integer_between(
+                    value, ATTR_NUMBER, 0, 255
+                )
+            },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SHOW_VISUALIZATION: vol.Schema(
-            {vol.Required(ATTR_NUMBER): lambda value: _integer_between(value, ATTR_NUMBER, 0, 255)},
+            {
+                vol.Required(ATTR_NUMBER): lambda value: _integer_between(
+                    value, ATTR_NUMBER, 0, 255
+                )
+            },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_SHOW_GAME: vol.Schema(
-            {vol.Optional(ATTR_INDEX): lambda value: _integer_between(value, ATTR_INDEX, 0, 127)},
+            {
+                vol.Optional(ATTR_INDEX): lambda value: _integer_between(
+                    value, ATTR_INDEX, 0, 127
+                )
+            },
             extra=vol.PREVENT_EXTRA,
         ),
         SERVICE_GAME_CONTROL: vol.Schema(
@@ -418,8 +491,12 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
                 vol.Optional(ATTR_COLOR, default="white"): _validate_color,
                 vol.Optional(ATTR_BACKGROUND, default="black"): _validate_color,
                 vol.Optional(ATTR_SPEED, default=100): _positive_speed,
-                vol.Optional(ATTR_STEP, default=2): lambda value: _integer_between(value, ATTR_STEP, 1, 8),
-                vol.Optional(ATTR_FONT_SIZE): lambda value: _integer_between(value, ATTR_FONT_SIZE, 8, 16),
+                vol.Optional(ATTR_STEP, default=2): lambda value: _integer_between(
+                    value, ATTR_STEP, 1, 8
+                ),
+                vol.Optional(ATTR_FONT_SIZE): lambda value: _integer_between(
+                    value, ATTR_FONT_SIZE, 8, 16
+                ),
                 vol.Optional(ATTR_FONT, default="unifont"): _validate_font,
             },
             extra=vol.PREVENT_EXTRA,
@@ -436,7 +513,9 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
             schema=vol.Schema(
                 {
                     vol.Required(ATTR_FILE): _validate_file,
-                    vol.Optional(ATTR_TIME): lambda value: _integer_between(value, ATTR_TIME, 0, 65535),
+                    vol.Optional(ATTR_TIME): lambda value: _integer_between(
+                        value, ATTR_TIME, 0, 65535
+                    ),
                 },
                 extra=vol.PREVENT_EXTRA,
             ),

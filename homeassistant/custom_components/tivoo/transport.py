@@ -149,6 +149,7 @@ class Esp32ConnectionAdapter:
             int, Callable[[DiagnosticMessage], Awaitable[None]]
         ] = {}
         self._spp_reverse_handler: Callable[[bytes], Awaitable[None]] | None = None
+        self._spp_state_handler: Callable[[str], Awaitable[None]] | None = None
         self.spp_hint = "unavailable"
         self._stopping = False
 
@@ -225,6 +226,22 @@ class Esp32ConnectionAdapter:
         if not callable(handler):
             raise TypeError("handler must be callable")
         self._spp_reverse_handler = handler
+
+    def register_spp_state_handler(
+        self, handler: Callable[[str], Awaitable[None]]
+    ) -> None:
+        """Observe validated diagnostic SPP connection events, not control hints."""
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+        self._spp_state_handler = handler
+
+    async def _notify_spp_state(self, state: str) -> None:
+        if self._spp_state_handler is None:
+            return
+        try:
+            await self._spp_state_handler(state)
+        except Exception:
+            _LOGGER.warning("Tivoo SPP state consumer failed", exc_info=True)
 
     async def _handle_control_data(self, data: bytes) -> None:
         """Handle a single-byte upstream hint or forward opaque SPP bytes."""
@@ -366,6 +383,12 @@ class Esp32ConnectionAdapter:
                     await writer.drain()
                     self.spp_hint = "unknown"
                     self.states[channel] = "connected"
+                    # A diagnostic snapshot may have arrived while 7777 was down.
+                    if (
+                        self.device_status is not None
+                        and self.device_status["spp"]["state"] == "connected"
+                    ):
+                        await self._notify_spp_state("spp_connected")
                     while data := await reader.read(4096):
                         await self._handle_control_data(data)
                 else:
@@ -512,12 +535,23 @@ class Esp32ConnectionAdapter:
                                 self._decode_json(message.payload)
                             )
                             self.device_status = payload
+                            # A validated initial snapshot handles HA reload while
+                            # Bluetooth remains connected and emits no new event.
+                            if payload["spp"]["state"] in {"connected", "disconnected"}:
+                                await self._notify_spp_state(
+                                    f"spp_{payload['spp']['state']}"
+                                )
                         elif message.message_type == TYPE_DEVICE_EVENT:
                             payload = self._validate_device_event(
                                 self._decode_json(message.payload)
                             )
                             self._apply_device_event(payload)
                             self.last_device_event = payload
+                            if payload["event"] in {
+                                "spp_connected",
+                                "spp_disconnected",
+                            }:
+                                await self._notify_spp_state(payload["event"])
                         elif message.message_type == TYPE_DIAGNOSTIC_LOG:
                             self._log_diagnostic(self._decode_json(message.payload))
                         elif message.message_type == TYPE_ERROR:

@@ -123,7 +123,7 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - Runtime 新增唯一 `runtime["display_coordinator"]`；底层仍保留真实 `runtime["connection_adapter"]`。
 - b1 在 `ExpressionCoordinator` 增加 facade：`async_set_screen_power(value: bool)`、`async_set_explicit(command: TivooCommand)`、`async_execute_screen_action(command: TivooCommand)`、`async_on_spp_state(state: str)`；所有 service/transport 接线只调用这些 facade。
 - `tivoo.set_screen_power(False)` → acquire 固定 compatibility owner；`True` → release。若还有其他 inhibit，True 不得点亮；若无其他 inhibit，必须发送现有 screen-on command 并 recompute。
-- Transport 新增单一 SPP 状态观察入口 `register_spp_state_handler(handler)`；只使用已经验证的 `DEVICE_EVENT spp_connected/spp_disconnected`，不把 `0x69/0x96` hint 当成物理连接确认。
+- Transport 新增单一 SPP 状态观察入口 `register_spp_state_handler(handler)`；连接变化使用已验证的 `DEVICE_EVENT spp_connected/spp_disconnected`；HA/诊断通道重载时还使用已验证的初始 `DEVICE_STATUS.spp.state` 快照同步，7777 重建后可据此恢复；绝不把 `0x69/0x96` hint 当成物理连接确认。
 - `spp_disconnected` 清除 `last_sent` 的可信发送缓存；`spp_connected` 时 OFF 重发 OFF，ON 强制重发 winner。
 - 可恢复显式内容固定为当前可安全重放的显示命令：`set_expression`、`show_text`、`show_image`、`play_animation`、`show_clock`、`set_light`、`show_lyrics`、`show_scoreboard`、`show_design`、`show_effects`、`show_visualization`、`show_game`。
 - `start/stop_countdown`、`set_timer`、`set_noise_meter`、`set_sleep_mode`、`game_control` 属于有设备运行副作用/时间状态的屏幕动作：gate ON 时维持原有直接执行；gate OFF 时明确拒绝，不缓存、不延迟执行，避免亮屏或恢复时重放旧副作用。

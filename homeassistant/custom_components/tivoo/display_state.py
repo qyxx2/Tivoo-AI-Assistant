@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
+from homeassistant.exceptions import HomeAssistantError
+
 from .commands import TivooCommand
 
 _LOGGER = logging.getLogger(__name__)
@@ -141,6 +143,7 @@ class ExpressionCoordinator:
         self._idle_timer: asyncio.TimerHandle | None = None
         self._lock = asyncio.Lock()
         self._power_dirty = False
+        self._spp_connected = True
         self._started = False
         self._shutdown = False
         self._active_generation: str | None = None
@@ -277,6 +280,51 @@ class ExpressionCoordinator:
     async def async_temporary_wake(self, owner: str, ttl: float) -> None:
         await self._gate.async_temporary_wake(owner, ttl)
 
+    async def async_set_screen_power(self, value: bool) -> None:
+        """Map the original bool service to one fixed compatibility owner."""
+        if not value:
+            await self.async_acquire_screen_off("compatibility")
+            return
+        was_on = self._gate.is_on
+        await self.async_release_screen_off("compatibility")
+        if was_on and self._gate.is_on:
+            # Explicit ON is a real screen-on request, even when already ON.
+            self._power_dirty = True
+            await self._async_recompute(force_display=True)
+
+    async def async_set_explicit(self, command: TivooCommand) -> None:
+        """Retain explicit content; repeated user requests restart the same visual."""
+        repeated_visible = (
+            self._desired_state is DisplayState.EXPLICIT_CONTENT
+            and self._desired_command == command
+            and self._last_sent == command
+        )
+        await self.async_set_intent(DisplayState.EXPLICIT_CONTENT, command)
+        if repeated_visible and self._gate.is_on:
+            await self.async_force_recompute()
+
+    async def async_execute_screen_action(self, command: TivooCommand) -> None:
+        """Do not enqueue time-sensitive device actions while the screen is off."""
+        if not self._gate.is_on:
+            raise HomeAssistantError(
+                f"Tivoo screen is off; {command.name} was not sent"
+            )
+        await self._adapter.async_execute(command)
+        self._last_sent = None
+
+    async def async_on_spp_state(self, state: str) -> None:
+        """React only to validated diagnostic DEVICE_EVENT connection changes."""
+        if self._shutdown:
+            return
+        if state == "spp_disconnected":
+            self._spp_connected = False
+            self._last_sent = None
+            self._cancel_idle_timer()
+        elif state == "spp_connected":
+            self._spp_connected = True
+            self._last_sent = None
+            await self.async_force_recompute()
+
     async def _async_power_changed(self, is_on: bool) -> None:
         self._power_dirty = True
         await self._async_recompute(force_display=is_on)
@@ -299,6 +347,10 @@ class ExpressionCoordinator:
                 else self._intents[winner].command
             )
             self._desired_state, self._desired_command = winner, command
+
+            if not self._spp_connected:
+                self._cancel_idle_timer()
+                return
 
             if self._power_dirty or (force_display and not self._gate.is_on):
                 power = self._gate.is_on

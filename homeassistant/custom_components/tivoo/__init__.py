@@ -1,10 +1,12 @@
 """Tivoo Home Assistant integration."""
 
 import json
+import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .audio_resource import create_pipeline_event_callback
 from .audio_session import AudioSessionManager
@@ -17,8 +19,21 @@ from .const import (
     DOMAIN,
 )
 from .diagnostics import TYPE_MIC_CAPTURE_STOP
+from .display_state import ExpressionCoordinator
 from .services import register_services, unregister_services
 from .transport import Esp32ConnectionAdapter
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class _RuntimeDisplayAdapter:
+    """Use the current semantic adapter, including HA test adapter substitutions."""
+
+    def __init__(self, runtime: dict) -> None:
+        self._runtime = runtime
+
+    async def async_execute(self, command) -> None:
+        await self._runtime["command_adapter"].async_execute(command)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -50,11 +65,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             CONF_TIVOO_BLUETOOTH_MAC, DEFAULT_TIVOO_BLUETOOTH_MAC
         ),
     }
+    display = ExpressionCoordinator(_RuntimeDisplayAdapter(runtime))
+    runtime["display_coordinator"] = display
+    adapter.register_spp_state_handler(display.async_on_spp_state)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.ASSIST_SATELLITE]
     )
     await adapter.async_start()
+    try:
+        await display.async_start()
+    except HomeAssistantError as err:
+        # The runtime may load before 7777 becomes available. Keep desired
+        # and retry it on a validated SPP reconnect or a later command.
+        _LOGGER.debug("Tivoo initial idle is pending transport: %s", err)
     register_services(hass, runtime)
     return True
 
@@ -69,6 +93,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if domain_data is not None:
         runtime = domain_data.get(entry.entry_id)
         if runtime is not None:
+            await runtime["display_coordinator"].async_shutdown()
             await runtime["audio_session_manager"].async_shutdown()
             await runtime["connection_adapter"].async_stop()
 

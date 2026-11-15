@@ -1172,6 +1172,7 @@ async def test_device_status_and_event_validation_updates_only_known_state(
 
     handled = []
     status_requests = []
+    spp_states = []
 
     async def handler(message):
         handled.append(message)
@@ -1228,6 +1229,10 @@ async def test_device_status_and_event_validation_updates_only_known_state(
             (TYPE_DEVICE_EVENT, {"event": "spp_connected", "uptime_ms": 11}),
             (
                 TYPE_DEVICE_EVENT,
+                {"event": "spp_connected", "uptime_ms": 12, "data": {}},
+            ),
+            (
+                TYPE_DEVICE_EVENT,
                 {"event": "spp_disconnected", "uptime_ms": 12, "data": {}},
             ),
         ]
@@ -1251,15 +1256,29 @@ async def test_device_status_and_event_validation_updates_only_known_state(
     )
     adapter.register_message_handler(TYPE_DEVICE_STATUS, handler)
     adapter.register_message_handler(TYPE_DEVICE_EVENT, handler)
+
+    async def on_spp_state(state):
+        spp_states.append(state)
+
+    adapter.register_spp_state_handler(on_spp_state)
+    await adapter._handle_control_data(b"\x69")
+    await adapter._handle_control_data(b"\x96")
+    assert spp_states == []  # Raw control hints are not connection confirmation.
     await adapter.async_start()
     try:
         for _ in range(100):
-            if len(handled) == 2:
+            if len(handled) == 3:
                 break
             await asyncio.sleep(0.01)
         assert [message.message_type for message in handled] == [
             TYPE_DEVICE_STATUS,
             TYPE_DEVICE_EVENT,
+            TYPE_DEVICE_EVENT,
+        ]
+        assert spp_states == [
+            "spp_connected",  # Validated initial DEVICE_STATUS snapshot.
+            "spp_connected",  # Validated DEVICE_EVENT transition.
+            "spp_disconnected",
         ]
         assert (
             adapter.device_status["request_id"] == status_requests[0][2]["request_id"]

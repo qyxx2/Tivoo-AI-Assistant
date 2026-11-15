@@ -243,10 +243,13 @@ async def test_p4b5_streamable_http_calls_all_tivoo_tools(
             assert result.is_error is not True
 
         await hass.async_block_till_done()
-        assert [command.name for command in adapter.commands] == [
-            service_name for _, _, service_name in cases
-        ]
-        for command, (_, arguments, _) in zip(adapter.commands, cases, strict=True):
+        # P6.6b1 explicit ON reasserts the current visual after screen-on.
+        expected_names = [service_name for _, _, service_name in cases]
+        expected_names.insert(4, "show_text")
+        assert [command.name for command in adapter.commands] == expected_names
+        assert adapter.commands[4] == adapter.commands[1]
+        original_commands = adapter.commands[:4] + adapter.commands[5:]
+        for command, (_, arguments, _) in zip(original_commands, cases, strict=True):
             for key, value in arguments.items():
                 assert command.data[key] == value
 

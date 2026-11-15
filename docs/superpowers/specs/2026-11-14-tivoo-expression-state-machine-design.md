@@ -121,6 +121,7 @@ ScreenPowerGate 高于所有显示 intent。只要 gate 判定为 OFF：
 
 - session/turn 正常结束、错误、取消、follow-up timeout 或 generation 替换时，统一清除该 generation 的会话级 intents，然后 recompute；不写 A→B 的成对回退分支。
 - SPP 重连后：若 gate OFF，重新确保 OFF；若 gate ON，重新发送当前赢家。
+- HA 重载但 SPP 已连时，以校验通过的初始 `DEVICE_STATUS.spp.state` 同步一次；7777 控制连接晚于诊断快照时仍重放当前 desired，不依赖重新出现 `spp_connected` 事件。原始 `0x69/0x96` 仅为 hint，不用于认定物理 SPP 已连。
 - `last_sent` 只表示 HA 已成功提交对应 transport 写入，不等于物理 16×16 像素已确认。
 - 不基于当前 opaque reverse SPP 字节构造“当前表情/当前像素”状态 API；后续只有获得经过型号实机验证的明确上游协议后才能增加。
 

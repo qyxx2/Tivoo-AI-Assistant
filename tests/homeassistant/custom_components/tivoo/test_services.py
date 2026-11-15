@@ -114,3 +114,121 @@ async def test_unloaded_tivoo_service_is_not_callable(hass, enable_custom_integr
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(DOMAIN, "stop_countdown", {}, blocking=True)
+
+
+async def test_b1_runtime_sets_up_and_shuts_down_single_display_coordinator(
+    hass, enable_custom_integrations
+):
+    entry, runtime = await _loaded_entry(hass)
+    coordinator = runtime["display_coordinator"]
+    assert coordinator.desired_state.value == "idle"
+    assert coordinator is hass.data[DOMAIN][entry.entry_id]["display_coordinator"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert coordinator._shutdown is True
+
+
+async def test_b1_replayable_service_is_gated_and_restored(
+    hass, enable_custom_integrations
+):
+    _, runtime = await _loaded_entry(hass)
+    adapter = MemoryCommandAdapter()
+    runtime["command_adapter"] = adapter
+    coordinator = runtime["display_coordinator"]
+    await hass.services.async_call(
+        DOMAIN, "set_screen_power", {"value": False}, blocking=True
+    )
+    await hass.services.async_call(DOMAIN, "show_text", {"value": "old"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "show_text", {"value": "new"}, blocking=True)
+    assert [cmd.name for cmd in adapter.commands] == ["set_screen_power"]
+    assert coordinator.desired_command.data["value"] == "new"
+    await hass.services.async_call(
+        DOMAIN, "set_screen_power", {"value": True}, blocking=True
+    )
+    assert [cmd.name for cmd in adapter.commands] == [
+        "set_screen_power",
+        "set_screen_power",
+        "show_text",
+    ]
+    assert adapter.commands[-1].data["value"] == "new"
+
+
+@pytest.mark.parametrize(
+    ("service", "data"),
+    [
+        ("set_expression", {"name": "fish"}),
+        ("show_clock", {"clock": 0}),
+        ("set_light", {"brightness": 50}),
+        ("show_lyrics", {}),
+        ("show_scoreboard", {}),
+        ("show_design", {"number": 0}),
+        ("show_effects", {"number": 0}),
+        ("show_visualization", {"number": 0}),
+        ("show_game", {}),
+    ],
+)
+async def test_b1_replayable_services_are_queued_while_off(
+    hass, enable_custom_integrations, service, data
+):
+    _, runtime = await _loaded_entry(hass)
+    adapter = MemoryCommandAdapter()
+    runtime["command_adapter"] = adapter
+    coordinator = runtime["display_coordinator"]
+    await coordinator.async_acquire_screen_off("night")
+    adapter.commands.clear()
+    await hass.services.async_call(DOMAIN, service, data, blocking=True)
+    assert adapter.commands == []
+    assert coordinator.desired_command.name == service
+    await coordinator.async_release_screen_off("night")
+    assert [cmd.name for cmd in adapter.commands] == ["set_screen_power", service]
+
+
+@pytest.mark.parametrize(
+    ("service", "data"),
+    [
+        ("start_countdown", {"countdown": "00:30"}),
+        ("stop_countdown", {}),
+        ("set_timer", {"value": True}),
+        ("set_noise_meter", {"value": True}),
+        ("set_sleep_mode", {"value": True}),
+        ("game_control", {"value": "up"}),
+    ],
+)
+async def test_b1_screen_actions_are_rejected_while_off_not_deferred(
+    hass, enable_custom_integrations, service, data
+):
+    _, runtime = await _loaded_entry(hass)
+    adapter = MemoryCommandAdapter()
+    runtime["command_adapter"] = adapter
+    coordinator = runtime["display_coordinator"]
+    await coordinator.async_acquire_screen_off("night")
+    adapter.commands.clear()
+    with pytest.raises(HomeAssistantError, match="screen is off"):
+        await hass.services.async_call(DOMAIN, service, data, blocking=True)
+    assert adapter.commands == []
+    await coordinator.async_release_screen_off("night")
+    assert not any(cmd.name == service for cmd in adapter.commands)
+
+
+@pytest.mark.parametrize("service", ["show_image", "play_animation"])
+async def test_b1_media_content_is_cached_off_and_replayed_on(
+    hass, enable_custom_integrations, service
+):
+    from pathlib import Path
+
+    from PIL import Image
+
+    _, runtime = await _loaded_entry(hass)
+    media_directory = Path(runtime["media_directory"])
+    media_directory.mkdir(parents=True, exist_ok=True)
+    image_path = media_directory / "b1.gif"
+    Image.new("RGB", (16, 16), (110, 140, 180)).save(image_path, format="GIF")
+    adapter = MemoryCommandAdapter()
+    runtime["command_adapter"] = adapter
+    coordinator = runtime["display_coordinator"]
+    await coordinator.async_acquire_screen_off("night")
+    adapter.commands.clear()
+    await hass.services.async_call(DOMAIN, service, {"file": "b1.gif"}, blocking=True)
+    assert adapter.commands == []
+    assert coordinator.desired_command.name == service
+    await coordinator.async_release_screen_off("night")
+    assert [cmd.name for cmd in adapter.commands] == ["set_screen_power", service]

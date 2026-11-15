@@ -34,7 +34,7 @@
 | ESM-C16 | 底层屏幕电源继续复用现有 `tivoo.set_screen_power(value: bool)` / `tivoo__SetScreenPower`；不得新增 raw SPP 息屏协议 | 当前代码、protocol golden、固定 hass-divoom send_on/send_off 已核对 | 已实现底层能力 |
 | ESM-C17 | 多来源息屏在内部使用 owner inhibit：任一 owner 未释放则 gate 仍为 OFF；现有公开 bool service/MCP 保持兼容并只能映射到固定 compatibility owner。需要独立 owner 的自动化/AI 必须走 Coordinator 稳定 owner 路径；公开 owner schema 留待实现批次定义 | owner 是 HA 侧协调概念，不是上游协议字段；当前 bool 接口无法表达多 owner | 新内部合同；公开扩展延后 |
 | ESM-C18 | 预留内部 `temporary_wake(owner, ttl)`：只临时绕过 gate，不删除 inhibit；到期后若仍有 inhibit 必须再次 OFF | 用于未来高优先级告警；是否暴露公开 service/MCP 不在本批次定义 | 新内部合同；公开扩展延后 |
-| ESM-C19 | OFF→ON 后必须立刻 recompute 并重新发送当前赢家；SPP 重连时 OFF 要重申 OFF，ON 要重发赢家 | 上游 on/off 本身是 `0x45 0x01` 显示/灯效模式，不保证恢复原 GIF | 新逻辑合同 |
+| ESM-C19 | OFF→ON 后必须立刻 recompute 并重新发送当前赢家；SPP 重连时 OFF 要重申 OFF，ON 要重发赢家；重载后已连 SPP 的初始已校验 DEVICE_STATUS 也应触发一次同步 | 上游 on/off 本身是 `0x45 0x01` 显示/灯效模式，不保证恢复原 GIF | 新逻辑合同 |
 | ESM-C20 | HA 的 `desired_state/last_sent` 是本状态机权威；`last_sent` 只证明 transport 写入，不证明物理像素；当前不得从 opaque SPP reverse 推导“当前表情/当前像素” | P6 reverse 只验证有限状态回显；现有 DEVICE_STATUS 不是完整显示状态 API | 必须保持 |
 | ESM-C21 | 状态表情优先复用现有 preset；若后续新增专用 listening/speaking 动画，只替换角色到 preset 的映射，不改变状态机事件/优先级合同 | 避免把视觉素材名称耦合进生命周期 | 新逻辑合同 |
 | ESM-C22 | 未来主动告警/主动播报必须复用同一 ScreenPowerGate/ExpressionCoordinator；其 announce/start-conversation 调用接口由后续独立规格核对后再定义 | 本批次不实现主动交互，不猜 HA 公开参数 | 预留 |

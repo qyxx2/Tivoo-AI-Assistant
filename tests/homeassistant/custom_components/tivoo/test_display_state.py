@@ -96,7 +96,8 @@ async def test_priority_and_generic_restore_without_pairwise_fallback():
             generation=None if state is DisplayState.EXPLICIT_CONTENT else "turn-1",
         )
     assert coordinator.desired_state is DisplayState.IDLE
-    assert len(adapter.displays) >= 16
+    # Random idle may equal the last restored command, so one send can dedupe.
+    assert len(adapter.displays) >= 15
     await coordinator.async_shutdown()
 
 
@@ -313,4 +314,76 @@ async def test_force_recompute_reasserts_off_without_display():
     await coordinator.async_force_recompute()
     assert adapter.powers == [False, False]
     assert len(adapter.displays) == initial_display_count
+    await coordinator.async_shutdown()
+
+
+async def test_b1_facade_compatibility_screen_power_preserves_other_owners():
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+    await coordinator.async_acquire_screen_off("night")
+    await coordinator.async_set_screen_power(False)
+    await coordinator.async_set_explicit(TivooCommand("show_text", {"value": "first"}))
+    before = len(adapter.displays)
+    await coordinator.async_set_screen_power(True)
+    assert adapter.powers == [False]
+    assert len(adapter.displays) == before
+    assert coordinator.desired_state is DisplayState.EXPLICIT_CONTENT
+    await coordinator.async_release_screen_off("night")
+    assert adapter.powers == [False, True]
+    assert adapter.displays[-1].data["value"] == "first"
+    await coordinator.async_shutdown()
+
+
+async def test_b1_spp_disconnect_invalidates_cache_and_reconnect_repaints():
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+    explicit = TivooCommand("show_text", {"value": "persist"})
+    await coordinator.async_set_explicit(explicit)
+    await coordinator.async_on_spp_state("spp_disconnected")
+    assert coordinator.last_sent is None
+    await coordinator.async_set_explicit(TivooCommand("show_text", {"value": "new"}))
+    assert adapter.displays[-1] == explicit
+    await coordinator.async_on_spp_state("spp_connected")
+    assert adapter.displays[-1].data["value"] == "new"
+    await coordinator.async_acquire_screen_off("night")
+    await coordinator.async_on_spp_state("spp_disconnected")
+    count = len(adapter.displays)
+    await coordinator.async_on_spp_state("spp_connected")
+    assert adapter.powers[-1] is False
+    assert len(adapter.displays) == count
+    await coordinator.async_shutdown()
+
+
+async def test_b1_screen_action_is_not_delayed_through_screen_off():
+    from homeassistant.exceptions import HomeAssistantError
+
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+    await coordinator.async_acquire_screen_off("night")
+    with pytest.raises(HomeAssistantError, match="screen is off"):
+        await coordinator.async_execute_screen_action(
+            TivooCommand("start_countdown", {"countdown": "00:30"})
+        )
+    await coordinator.async_release_screen_off("night")
+    assert not any(cmd.name == "start_countdown" for cmd in adapter.commands)
+    await coordinator.async_execute_screen_action(
+        TivooCommand("start_countdown", {"countdown": "00:30"})
+    )
+    assert adapter.commands[-1].name == "start_countdown"
+    await coordinator.async_shutdown()
+
+
+async def test_b1_repeated_explicit_command_replays_while_visible():
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+    command = TivooCommand("show_text", {"value": "repeat"})
+    await coordinator.async_set_explicit(command)
+    count = len(adapter.displays)
+    await coordinator.async_set_explicit(command)
+    assert adapter.displays[-1] == command
+    assert len(adapter.displays) == count + 1
     await coordinator.async_shutdown()
