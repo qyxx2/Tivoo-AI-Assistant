@@ -162,7 +162,13 @@ async def test_b4_set_mood_accepts_only_current_mood_presets(
     assert coordinator.desired_state.value == "ai_mood"
     assert coordinator.desired_command.name == "set_expression"
     assert coordinator.desired_command.data["name"] == name
-    assert adapter.commands[-1].data["name"] == name
+    if adapter.commands:
+        assert adapter.commands[-1].data["name"] == name
+    else:
+        # The visible idle preset may already be the requested mood (notably
+        # sleepy). In that case the coordinator correctly deduplicates the
+        # identical display payload while still changing the winning intent.
+        assert coordinator.last_sent == coordinator.desired_command
 
 
 @pytest.mark.parametrize(
