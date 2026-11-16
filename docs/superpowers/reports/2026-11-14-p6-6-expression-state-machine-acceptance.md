@@ -53,6 +53,19 @@
 
 NAS `tcpdump -i any` 会把同一包显示两次，因此以 timestamp/seq 去重；这里只证明 HA→ESP32 transport 写入，不声称 Tivoo 物理像素 ACK。
 
+#### 2026-11-16 手动复验补充：idle timer 饥饿修复
+
+人工观察发现待机画面可长期停在同一 preset。生产被动抓包确认并非 Tivoo 未接收命令，而是 `ACTIVE_LISTENING` candidate 短暂覆盖会让 `_async_recompute()` 取消 idle timer；环境语音/VAD candidate 足够频繁时，30–90 秒计时会反复从头开始，实际 idle 轮换可被长期饿死。
+
+修复后 idle timer 在短暂 voice/session intent 期间继续保持；显式内容、screen OFF、SPP 断开仍会停止 timer。timer 到期时若当前仍有更高优先级 session intent，只重新安排下一次轮换，不发送 idle 覆盖高优先级画面。
+
+- 新增回归：`test_transient_voice_state_does_not_reset_idle_rotation_timer`，修复前 RED、修复后 GREEN。
+- `test_display_state.py`：**21 passed**；`test_services.py + test_assist_satellite.py`：**77 passed**；两处改动 Ruff / `git diff --check` 均通过。
+- 生产重新部署 `display_state.py` 后，工作区与 HA 容器 SHA256 同为 `4b63b4f78308c8fee43097201fa50926ba367ba55d6e0824d6dca955e86f6568`，7777/7778 恢复 ESTABLISHED。
+- 复验抓包中 `513 bytes = standby`、`266 bytes = sleepy`。`standby` 于 epoch `1794804877.512359` 下发后保持至 `sleepy` 于 `1794804928.423720` 下发，间隔约 **50.911 秒**，属于真实 30–90 秒 idle→idle 轮换；随后 epoch `1794804930.924028` 的短暂 `standby` 与 candidate 覆盖一致，不再重置 idle 轮换周期。
+
+因此本项现按“自动化 + 生产 transport 实测”判定 PASS；Tivoo 仍无物理像素 ACK 接口，肉眼显示效果由人工观察补充。
+
 ### 4.2 screen-off / desired / ON 恢复
 
 真实生产 HA Service + 7777 抓包：

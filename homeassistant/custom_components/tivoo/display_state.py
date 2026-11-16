@@ -476,7 +476,10 @@ class ExpressionCoordinator:
                 await self._adapter.async_execute(command)
                 self._last_sent = command
 
-            if self._gate.is_on and winner is DisplayState.IDLE:
+            if (
+                self._gate.is_on
+                and DisplayState.EXPLICIT_CONTENT not in self._intents
+            ):
                 self._ensure_idle_timer()
             else:
                 self._cancel_idle_timer()
@@ -495,7 +498,15 @@ class ExpressionCoordinator:
 
     async def _async_rotate_idle(self) -> None:
         self._idle_timer = None
-        if self._shutdown or self._desired_state is not DisplayState.IDLE:
+        if (
+            self._shutdown
+            or not self._spp_connected
+            or not self._gate.is_on
+            or DisplayState.EXPLICIT_CONTENT in self._intents
+        ):
+            return
+        if self._desired_state is not DisplayState.IDLE:
+            self._ensure_idle_timer()
             return
         previous = self._idle_command.data["name"] if self._idle_command else None
         alternatives = tuple(name for name in IDLE_PRESETS if name != previous)

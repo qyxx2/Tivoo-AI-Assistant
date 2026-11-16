@@ -265,6 +265,32 @@ async def test_idle_rotates_using_existing_pool_and_interval(monkeypatch):
     await coordinator.async_shutdown()
 
 
+async def test_transient_voice_state_does_not_reset_idle_rotation_timer(monkeypatch):
+    import custom_components.tivoo.display_state as module
+
+    monkeypatch.setattr(module.random, "choice", lambda choices: choices[0])
+    monkeypatch.setattr(module.random, "uniform", lambda start, end: 60.0)
+
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+    idle_timer = coordinator._idle_timer
+
+    coordinator.begin_generation("turn")
+    await coordinator.async_set_intent(
+        DisplayState.ACTIVE_LISTENING,
+        expression("standby"),
+        generation="turn",
+    )
+    assert coordinator._idle_timer is idle_timer
+
+    await coordinator.async_clear_intent(
+        DisplayState.ACTIVE_LISTENING, generation="turn"
+    )
+    assert coordinator._idle_timer is idle_timer
+    await coordinator.async_shutdown()
+
+
 async def test_gate_multiple_inhibits_and_idempotence():
     transitions = []
 
