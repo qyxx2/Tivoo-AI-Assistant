@@ -25,7 +25,7 @@
 | PR-C04 | 跟随实际正常 TTS `completed` 或无 TTS 的有效响应打开 8 秒 follow-up；提示音 `completed` 不得打开 follow-up | `_open_followup` / playback dispatcher | b2 |
 | PR-C05 | follow-up `speech_start` 仍立刻启动免唤醒词 STT，且重置/取消原 8 秒等待按现有逻辑；提示音不等待 STT 才播放，STT 不等待提示音结束 | `on_activity` / Pipeline | b2 |
 | PR-C06 | 唤醒后 STT 使用原 MIC ingress，提示音播放中 RX/AFE/VAD/MIC_PCM 持续；禁止短时收音屏蔽或关闭上传 | ESP32 AFE / HA ingress | b3 |
-| PR-C07 | 四个预制短 MP3（`ready_01`…`ready_04`），32 kHz、mono、`audio/mpeg`、目标 ≤0.9 秒；实际素材来源/使用权限和时长留记录，运行时不 TTS | `homeassistant/prompt_assets/` / `/config/www/tivoo/prompts/` | b0 |
+| PR-C07 | 三个预制短 MP3（`ready_01`…`ready_03`，内容“我在/在的/你说”），32 kHz、mono、`audio/mpeg`、目标 ≤0.9 秒；必须由当前生产 HA 实际 TTS Provider/模型/voice 参数一次性生成，前后保留短静音避免掐头去尾；运行时不 TTS | `homeassistant/prompt_assets/` / `/config/www/tivoo/prompts/` | b0 |
 | PR-C08 | 随机选已配置文件且相邻两次不同；文件缺失/没有可用文件静默跳过，不产生推理或影响语音转移 | `PromptSoundPlayer` | b1 |
 | PR-C09 | 生产 URL 使用 HA 内网基址 `/local/tivoo/prompts/<固定文件>.mp3`；ESP32 GET 200，Content-Type 为 `audio/mpeg`，不经认证重定向、不可使用外网/Cloud 位置 | HA 静态资源 / URL 构造 | b0/b3 |
 | PR-C10 | 不扩大 `build_internal_tts_url()` 的 `/api/tts_proxy/` 限制；提示音 URL 单独限定为固定本地素材 | HA prompt URL helper | b1 |
@@ -36,10 +36,10 @@
 | PR-C15 | 播放占用互斥：旧 TTS 尚在活动时不抢占；提示音占用时正常 TTS 下发前必须先自然结束或定向停止并确认设备释放；不以设备 `audio_busy` 作为正常仲裁 | Prompt owner + TtsResource dispatch seam | b1/b2 |
 | PR-C16 | 有效命令开始时优先用户：未发出的提示音直接取消，已播放提示音仅允许匹配自身 ID 的 `AUDIO_STOP`；不得发无 ID 的 STOP 或停正常回答 | `on_activity` / `STT_VAD_START` / prompt owner | b2 |
 | PR-C17 | 短提示音取最终 TX PCM 作为 AEC R，`vad_mute_playback=false`，同音源播放时 MIC RX 不停；不额外运行声源分离模型 | ESP32 output manager / AFE | b3 |
-| PR-C18 | 播放“嘟”和中文短句期间同时讲话：真实语音首字进入 STT；提示音自身不得诱发 follow-up 假启动或错误命令；不同距离/音量下记录 AEC ref misalignment/underrun、VAD、STT，实机失败明确 GAP | P6.7 现场声学验收 | b3 |
+| PR-C18 | 播放“我在”“在的”“你说”期间同时讲话：真实语音首字进入 STT；提示音自身不得诱发 follow-up 假启动或错误命令；不同距离/音量下记录 AEC ref misalignment/underrun、VAD、STT，实机失败明确 GAP | P6.7 现场声学验收 | b3 |
 | PR-C19 | 提示音文件 HTTP 异常、DAC busy、断线、超时均安静跳过；不能把当前 Pipeline 标为失败、阻塞取消/收音或遗留音频 request | Prompt owner / transport | b1/b2 |
 | PR-C20 | 新增提示音不改 P6.6 screen power gate/idle/priority，不触发 AstrBot SSE、ChatLog、LLM/工具调用或新对话 | Satellite / ExpressionCoordinator | b2/b3 |
-| PR-C21 | NAS 实际部署包含四个静态文件，验证 LAN HTTP 获取/解码、真实输出/回声；b0/b1/b2 只表示独立软件证据，不冒充 b3 真人声学 PASS | 部署与验收报告 | b0/b3 |
+| PR-C21 | NAS 实际部署包含三个静态文件，验证 LAN HTTP 获取/解码、真实输出/回声；b0/b1/b2 只表示独立软件证据，不冒充 b3 真人声学 PASS | 部署与验收报告 | b0/b3 |
 
 ## 3. 失效/竞态矩阵
 
