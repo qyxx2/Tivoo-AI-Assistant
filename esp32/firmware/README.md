@@ -20,7 +20,7 @@ At CMake configure time, the firmware version is generated as `0.1.0+<git-short-
 
 ## INMP441 capture
 
-The **Tivoo I2S audio** menu defaults to BCLK GPIO26, WS GPIO25, and INMP441 SD GPIO34. Tie L/R to GND to select the left slot. Power the microphone from 3.3 V with a common ground. Verify that SD has a pull-down of about 100 kΩ on the module or wiring because GPIO34 has no internal pull-down. The DAC data GPIO defaults to unused for this capture batch.
+The **Tivoo I2S audio** menu defaults to BCLK GPIO26, WS GPIO25, INMP441 SD GPIO32, and PCM5102 DIN GPIO33. Tie microphone L/R to GND to select the left slot. Power the microphone from 3.3 V with a common ground. GPIO27 is reserved for the onboard WS2812 RGB LED: firmware sends an all-zero color frame via RMT at startup and then leaves GPIO27 low. Do not use GPIO27 for I2S output. Existing boards with a local `sdkconfig` must also update the two pin settings; Kconfig default changes do not override saved values.
 
 Capture uses I2S0 in Philips stereo mode at 32 kHz with 32-bit slots. The frontend applies a low-pass filter before 2:1 decimation and runs the 16 kHz ESP-SR AEC and VAD. Existing local builds can select 240 MHz under **CPU frequency** in menuconfig. The frontend advertises `mic_activity_events` after successful initialization and requires a B7-compatible HA integration for that handshake.
 
@@ -203,7 +203,7 @@ The P5b4 report records each physical item separately from host-test results.
 ## P6.5b10 streaming playback
 
 The ESP32 plays `audio/mpeg` resources from HA TTS Proxy through the shared
-32 kHz I²S controller. The PCM5102 DIN input uses GPIO27 by default. Set
+32 kHz I²S controller. The PCM5102 DIN input uses GPIO33 by default (GPIO32 receives INMP441 SD). Set
 `TIVOO_I2S_DOUT_GPIO` to -1 to disable playback on a microphone-only board.
 `AUDIO_STATE completed` follows TX DMA drain. A matching `AUDIO_STOP` cancels
 the HTTP stream and mutes queued output while the microphone keeps running.
