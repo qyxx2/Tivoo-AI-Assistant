@@ -21,6 +21,8 @@
 7. [P6.5 b0–b5 前置验证报告](../reports/2026-11-11-ha-cancellation-preflight-report.md)：HA TTSCache producer、HTTP consumer、Wyoming writer 和 P7A request 的 GAP 证据。
 8. [Tivoo 表情状态机规格](2026-11-14-tivoo-expression-state-machine-design.md)及[合同矩阵](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)：只消费本矩阵既有 MIC、Pipeline、KWS 和 AUDIO_STATE 生命周期做显示仲裁，不修改音频时序、打断权或取消语义。
 
+9. [P6.7 语音等待提示音规格](2026-11-16-p6-7-ready-prompt-sound-design.md)及[合同矩阵](2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)：在已存在的命令等待入口异步播放固定 MP3，复用当前输出/AEC；仅允许停止提示音自身 ID，不能将 VAD 当作正常 TTS/LLM 的打断权，也不修改 5 秒/8 秒窗口。P6.7 尚未实施。
+
 冲突时，本矩阵继续作为音频生命周期、打断判定和 P6.5 新增消息的权威；Tivoo 表情状态机文档只覆盖显示状态、优先级和屏幕门控。其他既有字段、端口、格式和服务仍以对应上位合同为准。
 
 ## 2. 总体决策
@@ -35,7 +37,7 @@ ESP-SR AFE VAD 表示当前帧是否有人声活动，不判断讲话者身份�
 
 - VAD 可以启动空闲时的首次上传。
 - VAD 可以发送 MIC_ACTIVITY，供播放结束后的 follow-up 窗口判断是否有新语音。
-- **VAD 单独检测到人声时，绝不能发送 AUDIO_STOP、AUDIO_INTERRUPTED，不能取消 Pipeline、AstrBot 或 TTS，也不能停止 DAC。**
+- **VAD 单独检测到人声时，绝不能用它停止正常 TTS/回答音频、发送表示打断的 AUDIO_INTERRUPTED、取消 Pipeline、AstrBot 或 TTS。** 后续 P6.7 仅允许用短提示音自己的 playback_id 定向停止该短提示音以让出发言/播报空间；这不是正常 TTS 的 VAD-only 打断，也不得停止 RX/AEC/VAD。该 P6.7 扩展尚未实现。
 - 播放、AstrBot 处理和 SSE 输出期间保持 RX/AEC/VAD；AEC 后 PCM 上传 HA，由 HA 使用现有 KWS Provider 检测配置的唤醒词。只有有效 Detection(tivoo-wake) 才触发打断。
 - KWS 未命中时继续原播放和对话；背景人声、电视人声或环境噪声不因 VAD 活动本身打断。
 - AEC 是回声抑制，不是环境人声消除；KWS 也不是声纹验证。若背景人声清晰说出相同唤醒词，现有 KWS 仍可能命中。项目不承诺识别讲话者是否为设备主人。

@@ -17,6 +17,8 @@
 
 本规格不改变 P6.5 的音频、KWS、STT、AstrBot、TTS、AEC 或打断合同，不增加 ESP32 协议消息，不实现 Tivoo 当前物理像素读取，也不在本批次实现主动播报。
 
+后续 [P6.7 预制等待提示音](2026-11-16-p6-7-ready-prompt-sound-design.md)是独立的音频增强，提示音的 AUDIO_STATE 只由独立 playback_id owner 识别，不得驱动本状态机的 speaking / followup_wait，不修改本规格的屏幕门控和显示优先级；P6.7 仍处于规划阶段。
+
 ### 1.1 方案选择
 
 - **采用：HA intent 仲裁 + 独立 ScreenPowerGate。** 每个真实生命周期只提交/移除 intent，由 Coordinator 统一选赢家，能自然恢复被临时覆盖的 thinking、显式内容或 idle。
