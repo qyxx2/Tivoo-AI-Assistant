@@ -110,6 +110,7 @@ async def test_tivoo_actions_are_explicit_tools_and_do_not_accept_entity_targets
             "tivoo__SetExpression",
             "tivoo__SetLight",
             "tivoo__SetMemorial",
+            "tivoo__SetMood",
             "tivoo__SetNoiseMeter",
             "tivoo__SetPlayState",
             "tivoo__SetScreenPower",

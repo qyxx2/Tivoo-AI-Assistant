@@ -119,6 +119,7 @@ async def test_tivoo_assist_api_registers_all_current_tools(
         "tivoo__SetExpression",
         "tivoo__SetLight",
         "tivoo__SetMemorial",
+        "tivoo__SetMood",
         "tivoo__SetNoiseMeter",
         "tivoo__SetPlayState",
         "tivoo__SetScreenPower",

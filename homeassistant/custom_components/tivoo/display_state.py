@@ -11,6 +11,7 @@ from typing import Protocol
 from homeassistant.exceptions import HomeAssistantError
 
 from .commands import TivooCommand
+from .const import MOOD_PRESETS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ IDLE_MAX_SECONDS = 90.0
 CANDIDATE_HOLD_SECONDS = 0.7
 CANDIDATE_PROBABILITY = 0.35
 CANDIDATE_COOLDOWN_SECONDS = 10.0
+MOOD_TTL_SECONDS = 5.0
 
 
 class DisplayState(str, Enum):
@@ -382,6 +384,20 @@ class ExpressionCoordinator:
             # Explicit ON is a real screen-on request, even when already ON.
             self._power_dirty = True
             await self._async_recompute(force_display=True)
+
+    async def async_set_mood(self, name: str) -> None:
+        """Set a short-lived mood for the current Tivoo voice generation."""
+        if name not in MOOD_PRESETS:
+            raise HomeAssistantError(f"Unsupported Tivoo mood preset: {name}")
+        generation = self._active_generation
+        if generation is None:
+            raise HomeAssistantError("Tivoo mood requires an active voice generation")
+        await self.async_set_intent(
+            DisplayState.AI_MOOD,
+            build_expression_command(name),
+            generation=generation,
+            ttl=MOOD_TTL_SECONDS,
+        )
 
     async def async_set_explicit(self, command: TivooCommand) -> None:
         """Retain explicit content; repeated user requests restart the same visual."""

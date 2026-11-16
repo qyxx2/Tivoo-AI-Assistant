@@ -10,6 +10,7 @@ from custom_components.tivoo.display_state import (
     ScreenPowerGate,
     build_expression_command,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 class RecordingAdapter:
@@ -167,6 +168,61 @@ async def test_ttl_expires_while_mood_is_hidden_and_does_not_replay():
     await coordinator.async_clear_intent(DisplayState.SPEAKING, generation="a")
     assert coordinator.desired_state is DisplayState.IDLE
     assert display_names(adapter).count("happy") == count
+    await coordinator.async_shutdown()
+
+
+async def test_b4_mood_priority_and_session_scope():
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+
+    with pytest.raises(HomeAssistantError, match="active voice generation"):
+        await coordinator.async_set_mood("happy")
+
+    coordinator.begin_generation("mood-turn")
+    await coordinator.async_set_intent(
+        DisplayState.FOLLOWUP_WAIT, expression("standby"), generation="mood-turn"
+    )
+    await coordinator.async_set_mood("happy")
+    assert coordinator.desired_state is DisplayState.AI_MOOD
+    assert coordinator.desired_command.data["name"] == "happy"
+
+    for state, preset in (
+        (DisplayState.ACTIVE_LISTENING, "standby"),
+        (DisplayState.THINKING, "thinking"),
+        (DisplayState.TOOLUSE, "tooluse"),
+        (DisplayState.SPEAKING, "music"),
+    ):
+        await coordinator.async_set_intent(
+            state, expression(preset), generation="mood-turn"
+        )
+        assert coordinator.desired_state is state
+        await coordinator.async_clear_intent(state, generation="mood-turn")
+        assert coordinator.desired_state is DisplayState.AI_MOOD
+
+    await coordinator.async_end_generation("mood-turn")
+    assert coordinator.desired_state is DisplayState.IDLE
+    await coordinator.async_shutdown()
+
+
+async def test_b4_mood_ttl_keeps_running_while_hidden(monkeypatch):
+    import custom_components.tivoo.display_state as module
+
+    monkeypatch.setattr(module, "MOOD_TTL_SECONDS", 0.02)
+    adapter = RecordingAdapter()
+    coordinator = ExpressionCoordinator(adapter)
+    await coordinator.async_start()
+    coordinator.begin_generation("mood-turn")
+    await coordinator.async_set_mood("happy")
+    await coordinator.async_set_intent(
+        DisplayState.SPEAKING, expression("music"), generation="mood-turn"
+    )
+    await asyncio.sleep(0.05)
+    happy_count = display_names(adapter).count("happy")
+
+    await coordinator.async_clear_intent(DisplayState.SPEAKING, generation="mood-turn")
+    assert coordinator.desired_state is DisplayState.IDLE
+    assert display_names(adapter).count("happy") == happy_count
     await coordinator.async_shutdown()
 
 

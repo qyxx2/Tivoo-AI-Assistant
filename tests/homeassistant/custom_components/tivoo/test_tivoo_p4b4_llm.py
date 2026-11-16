@@ -104,6 +104,7 @@ async def test_p4b4_media_tools_are_registered_for_assist(
         "tivoo__SetExpression",
         "tivoo__SetLight",
         "tivoo__SetMemorial",
+        "tivoo__SetMood",
         "tivoo__SetNoiseMeter",
         "tivoo__SetPlayState",
         "tivoo__SetScreenPower",
@@ -129,6 +130,58 @@ async def test_p4b4_media_tools_are_registered_for_assist(
         assert tool.annotations.destructive is False
         assert tool.annotations.open_world is False
         assert tool.annotations.idempotent is False
+
+
+async def test_b4_mood_tool_contract_and_coordinator_delegation(
+    hass, enable_custom_integrations
+):
+    adapter = await _loaded_entry(hass)
+    api = await _assist_api(hass)
+    tools = {tool.name: tool for tool in api.tools if tool.integration == DOMAIN}
+    mood = tools["tivoo__SetMood"]
+    expression = tools["tivoo__SetExpression"]
+
+    assert "non-language emotional value" in mood.description
+    assert "listening" in mood.description
+    assert "explicitly requests" in expression.description
+
+    for invalid_name in (
+        "thinking",
+        "tooluse",
+        "question",
+        "standby",
+        "music",
+        "fish",
+        "unknown",
+    ):
+        with pytest.raises(probatio.MultipleInvalid):
+            mood.parameters({"name": invalid_name})
+
+    with pytest.raises(HomeAssistantError, match="active voice generation"):
+        await api.async_call_tool(
+            llm_helpers.ToolInput(
+                tool_name="tivoo__SetMood",
+                tool_args={"name": "happy"},
+            )
+        )
+
+    runtime = next(iter(hass.data[DOMAIN].values()))
+    coordinator = runtime["display_coordinator"]
+    coordinator.begin_generation("mood-tool-turn")
+    await hass.async_block_till_done()
+    adapter.commands.clear()
+
+    result = await api.async_call_tool(
+        llm_helpers.ToolInput(
+            tool_name="tivoo__SetMood",
+            tool_args={"name": "happy"},
+        )
+    )
+    assert result.error is False
+    assert result.data == {"status": "service_completed"}
+    assert coordinator.desired_state.value == "ai_mood"
+    assert adapter.commands[-1].name == "set_expression"
+    assert adapter.commands[-1].data["name"] == "happy"
 
 
 @pytest.mark.parametrize(("tool_name", "service_and_file"), list(MEDIA_TOOLS.items()))

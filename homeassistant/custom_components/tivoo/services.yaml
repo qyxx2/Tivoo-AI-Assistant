@@ -29,6 +29,32 @@ set_expression:
       selector:
         text:
 
+set_mood:
+  name: Set mood
+  description: Show a short-lived mood for the active Tivoo voice reply.
+  fields:
+    name:
+      name: Mood
+      description: Approved emotional preset name.
+      required: true
+      selector:
+        select:
+          options:
+            - happy
+            - sad
+            - angry
+            - love
+            - cool
+            - cry
+            - laugh
+            - sleepy
+            - shock
+            - wink
+            - sick
+            - party
+            - kiss
+            - oops
+
 show_text:
   name: Show text
   description: Display scrolling text on the Tivoo screen.

@@ -11,6 +11,7 @@ DEFAULT_TIVOO_BLUETOOTH_MAC = "11:75:58:97:49:98"
 SERVICE_STOP_COUNTDOWN = "stop_countdown"
 SERVICE_SET_VOLUME = "set_volume"
 SERVICE_SET_EXPRESSION = "set_expression"
+SERVICE_SET_MOOD = "set_mood"
 SERVICE_SHOW_TEXT = "show_text"
 SERVICE_START_COUNTDOWN = "start_countdown"
 SERVICE_SET_BRIGHTNESS = "set_brightness"
@@ -68,3 +69,22 @@ ATTR_FREQUENCY = "frequency"
 ATTR_MODE = "mode"
 ATTR_NUMBER = "number"
 ATTR_INDEX = "index"
+
+MOOD_PRESETS = frozenset(
+    {
+        "happy",
+        "sad",
+        "angry",
+        "love",
+        "cool",
+        "cry",
+        "laugh",
+        "sleepy",
+        "shock",
+        "wink",
+        "sick",
+        "party",
+        "kiss",
+        "oops",
+    }
+)

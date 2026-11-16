@@ -127,6 +127,71 @@ async def test_b1_runtime_sets_up_and_shuts_down_single_display_coordinator(
     assert coordinator._shutdown is True
 
 
+MOOD_NAMES = (
+    "happy",
+    "sad",
+    "angry",
+    "love",
+    "cool",
+    "cry",
+    "laugh",
+    "sleepy",
+    "shock",
+    "wink",
+    "sick",
+    "party",
+    "kiss",
+    "oops",
+)
+
+
+@pytest.mark.parametrize("name", MOOD_NAMES)
+async def test_b4_set_mood_accepts_only_current_mood_presets(
+    hass, enable_custom_integrations, name
+):
+    _, runtime = await _loaded_entry(hass)
+    adapter = MemoryCommandAdapter()
+    runtime["command_adapter"] = adapter
+    coordinator = runtime["display_coordinator"]
+    coordinator.begin_generation("mood-turn")
+    await hass.async_block_till_done()
+    adapter.commands.clear()
+
+    await hass.services.async_call(DOMAIN, "set_mood", {"name": name}, blocking=True)
+
+    assert coordinator.desired_state.value == "ai_mood"
+    assert coordinator.desired_command.name == "set_expression"
+    assert coordinator.desired_command.data["name"] == name
+    assert adapter.commands[-1].data["name"] == name
+
+
+@pytest.mark.parametrize(
+    "name", ["thinking", "tooluse", "question", "standby", "music", "fish", "unknown"]
+)
+async def test_b4_set_mood_rejects_system_and_unknown_presets(
+    hass, enable_custom_integrations, name
+):
+    _, runtime = await _loaded_entry(hass)
+    runtime["display_coordinator"].begin_generation("mood-turn")
+    with pytest.raises(MultipleInvalid):
+        await hass.services.async_call(
+            DOMAIN, "set_mood", {"name": name}, blocking=True
+        )
+
+
+async def test_b4_set_mood_requires_active_generation(hass, enable_custom_integrations):
+    _, runtime = await _loaded_entry(hass)
+    adapter = MemoryCommandAdapter()
+    runtime["command_adapter"] = adapter
+    adapter.commands.clear()
+
+    with pytest.raises(HomeAssistantError, match="active voice generation"):
+        await hass.services.async_call(
+            DOMAIN, "set_mood", {"name": "happy"}, blocking=True
+        )
+    assert adapter.commands == []
+
+
 async def test_b1_replayable_service_is_gated_and_restored(
     hass, enable_custom_integrations
 ):

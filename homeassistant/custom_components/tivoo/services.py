@@ -42,6 +42,7 @@ from .const import (
     ATTR_WEATHER,
     ATTR_WEEKDAYS,
     DOMAIN,
+    MOOD_PRESETS,
     SERVICE_GAME_CONTROL,
     SERVICE_PLAY_ANIMATION,
     SERVICE_SET_ALARM,
@@ -51,6 +52,7 @@ from .const import (
     SERVICE_SET_EXPRESSION,
     SERVICE_SET_LIGHT,
     SERVICE_SET_MEMORIAL,
+    SERVICE_SET_MOOD,
     SERVICE_SET_NOISE_METER,
     SERVICE_SET_PLAYSTATE,
     SERVICE_SET_SCREEN_POWER,
@@ -221,6 +223,9 @@ def _simple_handler(runtime: dict, service: str):
 
 def register_services(hass: HomeAssistant, runtime: dict) -> None:
     """Register Tivoo services for the lifetime of a loaded config entry."""
+
+    async def async_set_mood(call: ServiceCall) -> None:
+        await runtime["display_coordinator"].async_set_mood(call.data[ATTR_NAME])
 
     async def async_set_expression(call: ServiceCall) -> None:
         name = call.data[ATTR_NAME]
@@ -474,6 +479,15 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
 
     hass.services.async_register(
         DOMAIN,
+        SERVICE_SET_MOOD,
+        async_set_mood,
+        schema=vol.Schema(
+            {vol.Required(ATTR_NAME): vol.In(MOOD_PRESETS)},
+            extra=vol.PREVENT_EXTRA,
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN,
         SERVICE_SET_EXPRESSION,
         async_set_expression,
         schema=vol.Schema(
@@ -528,6 +542,7 @@ def unregister_services(hass: HomeAssistant) -> None:
         SERVICE_STOP_COUNTDOWN,
         SERVICE_SET_VOLUME,
         SERVICE_SET_EXPRESSION,
+        SERVICE_SET_MOOD,
         SERVICE_SHOW_TEXT,
         SERVICE_START_COUNTDOWN,
         SERVICE_SET_BRIGHTNESS,

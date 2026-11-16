@@ -47,6 +47,7 @@ from .const import (
     ATTR_WEATHER,
     ATTR_WEEKDAYS,
     DOMAIN,
+    MOOD_PRESETS,
     SERVICE_GAME_CONTROL,
     SERVICE_PLAY_ANIMATION,
     SERVICE_SET_ALARM,
@@ -56,6 +57,7 @@ from .const import (
     SERVICE_SET_EXPRESSION,
     SERVICE_SET_LIGHT,
     SERVICE_SET_MEMORIAL,
+    SERVICE_SET_MOOD,
     SERVICE_SET_NOISE_METER,
     SERVICE_SET_PLAYSTATE,
     SERVICE_SET_SCREEN_POWER,
@@ -177,10 +179,24 @@ def _tools() -> list[Tool]:
         _ServiceTool(
             name="tivoo__SetExpression",
             title="Set Tivoo expression",
-            description="Display one of the built-in Tivoo expression presets.",
+            description="Display a built-in Tivoo preset only when the user explicitly requests that visual; do not use it for assistant listening, thinking, tool use, or speaking state.",
             service=SERVICE_SET_EXPRESSION,
             parameters=_schema(
                 {probatio.Required(ATTR_NAME): probatio.In(VISIBLE_PRESETS)}
+            ),
+            idempotent=False,
+        ),
+        _ServiceTool(
+            name="tivoo__SetMood",
+            title="Set Tivoo reply mood",
+            description=(
+                "Use only during an active Tivoo voice reply when the response has "
+                "clear non-language emotional value. Do not use for neutral replies "
+                "or for listening, thinking, tool use, or speaking state."
+            ),
+            service=SERVICE_SET_MOOD,
+            parameters=_schema(
+                {probatio.Required(ATTR_NAME): probatio.In(MOOD_PRESETS)}
             ),
             idempotent=False,
         ),
@@ -207,9 +223,7 @@ def _tools() -> list[Tool]:
             title="Set Tivoo brightness",
             description="Set the Tivoo screen brightness from 0 to 100.",
             service=SERVICE_SET_BRIGHTNESS,
-            parameters=_schema(
-                {probatio.Required(ATTR_VALUE): _integer_range(0, 100)}
-            ),
+            parameters=_schema({probatio.Required(ATTR_VALUE): _integer_range(0, 100)}),
             idempotent=True,
         ),
         _ServiceTool(
@@ -414,9 +428,7 @@ def _tools() -> list[Tool]:
             title="Show Tivoo design",
             description="Show Tivoo design channel 0-3.",
             service=SERVICE_SHOW_DESIGN,
-            parameters=_schema(
-                {probatio.Required(ATTR_NUMBER): _integer_range(0, 3)}
-            ),
+            parameters=_schema({probatio.Required(ATTR_NUMBER): _integer_range(0, 3)}),
             idempotent=True,
         ),
         _ServiceTool(
@@ -444,9 +456,7 @@ def _tools() -> list[Tool]:
             title="Show Tivoo game",
             description="Open Tivoo game mode, optionally selecting a game index.",
             service=SERVICE_SHOW_GAME,
-            parameters=_schema(
-                {probatio.Optional(ATTR_INDEX): _integer_range(0, 127)}
-            ),
+            parameters=_schema({probatio.Optional(ATTR_INDEX): _integer_range(0, 127)}),
             idempotent=True,
         ),
         _ServiceTool(

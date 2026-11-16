@@ -38,6 +38,7 @@ EXPECTED_TOOLS = {
     "tivoo__SetExpression",
     "tivoo__SetLight",
     "tivoo__SetMemorial",
+    "tivoo__SetMood",
     "tivoo__SetNoiseMeter",
     "tivoo__SetPlayState",
     "tivoo__SetScreenPower",
@@ -166,10 +167,25 @@ async def test_p4b5_assist_mcp_discovers_all_tivoo_tools_for_normal_user(
 
 
 @pytest.mark.enable_socket
+async def test_b4_mcp_exposes_exactly_one_new_mood_tool(
+    hass, enable_custom_integrations, aiohttp_client
+):
+    async with _assist_mcp_session(hass, aiohttp_client) as (session, _, _user):
+        result = await session.list_tools()
+        tivoo_tools = [tool for tool in result.tools if tool.name.startswith("tivoo__")]
+        names = {tool.name for tool in tivoo_tools}
+        assert len(names) == 28
+        assert names == EXPECTED_TOOLS
+        mood = next(tool for tool in tivoo_tools if tool.name == "tivoo__SetMood")
+        assert "non-language emotional value" in (mood.description or "")
+
+
+@pytest.mark.enable_socket
 async def test_p4b5_streamable_http_calls_all_tivoo_tools(
     hass, enable_custom_integrations, aiohttp_client
 ):
     cases = [
+        ("tivoo__SetMood", {"name": "happy"}, "set_expression"),
         ("tivoo__SetExpression", {"name": "heart"}, "set_expression"),
         ("tivoo__ShowText", {"value": "Hello"}, "show_text"),
         ("tivoo__SetBrightness", {"value": 42}, "set_brightness"),
@@ -238,6 +254,10 @@ async def test_p4b5_streamable_http_calls_all_tivoo_tools(
         adapter,
         _user,
     ):
+        coordinator = next(iter(hass.data[DOMAIN].values()))["display_coordinator"]
+        coordinator.begin_generation("p6.6b4-mcp")
+        await hass.async_block_till_done()
+        adapter.commands.clear()
         for tool_name, arguments, service_name in cases:
             result = await session.call_tool(tool_name, arguments)
             assert result.is_error is not True
@@ -245,10 +265,10 @@ async def test_p4b5_streamable_http_calls_all_tivoo_tools(
         await hass.async_block_till_done()
         # P6.6b1 explicit ON reasserts the current visual after screen-on.
         expected_names = [service_name for _, _, service_name in cases]
-        expected_names.insert(4, "show_text")
+        expected_names.insert(5, "show_text")
         assert [command.name for command in adapter.commands] == expected_names
-        assert adapter.commands[4] == adapter.commands[1]
-        original_commands = adapter.commands[:4] + adapter.commands[5:]
+        assert adapter.commands[5] == adapter.commands[2]
+        original_commands = adapter.commands[:5] + adapter.commands[6:]
         for command, (_, arguments, _) in zip(original_commands, cases, strict=True):
             for key, value in arguments.items():
                 assert command.data[key] == value

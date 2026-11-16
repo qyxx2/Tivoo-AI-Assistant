@@ -25,6 +25,7 @@ EXPECTED_SERVICES = {
     "set_expression",
     "set_light",
     "set_memorial",
+    "set_mood",
     "set_noise_meter",
     "set_playstate",
     "set_screen_power",
@@ -44,6 +45,7 @@ EXPECTED_SERVICES = {
     "start_countdown",
     "stop_countdown",
 }
+
 
 async def _submit_user_flow(hass, media_directory=DEFAULT_MEDIA_DIRECTORY):
     result = await hass.config_entries.flow.async_init(
@@ -179,6 +181,7 @@ async def test_config_entry_setup_and_unload_follow_service_lifecycle(
     assert [chunk async for chunk in iterator] == []
     assert not hass.services.has_service(DOMAIN, "stop_countdown")
     assert not hass.services.has_service(DOMAIN, "set_volume")
+    assert not hass.services.has_service(DOMAIN, "set_mood")
     assert not hass.services.has_service(DOMAIN, "show_image")
     assert not hass.services.has_service(DOMAIN, "play_animation")
     assert DOMAIN not in hass.data
