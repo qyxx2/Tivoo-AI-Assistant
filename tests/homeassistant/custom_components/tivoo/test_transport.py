@@ -705,6 +705,7 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
         await writer.drain()
         sent.append(await _read_tvio_message(reader))
         sent.append(await _read_tvio_message(reader))
+        sent.append(await _read_tvio_message(reader))
         await reader.read()
 
     async def control_handler(reader, writer):
@@ -741,8 +742,14 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
             "http://ha-internal.local:8123/api/tts_proxy/opaque-fake-token",
             "audio/mpeg",
         )
+        await adapter.async_send_tts_play(
+            "66666666-6666-4666-8666-666666666666",
+            "http://ha-internal.local:8123/local/tivoo/prompts/ready_01.mp3",
+            "audio/mpeg",
+            suppress_vad=True,
+        )
         for _ in range(100):
-            if len(sent) == 2:
+            if len(sent) == 3:
                 break
             await asyncio.sleep(0.01)
 
@@ -762,6 +769,16 @@ async def test_bidirectional_message_handler_and_outbound_sequence(
                     "playback_id": "55555555-5555-4555-8555-555555555555",
                     "url": "http://ha-internal.local:8123/api/tts_proxy/opaque-fake-token",
                     "mime_type": "audio/mpeg",
+                },
+            ),
+            (
+                TYPE_TTS_PLAY,
+                4,
+                {
+                    "playback_id": "66666666-6666-4666-8666-666666666666",
+                    "url": "http://ha-internal.local:8123/local/tivoo/prompts/ready_01.mp3",
+                    "mime_type": "audio/mpeg",
+                    "suppress_vad": True,
                 },
             ),
         ]

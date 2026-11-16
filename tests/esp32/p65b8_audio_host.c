@@ -151,10 +151,33 @@ static void test_backpressure_and_reconnect(void)
     assert(starts == 1 && packets == 50);
 }
 
+static void test_prompt_suppression(void)
+{
+    starts = activities = ends = packets = 0;
+    next_pcm = 0;
+    block_start = block_pcm = block_activity = false;
+    tivoo_mic_producer_t mic = {.send = send_frame, .new_id = new_id};
+
+    for (int i = 0; i < 25; ++i) {
+        push(&mic, 7, false, i);
+    }
+    push(&mic, 7, true, 25);
+    assert(starts == 1 && activities == 1 && packets == 26 && mic.speech);
+
+    tivoo_mic_suppress(&mic, 200);
+    assert(starts == 1 && activities == 2 && packets == 26 && !mic.speech);
+    tivoo_mic_suppress(&mic, 201);
+    assert(activities == 2 && packets == 26);
+
+    push(&mic, 7, true, 26);
+    assert(starts == 1 && activities == 3 && packets == 27 && mic.speech);
+}
+
 int main(void)
 {
     test_capture();
     test_session();
     test_backpressure_and_reconnect();
+    test_prompt_suppression();
     return 0;
 }

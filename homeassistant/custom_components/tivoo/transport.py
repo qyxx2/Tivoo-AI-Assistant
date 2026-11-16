@@ -357,13 +357,18 @@ class Esp32ConnectionAdapter:
                 ) from err
 
     async def async_send_tts_play(
-        self, playback_id: str, url: str, mime_type: str
+        self,
+        playback_id: str,
+        url: str,
+        mime_type: str,
+        *,
+        suppress_vad: bool = False,
     ) -> None:
         """Send one TTS resource descriptor over the accepted diagnostic channel."""
-        payload = json.dumps(
-            {"playback_id": playback_id, "url": url, "mime_type": mime_type},
-            separators=(",", ":"),
-        ).encode("utf-8")
+        descriptor = {"playback_id": playback_id, "url": url, "mime_type": mime_type}
+        if suppress_vad:
+            descriptor["suppress_vad"] = True
+        payload = json.dumps(descriptor, separators=(",", ":")).encode("utf-8")
         await self.async_send_message(TYPE_TTS_PLAY, payload)
 
     async def _connection_loop(self, channel: str, port: int) -> None:

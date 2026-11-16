@@ -21,6 +21,7 @@ typedef struct {
     char playback_id[PLAYBACK_ID_MAX + 1U];
     char url[URL_MAX + 1U];
     char mime_type[MIME_MAX + 1U];
+    bool suppress_vad;
     atomic_bool stop_requested;
     uint64_t bytes_received;
     char response_mime[MIME_MAX + 1U];
@@ -166,6 +167,9 @@ static bool parse_tts_play(
     const cJSON *mime_item = cJSON_IsObject(root)
         ? cJSON_GetObjectItemCaseSensitive(root, "mime_type")
         : NULL;
+    const cJSON *suppress_vad_item = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "suppress_vad")
+        : NULL;
     const char *playback_id = cJSON_IsString(id_item)
         ? cJSON_GetStringValue(id_item)
         : NULL;
@@ -176,7 +180,16 @@ static bool parse_tts_play(
         ? cJSON_GetStringValue(mime_item)
         : NULL;
 
+    const bool suppress_vad_present = suppress_vad_item != NULL;
+    if (suppress_vad_present && !cJSON_IsBool(suppress_vad_item)) {
+        cJSON_Delete(root);
+        return false;
+    }
+
     *request_out = create_request(playback_id, url, mime_type);
+    if (*request_out != NULL && suppress_vad_present) {
+        (*request_out)->suppress_vad = cJSON_IsTrue(suppress_vad_item);
+    }
     cJSON_Delete(root);
     return *request_out != NULL;
 }
@@ -231,6 +244,7 @@ static bool parse_audio_stop(
 
 #include "audio_output_manager.h"
 #include "audio_playback.h"
+#include "audio_frontend.h"
 #include "device_status.h"
 #include "diagnostics.h"
 #include "esp_crt_bundle.h"
@@ -239,6 +253,7 @@ static bool parse_audio_stop(
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
+#include "sdkconfig.h"
 
 #define TAG "audio_resource"
 #define TYPE_TTS_PLAY 0x30U
@@ -329,7 +344,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
-static const char *read_audio(audio_request_t *request, esp_http_client_handle_t client)
+static const char *read_audio(
+    audio_request_t *request, esp_http_client_handle_t client, bool *vad_suppressed)
 {
     if (esp_http_client_open(client, 0) != ESP_OK) {
         return "audio_http_failed";
@@ -386,6 +402,10 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
             error = "audio_http_failed";
             break;
         }
+        if (bytes > 0 && request->suppress_vad && !*vad_suppressed) {
+            tivoo_audio_frontend_set_vad_suppressed(true);
+            *vad_suppressed = true;
+        }
         request->bytes_received += bytes;
         if (tivoo_audio_playback_feed(playback, buffer, (size_t)bytes, eof) != ESP_OK) {
             error = format_error;
@@ -411,7 +431,7 @@ static const char *read_audio(audio_request_t *request, esp_http_client_handle_t
     return error;
 }
 
-static const char *stream_audio(audio_request_t *request)
+static const char *stream_audio(audio_request_t *request, bool *vad_suppressed)
 {
     const esp_http_client_config_t config = {
         .url = request->url,
@@ -428,7 +448,7 @@ static const char *stream_audio(audio_request_t *request)
     if (client == NULL) {
         return "audio_http_failed";
     }
-    const char *error = read_audio(request, client);
+    const char *error = read_audio(request, client, vad_suppressed);
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     request->socket_fd = -1;
     (void)xSemaphoreGive(s_mutex);
@@ -443,6 +463,7 @@ static audio_request_t *run_request(audio_request_t *request)
 
     const char *error = NULL;
     bool output = false;
+    bool vad_suppressed = false;
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (!atomic_load(&request->stop_requested)) {
         if (!media_type_equal(request->mime_type, "audio/mpeg") &&
@@ -457,7 +478,7 @@ static audio_request_t *run_request(audio_request_t *request)
     (void)xSemaphoreGive(s_mutex);
     if (output) {
         if (!atomic_load(&request->stop_requested)) {
-            error = stream_audio(request);
+            error = stream_audio(request, &vad_suppressed);
         }
         if (error != NULL) {
             tivoo_audio_output_stop(request->generation);
@@ -472,6 +493,17 @@ static audio_request_t *run_request(audio_request_t *request)
             vTaskDelay(1);
         }
         tivoo_audio_output_end(request->generation);
+    }
+    if (vad_suppressed) {
+        /* output_end() is digital completion. Keep the prompt-only gate until
+         * the final acoustic copy reaches INMP441, using the measured TX->mic
+         * reference delay (760 samples = 47.5 ms in production). */
+        const TickType_t acoustic_tail_ticks = pdMS_TO_TICKS(
+            (CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES + 15) / 16);
+        if (acoustic_tail_ticks > 0) {
+            vTaskDelay(acoustic_tail_ticks);
+        }
+        tivoo_audio_frontend_set_vad_suppressed(false);
     }
     (void)tivoo_device_status_set_audio_resource(false, NULL);
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);

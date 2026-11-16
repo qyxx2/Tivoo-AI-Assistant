@@ -164,6 +164,18 @@ void tivoo_mic_push(tivoo_mic_producer_t *mic, uint32_t generation, bool speech,
     upload(mic);
 }
 
+void tivoo_mic_suppress(tivoo_mic_producer_t *mic, uint64_t uptime_ms)
+{
+    if (mic->speech) {
+        mic->speech = false;
+        mic->activity_transitions++;
+    }
+    if (mic->session_id[0] && mic->sent_start_activity && mic->reported_speech &&
+        send_activity(mic, false, uptime_ms)) {
+        mic->reported_speech = false;
+    }
+}
+
 #ifdef ESP_PLATFORM
 #include <stdatomic.h>
 
@@ -196,6 +208,7 @@ static atomic_uint s_reference_misalignments;
 static atomic_uint s_mic_peak;
 static atomic_uint s_right_peak;
 static atomic_uint s_feed_max_us;
+static atomic_bool s_vad_suppressed;
 static portMUX_TYPE s_stop_lock = portMUX_INITIALIZER_UNLOCKED;
 static char s_expected_id[37];
 static bool s_stop_requested;
@@ -403,6 +416,18 @@ static void fetch_task(void *arg)
         apply_stop(generation);
         if (result != NULL && result->ret_value == ESP_OK && result->data != NULL &&
             result->data_size > 0 && result->data_size % sizeof(int16_t) == 0) {
+            if (atomic_load_explicit(&s_vad_suppressed, memory_order_acquire)) {
+                const bool transition = s_mic.speech;
+                tivoo_mic_suppress(&s_mic, now);
+                ++frames;
+                if (transition) {
+                    TIVOO_LOGI(TAG, "VAD speech_end transitions=%" PRIu32
+                        " upload=%u (prompt suppressed)",
+                        s_mic.activity_transitions,
+                        s_mic.session_id[0] && !s_mic.stopping);
+                }
+                continue;
+            }
             const bool speech = result->vad_state == VAD_SPEECH;
 #ifdef CONFIG_TIVOO_AUDIO_PROBE
             for (size_t i = 0; i < result->data_size / sizeof(int16_t); ++i) {
@@ -454,6 +479,28 @@ static void fetch_task(void *arg)
                 s_mic.speech ? "speech" : "silence");
         }
     }
+}
+
+void tivoo_audio_frontend_set_vad_suppressed(bool suppressed)
+{
+    if (s_afe == NULL || s_afe_data == NULL) {
+        return;
+    }
+
+    if (suppressed) {
+        atomic_store_explicit(&s_vad_suppressed, true, memory_order_release);
+        const int disable_result = s_afe->disable_vad(s_afe_data);
+        const int reset_result = s_afe->reset_vad(s_afe_data);
+        TIVOO_LOGI(TAG, "Prompt VAD suppression on disable=%d reset=%d",
+            disable_result, reset_result);
+        return;
+    }
+
+    const int enable_result = s_afe->enable_vad(s_afe_data);
+    const int reset_result = s_afe->reset_vad(s_afe_data);
+    atomic_store_explicit(&s_vad_suppressed, false, memory_order_release);
+    TIVOO_LOGI(TAG, "Prompt VAD suppression off enable=%d reset=%d",
+        enable_result, reset_result);
 }
 
 esp_err_t tivoo_audio_frontend_start(tivoo_audio_reference_reader_t read_reference)

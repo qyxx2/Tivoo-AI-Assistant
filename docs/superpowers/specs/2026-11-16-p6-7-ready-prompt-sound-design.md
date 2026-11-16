@@ -2,23 +2,23 @@
 
 > 日期：2026-11-16
 > 分支：`feature/p6-7-audio-prompts`（从已合入 P6.6 的 `main` 创建）
-> 状态：b0–b3 已实施并部署；b3 声学验收发现三条提示音均会自触发 VAD/MIC session，PR-C18 FAIL，P6.7 整体未通过
+> 状态：b0–b3 已实施并部署；b3 发现并复现三条提示音自触发 VAD/MIC session。后续已采用仅提示音播放生命周期内的 VAD suppression 修复并完成实机复测；自触发故障按 prompt-only 人声检测 gate 关闭；按后续产品决策，提示音窗口内不再要求同时识别人声，普通 TTS 打断能力保持原行为
 > 合同：[P6.7 合同矩阵](2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)
 > 计划：[P6.7 分批计划](../plans/2026-11-16-p6-7-ready-prompt-sound-batch-execution-plan.md)
 
 ## 1. 目标与边界
 
-首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及每轮回答完成后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。播放时已开始收集用户命令，不能因为提示音占用 DAC 而阻塞麦克风、STT、计时器或取消逻辑。
+首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及每轮回答完成后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。5/8 秒等待计时仍按原状态机开始；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
 
-本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO 消息。仅在本规格定义的实际“等待命令”入口播放，不能在每个 STT_START、候选 VAD、思考中、普通回答开始时误播。
+本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO message type。为区分提示音和正常 TTS，沿用 `0x30 TTS_PLAY` 并允许可选布尔字段 `suppress_vad`；省略/false 保持原语义，只有 `PromptSoundPlayer` 对三条提示音置 true。仅在本规格定义的实际“等待命令”入口播放。
 
 ## 2. 已核对的实现事实
 
 - `homeassistant/custom_components/tivoo/assist_satellite.py` 的 `AudioSessionCoordinator`：`WAKE_WORD_END` 成功时启动 5 秒 `command_timeout`；确认打断从 `_start_turn(STT, confirmed=True)` 经旧轮清理进入新 STT，5 秒从 `STT_START` 起算；`_open_followup()` 在对应 TTS 的 `AUDIO_STATE=completed` 后开启 8 秒 `followup_timeout`，无 TTS 的有效轮次亦能进入 follow-up。
-- `audio_session.py` 保留单个 MIC session 的 AEC 后 PCM 与跨 turn 订阅，follow-up 中 `speech_start` 立即开启 STT；不依赖提示音结束。
+- `audio_session.py` 保留单个 MIC session 的 AEC 后 PCM 与跨 turn 订阅。正常路径的 follow-up `speech_start` 仍立即开启 STT；三条提示音实际输出期间 ESP32 暂停 VAD 判定以及 MIC_ACTIVITY/MIC_PCM 上送，RX/AFE/AEC 继续；gate 结束后下一次真人语音可重新产生 `speech_start`。
 - `transport.py` 有 `async_send_tts_play(playback_id, url, mime_type)`，通过既有 `0x30 TTS_PLAY` 发送；回放状态 `0x32 AUDIO_STATE` 已由 `register_playback_handler` 交给 Satellite。
 - ESP32 `audio_resource.c` 已接受 `audio/mpeg` 或项目的原始 PCM MIME，增量 HTTP GET 并以 `playback_id` 进行单音源排他、重复去重、`AUDIO_STOP` 定向停止，终态为 `completed/stopped/failed`；设备状态消息中的 `source` 固定是 `tts_http`，即便复用该通道播放提示音也不会变成新 source。
-- `audio_output_manager.c` 为唯一 32 kHz DAC PCM owner，最终 I²S TX 派生 16 kHz AEC 回声参考；`audio_frontend.c` 的 RX/AFE/VAD 开机常驻，`vad_mute_playback=false`，现有参考延迟 80/16000 秒只是配置值，实际声学消除能力仍需现场验证。
+- `audio_output_manager.c` 为唯一 32 kHz DAC PCM owner，最终 I²S TX 派生 16 kHz AEC 回声参考；`audio_frontend.c` 的 RX/AFE 开机常驻且全局 `vad_mute_playback=false`。AEC 固定参考延迟已实测标定为 760 samples / 47.5 ms；仅当当前 `TTS_PLAY` 明确带 `suppress_vad=true` 时，ESP-SR VAD 在该提示音实际播放 owner 生命周期内 disable/reset，终态 enable/reset。普通 TTS 不进入此路径。
 - HA 2026.11.0 安装源码的 `frontend/__init__.py` 将 `hass.config.path("www")` 注册为 `/local` 静态路径；`http/static.py` 按文件扩展名返回 MIME。Python MIME 表将 `.mp3` 识别为 `audio/mpeg`。ESP32 实际 HTTP 响应、路径及板端解码仍需在 P6.7b0 验证。
 - P6.5b11 声学报告的 P65-A13 仍为 BLOCKED；不能把已有 AEC 数字参考等同于提示音/真人同时讲话的已验收证据。
 
@@ -36,7 +36,7 @@
 |---|---|---|
 | 初次唤醒 | 当前 turn 的有效 `WAKE_WORD_END`（含 `wake_word_output`） | 原有 5 秒从 Detection 起算；异步播放，不等待 MP3 |
 | 确认打断 | side KWS 成功引起新 `_start_turn(STT, confirmed=True)` | 优先完成旧轮定向 AUDIO_STOP / owner 清理；新 STT 仍先获得 handoff PCM；原有 5 秒从新 `STT_START` 起算；提示音不得抢占旧 TTS |
-| 连续对话等待 | `_open_followup()` 首次进入等待阶段 | 原有 8 秒从相关播放真实 completed / 无 TTS 的有效结束起算；立即启用 VAD→STT 门控，异步请求提示音 |
+| 连续对话等待 | `_open_followup()` 首次进入等待阶段 | 原有 8 秒从相关播放真实 completed / 无 TTS 的有效结束起算；异步请求提示音。提示音实际输出期间暂停 VAD/MIC_ACTIVITY/MIC_PCM，RX/AFE/AEC 继续；最后 TX 样本再等待实测 47.5 ms 声学尾部后恢复 VAD→STT 门控 |
 | 后续新增命令等待入口 | 仅在明确接入 `AudioSessionCoordinator` 的真实状态转移后 | 必须显式登记、复用同一触发 API；不能靠每个语音事件通用推断 |
 
 提示音的开始、结束、失败、跳过均不得重置 5/8 秒定时器，不得调用 `tts_response_finished()`、不触发另一次 follow-up、不影响用户当前的 Pipeline/ASTRBOT 结果。音频请求失败时安静跳过，不让等待命令或对话因提示音失败而失败。
@@ -47,7 +47,7 @@ ESP32 当前只支持单一受控音源；`TTS_PLAY` 是沿用的传输消息名
 
 1. 一个等待入口最多一个提示音请求，新的 generation/会话结束则撤销旧的待发送请求；同一入口重复事件不得重复播。
 2. 若已存在上一轮真实 TTS，确认打断路径先执行旧轮已有的匹配 ID `AUDIO_STOP` 和清理，再允许提示音下发；不要因为设备 `audio_busy` 就用重试队列无限排队。
-3. 用户开始命令时不抑制上传；若提示音还没下发可直接跳过，若已播放则可对**提示音的 ID** 定向停止。`STT_VAD_START` 代表有效命令语音；follow-up `speech_start` 只是开始 STT 的门控，不得由此取消正常 TTS 或触发全局停止。
+3. 若用户语音在提示音 gate 尚未开启前已形成有效 `speech_start/STT_VAD_START`，仍按既有逻辑优先用户并取消/跳过提示音；一旦提示音 gate 已开启，该短窗口内不再产生 VAD/MIC 上传，也不依赖其中的讲话去停止提示音。gate 恢复后下一段语音重新按原逻辑进入 STT。正常 TTS 的打断路径不变。
 4. 如正常 TTS 准备占用同一音频出口，先确认提示音已 completed/stopped（或将其停止并等待设备释放），再发送实际 TTS_PLAY；不能发送两个并行音频请求而依赖 `audio_busy` 作为正常流程。
 5. 提示音 `AUDIO_STATE` 必须只由提示音 owner 接收；旧 generation 的迟到状态与停止消息不能影响新 generation 或真实 TTS。短音频结束不能驱动 P6.6 speaking、follow-up 或表情清理。
 
@@ -55,10 +55,10 @@ ESP32 当前只支持单一受控音源；`TTS_PLAY` 是沿用的传输消息名
 
 ## 6. AEC 与现场边界
 
-提示音与正常回答走同一 `audio_output_manager`/PCM5102；AEC R 取最终下发的 TX PCM，麦克风 RX/AFE/VAD 不因提示音暂停。首次唤醒后的现有 STT 和 follow-up 的 VAD→STT 可在提示音播放中处理真人命令。
+提示音与正常回答走同一 `audio_output_manager`/PCM5102；AEC R 取最终下发的 TX PCM。麦克风 RX、AFE、AEC 始终运行；仅 `suppress_vad=true` 的提示音实际输出期间关闭 ESP-SR VAD，并暂停 MIC_ACTIVITY/MIC_PCM 向 HA 上送。数字输出结束后继续保持 gate 到实测 TX→mic 延迟 760 samples / 47.5 ms（实现取整 48 ms）结束，再恢复 VAD/MIC。普通 TTS 仍保持 VAD 可用，因此回答播放中的唤醒打断能力不受影响。
 
-回声能否避免自触发只能通过现场实测判定，尤其检查“我在/在的/你说”残余导致的 `speech_start` 或 STT 误识别、命令首字丢失、KWS 错误检测、参考错位/欠载。先采用简短、适度音量的素材与既有 AEC；不通过静音麦克风、延后 STT、强制屏蔽播放前几百毫秒来掩盖缺陷。若声学样本证明有实质干扰，再优先调提示音长度/电平与参考时间轴，而非无证据增加模型/状态机。
+b3 与 47.5 ms AEC 延迟标定后的现场复测都证明三条提示音仍会自触发 VAD；额外增益矩阵也没有得到稳定可用的电平阈值。因此允许采用**提示音 owner 生命周期绑定**的 VAD suppression，而不是固定毫秒静音窗：当前产品决策不再要求提示音与真人讲话同时识别：gate 内暂停 VAD/MIC_ACTIVITY/MIC_PCM，RX/AFE/AEC 仍运行；普通 TTS 不进入 gate。代价是整句落在约 0.7–0.9 秒提示音窗口内可能被忽略。
 
 ## 7. 不在 P6.7 实现
 
-不扩展 ESP32 固件协议、Flash 本地存储播放器、配置面板、音频素材自动生成服务、主动广播/announce、LLM 控制提示音、Tivoo 屏幕状态或 P6.6 表情优先级。只有实际 HTTP 首声延迟不满足体验时，另开决策评估 Flash 本地短音频；不能在本批预先增加一套本地解码路径。
+不新增 ESP32 message type、第二套音频协议、Flash 本地存储播放器、配置面板、音频素材自动生成服务、主动广播/announce、LLM 控制提示音、Tivoo 屏幕状态或 P6.6 表情优先级。`0x30 TTS_PLAY` 仅增加向后兼容的可选 `suppress_vad` 布尔字段，默认 false；不得把它扩展成全局“播放即关闭 VAD”。只有实际 HTTP 首声延迟不满足体验时，另开决策评估 Flash 本地短音频。

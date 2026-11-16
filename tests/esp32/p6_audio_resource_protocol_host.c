@@ -20,7 +20,25 @@ int main(void)
     assert(strcmp(request->playback_id, playback_id) == 0);
     assert(strcmp(request->url, url) == 0);
     assert(strcmp(request->mime_type, "audio/mpeg") == 0);
+    assert(!request->suppress_vad);
     free(request);
+
+    (void)snprintf(payload, sizeof(payload),
+        "{\"playback_id\":\"%s\",\"url\":\"%s\","
+        "\"mime_type\":\"audio/mpeg\",\"suppress_vad\":true}",
+        playback_id, url);
+    request = NULL;
+    assert(parse_tts_play((const uint8_t *)payload, strlen(payload), &request));
+    assert(request->suppress_vad);
+    free(request);
+
+    (void)snprintf(payload, sizeof(payload),
+        "{\"playback_id\":\"%s\",\"url\":\"%s\","
+        "\"mime_type\":\"audio/mpeg\",\"suppress_vad\":1}",
+        playback_id, url);
+    request = NULL;
+    assert(!parse_tts_play((const uint8_t *)payload, strlen(payload), &request));
+    assert(request == NULL);
 
     const char *bad_urls[] = {
         "ftp://192.168.3.94/audio.mp3",

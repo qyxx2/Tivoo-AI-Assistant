@@ -22,9 +22,16 @@ class _Adapter:
         self.sent = []
         self.messages = []
 
-    async def async_send_tts_play(self, playback_id, url, mime_type):
+    async def async_send_tts_play(
+        self, playback_id, url, mime_type, *, suppress_vad=False
+    ):
         self.sent.append(
-            {"playback_id": playback_id, "url": url, "mime_type": mime_type}
+            {
+                "playback_id": playback_id,
+                "url": url,
+                "mime_type": mime_type,
+                "suppress_vad": suppress_vad,
+            }
         )
 
     async def async_send_message(self, message_type, payload):
@@ -84,6 +91,7 @@ async def test_request_deduplicates_generation_and_never_repeats_adjacent_asset(
     first = adapter.sent[-1]
     assert first["url"].endswith("/ready_01.mp3")
     assert first["mime_type"] == "audio/mpeg"
+    assert first["suppress_vad"] is True
 
     player.on_playback(first["playback_id"], "completed")
     assert await player.async_request("g2") is True

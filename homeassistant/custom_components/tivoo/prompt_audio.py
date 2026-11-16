@@ -117,7 +117,9 @@ class PromptSoundPlayer:
             self._active = active
             self._owned_ids.append(playback_id)
             try:
-                await self._adapter.async_send_tts_play(playback_id, url, "audio/mpeg")
+                await self._adapter.async_send_tts_play(
+                    playback_id, url, "audio/mpeg", suppress_vad=True
+                )
             except HomeAssistantError:
                 if self._active is active:
                     self._active = None

@@ -40,6 +40,7 @@ typedef struct {
 
 void tivoo_mic_push(tivoo_mic_producer_t *mic, uint32_t generation, bool speech,
     uint64_t uptime_ms, const int16_t *samples, size_t count);
+void tivoo_mic_suppress(tivoo_mic_producer_t *mic, uint64_t uptime_ms);
 bool tivoo_mic_stop(tivoo_mic_producer_t *mic, uint32_t generation, const char *session_id);
 
 #ifdef ESP_PLATFORM
@@ -57,4 +58,5 @@ typedef enum {
 typedef tivoo_audio_reference_status_t (*tivoo_audio_reference_reader_t)(
     uint64_t first_sample, int16_t *reference, size_t samples);
 esp_err_t tivoo_audio_frontend_start(tivoo_audio_reference_reader_t read_reference);
+void tivoo_audio_frontend_set_vad_suppressed(bool suppressed);
 #endif

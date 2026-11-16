@@ -6,6 +6,8 @@
 
 **Architecture:** HA `AudioSessionCoordinator` 决定触发，独立 `PromptSoundPlayer` 管理素材选择和 playback_id，复用 7778 `TTS_PLAY` + HA `/local` HTTP 文件 + 现有 ESP32 解码/I²S/AEC 链。正常 TTS 与提示音共用一个物理播放 owner，按 playback_id 隔离状态和定向停止。尽量复用既有模块，不新建音频协议/状态机。
 
+> **Post-b3 correction (2026-11-16):** b3 与 47.5 ms AEC 延迟标定后仍可稳定复现三条提示音自触发 VAD；原计划“提示音期间 VAD 持续”的假设已被现场证据推翻。后续采用既有 `TTS_PLAY` 的可选 `suppress_vad` 标记，仅在三条提示音实际输出 owner 生命周期及已标定声学尾部内暂停 VAD/MIC_ACTIVITY/MIC_PCM，MIC RX/AFE/AEC 继续，普通 TTS 不受影响。以更新后的规格/合同矩阵和 [修复报告](../reports/2026-11-16-p6-7-prompt-vad-suppression-fix.md) 为准；下方 b0–b3 原执行记录保留历史语义。
+
 **Tech Stack:** Home Assistant Core 2026.11.0、Python、pytest、ESP-IDF classic ESP32 现有固件、FFmpeg/ffprobe（仅一次性素材制作/检测）、HA 静态文件路径、现有 TVIO v1。
 
 **Spec:** [P6.7 语音等待提示音规格](../specs/2026-11-16-p6-7-ready-prompt-sound-design.md)
