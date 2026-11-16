@@ -1,10 +1,11 @@
 # Tivoo 表情状态机与屏幕门控规格
 
 > 日期：2026-11-14
-> 分支：`feature/p6-5-ha-cancellation-preflight`
-> 状态：设计规格；本次只定义行为与边界，不实现生产代码
+> 分支：`feature/p6-6-tivoo-expression-state-machine`
+> 状态：已实现至 P6.6b5；自动化、部署、idle 与屏幕门控验收通过，但真人语音链及 ESP32 单独 reset 后 7777 自动恢复仍有验收 GAP
 > 合同矩阵：[Tivoo 表情状态机合同矩阵](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)
 > 分批计划：[P6.6 表情状态机与屏幕门控分批实施计划](../plans/2026-11-14-p6-6-tivoo-expression-state-machine-batch-execution-plan.md)
+> 验收报告：[P6.6b5 全量验收与生产部署](../reports/2026-11-14-p6-6-expression-state-machine-acceptance.md)
 
 ## 1. 目标与边界
 
