@@ -90,6 +90,21 @@ class PromptSoundPlayer:
             available = [name for name in available if name != self._last_filename]
         return available
 
+    def has_available_assets(self) -> bool:
+        """Whether this wait can play one of the installed prompts."""
+        return bool(self._available_assets())
+
+    async def async_wait_completed(self, generation: str) -> None:
+        """Wait for the short prompt, with bounded failure fallback."""
+        active = self._active
+        if active is None or active.generation != generation:
+            return
+        try:
+            async with asyncio.timeout(5):
+                await active.released.wait()
+        except TimeoutError:
+            await self.async_cancel(generation)
+
     async def async_request(self, generation: str) -> bool:
         """Play at most one ready prompt for this generation."""
         async with self._lock:
@@ -146,6 +161,11 @@ class PromptSoundPlayer:
             if self._active is not None:
                 await self._stop_active("tts_priority")
             self._tts_playback_id = playback_id
+
+    def release_tts(self, playback_id: str | None) -> None:
+        """Release a reservation whose transport or send has failed."""
+        if playback_id == self._tts_playback_id:
+            self._tts_playback_id = None
 
     def on_playback(self, playback_id: str, state: str) -> bool:
         """Consume prompt states and observe real-TTS terminal states."""

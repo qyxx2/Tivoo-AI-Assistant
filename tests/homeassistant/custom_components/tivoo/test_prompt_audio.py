@@ -239,3 +239,14 @@ async def test_prompt_stop_send_failure_releases_owner_without_error(hass):
 
     assert await player.async_cancel("g1") is True
     assert player.playback_id is None
+
+
+async def test_stale_tts_release_cannot_unlock_new_playback(hass):
+    _install(hass)
+    player = PromptSoundPlayer(hass, _Adapter())
+    await player.async_yield_to_tts("old")
+    await player.async_yield_to_tts("new")
+    player.release_tts("old")
+    assert await player.async_request("still-busy") is False
+    player.release_tts("new")
+    assert await player.async_request("released") is True

@@ -98,84 +98,40 @@ def prompt_asset(hass):
     hass.config.internal_url = old_internal_url
 
 
-async def test_wake_prompt_is_once_and_command_stops_only_prompt(
-    hass, satellite, prompt_asset, monkeypatch
-):
-    entity, manager, _stop = satellite
-    monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
-    monkeypatch.setattr(
-        "custom_components.tivoo.prompt_audio.random.choice", lambda values: values[0]
-    )
-    ready = asyncio.Event()
-
-    async def pipeline(audio, stage, *, context):
-        assert stage is PipelineStage.WAKE_WORD
-        await anext(audio)
-        event = PipelineEvent(
-            Event.WAKE_WORD_END,
-            {"wake_word_output": {"wake_word_id": "tivoo-wake"}},
-        )
-        entity.on_pipeline_event(event)
-        entity.on_pipeline_event(event)
-        entity.on_pipeline_event(PipelineEvent(Event.STT_START))
-        ready.set()
-        await asyncio.Future()
-
-    entity.async_accept_pipeline_from_satellite = pipeline
-    await activity(manager, "speech_start")
-    await manager.async_push_pcm(SESSION_1, b"wake")
-    await asyncio.wait_for(ready.wait(), 1)
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-
-    assert entity.adapter.async_send_tts_play.await_count == 1
-    prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
-    assert entity.coordinator._followup is False
-
-    entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
-    await asyncio.sleep(0)
-    assert entity.adapter.async_send_message.await_count == 1
-
-    import json
-
-    from custom_components.tivoo.diagnostics import TYPE_AUDIO_STOP
-
-    message_type, payload = entity.adapter.async_send_message.await_args.args
-    assert message_type == TYPE_AUDIO_STOP
-    assert json.loads(payload)["expected_audio_id"] == prompt_id
-
-    entity.coordinator.on_playback(prompt_id, "stopped")
-    await asyncio.sleep(0)
-    entity.coordinator.on_playback(prompt_id, "completed")
-    assert entity.coordinator._followup is False
-
-
-async def test_wake_prompt_does_not_move_five_second_command_timeout(
-    satellite, advance_clock, prompt_asset
+async def test_command_timeout_starts_after_ready_prompt_finishes(
+    hass, satellite, advance_clock, prompt_asset, monkeypatch
 ):
     entity, manager, stop = satellite
-    wake = asyncio.Event()
+    monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
+    prompt_sent = asyncio.Event()
+    command_started = asyncio.Event()
+    entity.adapter.async_send_tts_play.side_effect = lambda *a, **k: prompt_sent.set()
 
     async def pipeline(audio, stage, *, context):
-        assert stage is PipelineStage.WAKE_WORD
-        await anext(audio)
-        entity.on_pipeline_event(
-            PipelineEvent(
-                Event.WAKE_WORD_END,
-                {"wake_word_output": {"wake_word_id": "tivoo-wake"}},
+        if stage is PipelineStage.WAKE_WORD:
+            await anext(audio)
+            entity.on_pipeline_event(
+                PipelineEvent(
+                    Event.WAKE_WORD_END,
+                    {
+                        "wake_word_output": {"wake_word_id": "tivoo-wake"},
+                    },
+                )
             )
-        )
-        wake.set()
+        else:
+            entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+            command_started.set()
         await asyncio.Future()
 
     entity.async_accept_pipeline_from_satellite = pipeline
     await activity(manager, "speech_start")
     await manager.async_push_pcm(SESSION_1, b"wake")
-    await asyncio.wait_for(wake.wait(), 1)
-    await asyncio.sleep(0)
+    await asyncio.wait_for(prompt_sent.wait(), 1)
+    await advance_clock(1)
+    stop.assert_not_awaited()
     prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
     entity.coordinator.on_playback(prompt_id, "completed")
-
+    await asyncio.wait_for(command_started.wait(), 1)
     await advance_clock(4.9)
     stop.assert_not_awaited()
     await advance_clock(0.2)
@@ -189,6 +145,9 @@ async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts
     monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
     wake_prompt_ready = asyncio.Event()
     continue_tts = asyncio.Event()
+    prompt_sent = asyncio.Event()
+    entity.adapter.async_send_tts_play.side_effect = lambda *a, **k: prompt_sent.set()
+    command_runs = 0
     stages = asyncio.Queue()
 
     async def release_prompt_stop(message_type, payload):
@@ -200,6 +159,7 @@ async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts
     entity.adapter.async_send_message.side_effect = release_prompt_stop
 
     async def pipeline(audio, stage, *, context):
+        nonlocal command_runs
         await stages.put(stage)
         if stage is PipelineStage.WAKE_WORD:
             await anext(audio)
@@ -210,6 +170,9 @@ async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts
                 )
             )
             wake_prompt_ready.set()
+            await asyncio.Future()
+        command_runs += 1
+        if command_runs == 1:
             await continue_tts.wait()
             entity.on_pipeline_event(PipelineEvent(Event.STT_START))
             entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
@@ -238,12 +201,12 @@ async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts
     await manager.async_push_pcm(SESSION_1, b"one!")
     assert await asyncio.wait_for(stages.get(), 1) is PipelineStage.WAKE_WORD
     await asyncio.wait_for(wake_prompt_ready.wait(), 1)
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await asyncio.wait_for(prompt_sent.wait(), 1)
     assert entity.adapter.async_send_tts_play.await_count == 1
     wake_prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
     entity.coordinator.on_playback(wake_prompt_id, "completed")
 
+    assert await asyncio.wait_for(stages.get(), 1) is PipelineStage.STT
     continue_tts.set()
     for _ in range(10):
         if entity.adapter.async_send_tts_play.await_count >= 2:
@@ -1215,3 +1178,132 @@ async def test_astrbot_phase_old_context_cannot_modify_new_generation(
     await hass.async_block_till_done()
     assert entity.display.desired_state is DisplayState.THINKING
     assert entity.display.active_generation == "new-context"
+
+
+@pytest.mark.parametrize("send_fails", [False, True])
+async def test_next_wake_prompt_recovers_after_tts_connection_loss(
+    hass, satellite, prompt_asset, monkeypatch, send_fails
+):
+    """A lost terminal frame/send must not suppress every later wake prompt."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    entity, manager, _stop = satellite
+    monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
+    sent = asyncio.Event()
+
+    async def send(*args, **kwargs):
+        sent.set()
+        if send_fails:
+            raise HomeAssistantError("diagnostic disconnected during send")
+
+    entity.adapter.async_send_tts_play.side_effect = send
+
+    async def first_pipeline(audio, start_stage, *, context):
+        entity.on_pipeline_event(PipelineEvent(Event.RUN_START))
+        entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+        entity.on_pipeline_event(
+            PipelineEvent(
+                Event.TTS_END,
+                {
+                    "tts_output": {
+                        "url": "/api/tts_proxy/test.mp3",
+                        "mime_type": "audio/mpeg",
+                    }
+                },
+            )
+        )
+        entity.on_pipeline_event(PipelineEvent(Event.RUN_END))
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", first_pipeline)
+    await activity(manager, "speech_start")
+    await asyncio.wait_for(sent.wait(), 1)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    if not send_fails:
+        await manager.async_disconnect()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    # Reconnect and confirm a fresh wake without any old AUDIO_STATE terminal.
+    prompt_sent = asyncio.Event()
+    entity.adapter.async_send_tts_play.side_effect = lambda *a, **k: prompt_sent.set()
+    entity.adapter.async_send_tts_play.reset_mock()
+    wake = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def next_pipeline(audio, start_stage, *, context):
+        entity.on_pipeline_event(PipelineEvent(Event.RUN_START))
+        entity.on_pipeline_event(
+            PipelineEvent(
+                Event.WAKE_WORD_END,
+                {
+                    "wake_word_output": {"wake_word_id": "tivoo-wake"},
+                },
+            )
+        )
+        wake.set()
+        await finish.wait()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", next_pipeline)
+    await manager.async_start_session(_start_payload(SESSION_2), persistent=True)
+    await activity(manager, "speech_start", SESSION_2)
+    await asyncio.wait_for(wake.wait(), 1)
+    await asyncio.wait_for(prompt_sent.wait(), 1)
+    try:
+        entity.adapter.async_send_tts_play.assert_awaited_once()
+        assert (
+            "/local/tivoo/prompts/"
+            in entity.adapter.async_send_tts_play.await_args.args[1]
+        )
+        prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
+        entity.coordinator.on_playback(prompt_id, "completed")
+    finally:
+        finish.set()
+
+
+@pytest.mark.parametrize("terminal", ["completed", "failed"])
+async def test_wake_tail_cannot_start_command_before_ready_prompt_finishes(
+    hass, satellite, prompt_asset, monkeypatch, terminal
+):
+    entity, manager, _stop = satellite
+    monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
+    prompt_sent = asyncio.Event()
+    entity.adapter.async_send_tts_play.side_effect = lambda *a, **k: prompt_sent.set()
+    woke = asyncio.Event()
+    command = asyncio.Event()
+    received = []
+
+    async def pipeline(audio, stage, *, context):
+        if stage is PipelineStage.WAKE_WORD:
+            await anext(audio)
+            entity.on_pipeline_event(
+                PipelineEvent(
+                    Event.WAKE_WORD_END,
+                    {
+                        "wake_word_output": {"wake_word_id": "tivoo-wake"},
+                    },
+                )
+            )
+            # HA may immediately replay its buffered wake tail into STT.
+            entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+            entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+            woke.set()
+            await asyncio.Future()
+        entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+        command.set()
+        received.append(await anext(audio))
+        await asyncio.Future()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await activity(manager, "speech_start")
+    await manager.async_push_pcm(SESSION_1, b"wake")
+    await asyncio.wait_for(woke.wait(), 1)
+    await asyncio.wait_for(prompt_sent.wait(), 1)
+    entity.adapter.async_send_tts_play.assert_awaited_once()
+    prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
+    assert not command.is_set()
+    entity.adapter.async_send_message.assert_not_awaited()
+    await manager.async_push_pcm(SESSION_1, b"tail")
+    entity.coordinator.on_playback(prompt_id, terminal)
+    await asyncio.wait_for(command.wait(), 1)
+    await manager.async_push_pcm(SESSION_1, b"next")
+    await hass.async_block_till_done()
+    assert received == [b"next"]

@@ -73,6 +73,7 @@ class _Turn:
     playback_completed: bool = False
     interrupted: bool = False
     confirmed: bool = False
+    prompt_before_command: bool = False
 
 
 class AudioSessionCoordinator:
@@ -99,12 +100,15 @@ class AudioSessionCoordinator:
     def _show(self, coroutine, name: str) -> None:
         self.entity.hass.async_create_task(coroutine, f"Tivoo display {name}")
 
-    def _spawn_prompt(self, coroutine, name: str) -> None:
+    def _spawn_prompt(self, coroutine, name: str) -> asyncio.Task:
         task = self.entity.hass.async_create_task(coroutine, f"Tivoo prompt {name}")
         self._prompt_tasks.add(task)
         task.add_done_callback(self._prompt_tasks.discard)
+        return task
 
-    def _request_prompt(self, turn: _Turn, phase: str) -> None:
+    def _request_prompt(
+        self, turn: _Turn, phase: str, *, wait: bool = False
+    ) -> asyncio.Task | None:
         player = self.entity.prompt_player
         if player is None:
             return
@@ -120,10 +124,12 @@ class AudioSessionCoordinator:
                 return
             try:
                 await player.async_request(generation)
+                if wait:
+                    await player.async_wait_completed(generation)
             except Exception:
                 _LOGGER.exception("Tivoo ready prompt request failed")
 
-        self._spawn_prompt(request(), phase)
+        return self._spawn_prompt(request(), phase)
 
     def _cancel_prompt(self) -> None:
         generation = self._prompt_generation
@@ -202,6 +208,7 @@ class AudioSessionCoordinator:
         interrupted: _Turn | None = None,
         start: int | None = None,
         confirmed: bool = False,
+        prompt_before_command: bool = False,
     ) -> None:
         self._clear_timers()
         self._followup = False
@@ -222,6 +229,7 @@ class AudioSessionCoordinator:
             ),
             waiting_for_wake=stage == PipelineStage.WAKE_WORD,
             confirmed=confirmed,
+            prompt_before_command=prompt_before_command,
         )
         previous = self._turn
         self._turn = turn
@@ -278,6 +286,18 @@ class AudioSessionCoordinator:
             else None
         )
         try:
+            if turn.prompt_before_command:
+                if cleanup is not None:
+                    await asyncio.shield(cleanup)
+                elif prior is not None:
+                    await asyncio.shield(asyncio.gather(prior, return_exceptions=True))
+                prompt = self._request_prompt(turn, "ready", wait=True)
+                if prompt is not None:
+                    await asyncio.shield(prompt)
+                if self._turn is not turn:
+                    return
+                # Start at fresh PCM, never HA's buffered wake-word tail.
+                start = self.ingress.ingress_offset(turn.session_id)
             async with self.ingress.audio_subscription(
                 turn.session_id, start=start, consumer=turn
             ) as audio:
@@ -427,6 +447,17 @@ class AudioSessionCoordinator:
                 if turn.waiting_for_wake and (event.data or {}).get("wake_word_output"):
                     turn.waiting_for_wake = False
                     self.display.end_candidate(turn.context.id)
+                    player = self.entity.prompt_player
+                    if player is not None and player.has_available_assets():
+                        turn.interrupted = True
+                        turn.tts.stop_dispatch()
+                        self._start_turn(
+                            PipelineStage.STT,
+                            interrupted=turn,
+                            confirmed=True,
+                            prompt_before_command=True,
+                        )
+                        return
                     self._show(
                         self.display.async_set_intent(
                             DisplayState.WAKE_CONFIRMED,
@@ -441,7 +472,7 @@ class AudioSessionCoordinator:
             case PipelineEventType.STT_START:
                 if "command_timeout" not in self._timers:
                     self._arm(5, "command_timeout")
-                if turn.confirmed:
+                if turn.confirmed and not turn.prompt_before_command:
                     self._request_prompt(turn, "confirmed")
                 self._start_watcher(turn)
             case PipelineEventType.STT_VAD_START:
@@ -519,7 +550,7 @@ class AudioSessionCoordinator:
             self._request_prompt(self._turn, "followup")
 
     @callback
-    def on_end(self, session_id: str, _reason: str) -> None:
+    def on_end(self, session_id: str, reason: str) -> None:
         """Cancel the owning turn when its upload goes away."""
         if self._session_id != session_id:
             return
@@ -529,6 +560,10 @@ class AudioSessionCoordinator:
         self._clear_timers()
         turn, self._turn = self._turn, None
         if turn is not None:
+            if self.entity.prompt_player is not None and (
+                reason == "disconnected" or turn.tts.send_failed
+            ):
+                self.entity.prompt_player.release_tts(turn.tts.playback_id)
             self._show(
                 self.display.async_end_generation(turn.context.id), "session end"
             )

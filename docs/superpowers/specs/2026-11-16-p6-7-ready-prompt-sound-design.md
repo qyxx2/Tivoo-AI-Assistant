@@ -6,9 +6,17 @@
 > 合同：[P6.7 合同矩阵](2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)
 > 计划：[P6.7 分批计划](../plans/2026-11-16-p6-7-ready-prompt-sound-batch-execution-plan.md)
 
+## 2026-11-17 首次唤醒顺序修订
+
+用户明确采用“说唤醒词 → 听到我在/在的/你说 → 再说命令”。当存在可用提示音素材时，首次有效 KWS 结束旧 WAKE_WORD Pipeline，沿用既有取消/清理路径；播放提示音并等待其 completed/stopped/failed 后，以当前 ingress offset 开启新的 STT Pipeline。旧 Pipeline 的 wake tail、queued_audio 和提示音之前的 PCM 不进入命令识别。5 秒 command_timeout 从新的 STT_START 起算。提示音等待最多 5 秒，超时定向停止后降级进入 STT；缺素材或发送失败也不得永久阻塞。确认打断和免唤醒 follow-up 仍保留原时序，本修订只改变首次唤醒。
+
+断连或真实 TTS 发送失败时，必须按原 playback_id 释放 HA 提示音播放器中的 TTS 占用，不能依赖已经不可能收到的旧连接终态。迟到旧 ID 不得释放新的 TTS 占用。
+
+详见 [修复记录](../reports/2026-11-17-ready-prompt-wake-order-fix.md)。以下旧时序描述若与本节冲突，以本节为准。
+
 ## 1. 目标与边界
 
-首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及每轮回答完成后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。5/8 秒等待计时仍按原状态机开始；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
+首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及每轮回答完成后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
 
 本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO message type。为区分提示音和正常 TTS，沿用 `0x30 TTS_PLAY` 并允许可选布尔字段 `suppress_vad`；省略/false 保持原语义，只有 `PromptSoundPlayer` 对三条提示音置 true。仅在本规格定义的实际“等待命令”入口播放。
 
@@ -34,12 +42,12 @@
 
 | 等待入口 | 调用点 | 计时与提示音关系 |
 |---|---|---|
-| 初次唤醒 | 当前 turn 的有效 `WAKE_WORD_END`（含 `wake_word_output`） | 原有 5 秒从 Detection 起算；异步播放，不等待 MP3 |
+| 初次唤醒 | 当前 turn 的有效 `WAKE_WORD_END`（含 `wake_word_output`） | 存在素材时先结束旧 WAKE_WORD Pipeline，再等待提示音结束；新 STT 从新鲜 PCM 开始并启动 5 秒计时 |
 | 确认打断 | side KWS 成功引起新 `_start_turn(STT, confirmed=True)` | 优先完成旧轮定向 AUDIO_STOP / owner 清理；新 STT 仍先获得 handoff PCM；原有 5 秒从新 `STT_START` 起算；提示音不得抢占旧 TTS |
 | 连续对话等待 | `_open_followup()` 首次进入等待阶段 | 原有 8 秒从相关播放真实 completed / 无 TTS 的有效结束起算；异步请求提示音。提示音实际输出期间暂停 VAD/MIC_ACTIVITY/MIC_PCM，RX/AFE/AEC 继续；最后 TX 样本再等待实测 47.5 ms 声学尾部后恢复 VAD→STT 门控 |
 | 后续新增命令等待入口 | 仅在明确接入 `AudioSessionCoordinator` 的真实状态转移后 | 必须显式登记、复用同一触发 API；不能靠每个语音事件通用推断 |
 
-提示音的开始、结束、失败、跳过均不得重置 5/8 秒定时器，不得调用 `tts_response_finished()`、不触发另一次 follow-up、不影响用户当前的 Pipeline/ASTRBOT 结果。音频请求失败时安静跳过，不让等待命令或对话因提示音失败而失败。
+除上述首次唤醒改为提示音之后起计 5 秒外，提示音事件不得重置现有等待定时器，不得调用 `tts_response_finished()`、不触发另一次 follow-up、不影响用户当前的 Pipeline/ASTRBOT 结果。音频请求失败时安静跳过，不让等待命令或对话因提示音失败而失败。
 
 ## 5. 播放所有权、冲突与取消
 
@@ -51,7 +59,7 @@ ESP32 当前只支持单一受控音源；`TTS_PLAY` 是沿用的传输消息名
 4. 如正常 TTS 准备占用同一音频出口，先确认提示音已 completed/stopped（或将其停止并等待设备释放），再发送实际 TTS_PLAY；不能发送两个并行音频请求而依赖 `audio_busy` 作为正常流程。
 5. 提示音 `AUDIO_STATE` 必须只由提示音 owner 接收；旧 generation 的迟到状态与停止消息不能影响新 generation 或真实 TTS。短音频结束不能驱动 P6.6 speaking、follow-up 或表情清理。
 
-首期不混音、不加入第二条独立 DMA 输出、不做“先播完提示音再听人说话”的队列。
+不混音、不加入第二条独立 DMA 输出；首次唤醒明确采用先播完提示音再开启命令 STT。
 
 ## 6. AEC 与现场边界
 
