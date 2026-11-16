@@ -10,7 +10,7 @@
 
 **Spec:** [Tivoo 表情状态机与屏幕门控规格](../specs/2026-11-14-tivoo-expression-state-machine-design.md)
 **Contract:** [Tivoo 表情状态机合同矩阵](../specs/2026-11-14-tivoo-expression-state-machine-contract-matrix.md)
-**Status (2026-11-16):** P6.6b0–b5 已执行；b5 自动化/部署/idle/screen gate 通过，真人语音链与 ESP32 单独 reset 后 7777 自动恢复记 GAP。详见 [P6.6b5 验收报告](../reports/2026-11-14-p6-6-expression-state-machine-acceptance.md)。
+**Status (2026-11-16):** P6.6b0–b5 已执行；b5 自动化/部署/idle/screen gate 通过。b5 暴露的 C19 ESP32 单独 reset 后 stale 7777 恢复缺口已于同日 post-b5 修复并完成 gate ON/OFF 真机复验；当前剩余 GAP 为真人语音链。详见 [P6.6b5 验收报告](../reports/2026-11-14-p6-6-expression-state-machine-acceptance.md)。
 
 ## Global Constraints
 

@@ -2,7 +2,7 @@
 
 > 日期：2026-11-14
 > 分支：`feature/p6-6-tivoo-expression-state-machine`
-> 状态：P6.6b0–b5 已执行；自动化合同已覆盖，生产验收存在真人语音链与 ESP32 单独 reset 后 7777 自动恢复 GAP
+> 状态：P6.6b0–b5 已执行并完成 C19 post-b5 修复；自动化合同及 ESP32 单独 reset 后 7777/SPP 恢复已通过，生产验收仍存在真人语音链 GAP
 > 规格：[Tivoo 表情状态机与屏幕门控规格](2026-11-14-tivoo-expression-state-machine-design.md)
 > 分批计划：[P6.6 表情状态机与屏幕门控分批实施计划](../plans/2026-11-14-p6-6-tivoo-expression-state-machine-batch-execution-plan.md)
 > 验收报告：[P6.6b5 全量验收与生产部署](../reports/2026-11-14-p6-6-expression-state-machine-acceptance.md)
@@ -35,7 +35,7 @@
 | ESM-C16 | 底层屏幕电源继续复用现有 `tivoo.set_screen_power(value: bool)` / `tivoo__SetScreenPower`；不得新增 raw SPP 息屏协议 | 当前代码、protocol golden、固定 hass-divoom send_on/send_off 已核对 | 已实现底层能力 |
 | ESM-C17 | 多来源息屏在内部使用 owner inhibit：任一 owner 未释放则 gate 仍为 OFF；现有公开 bool service/MCP 保持兼容并只能映射到固定 compatibility owner。需要独立 owner 的自动化/AI 必须走 Coordinator 稳定 owner 路径；公开 owner schema 留待实现批次定义 | owner 是 HA 侧协调概念，不是上游协议字段；当前 bool 接口无法表达多 owner | 新内部合同；公开扩展延后 |
 | ESM-C18 | 预留内部 `temporary_wake(owner, ttl)`：只临时绕过 gate，不删除 inhibit；到期后若仍有 inhibit 必须再次 OFF | 用于未来高优先级告警；是否暴露公开 service/MCP 不在本批次定义 | 新内部合同；公开扩展延后 |
-| ESM-C19 | OFF→ON 后必须立刻 recompute 并重新发送当前赢家；SPP 重连时 OFF 要重申 OFF，ON 要重发赢家；重载后已连 SPP 的初始已校验 DEVICE_STATUS 也应触发一次同步 | 上游 on/off 本身是 `0x45 0x01` 显示/灯效模式，不保证恢复原 GIF | 新逻辑合同 |
+| ESM-C19 | OFF→ON 后必须立刻 recompute 并重新发送当前赢家；SPP 重连时 OFF 要重申 OFF，ON 要重发赢家；重载后已连 SPP 的初始已校验 DEVICE_STATUS 也应触发一次同步；ESP32 单独 reset 后若其已校验 `tcp["7777"]` 与 HA 旧 control socket 状态冲突，必须回收 stale 7777 并走既有重连 | 上游 on/off 本身是 `0x45 0x01` 显示/灯效模式，不保证恢复原 GIF；2026-11-16 真机 reset 验证 ON/OFF 均恢复 | 新逻辑合同；真机 PASS |
 | ESM-C20 | HA 的 `desired_state/last_sent` 是本状态机权威；`last_sent` 只证明 transport 写入，不证明物理像素；当前不得从 opaque SPP reverse 推导“当前表情/当前像素” | P6 reverse 只验证有限状态回显；现有 DEVICE_STATUS 不是完整显示状态 API | 必须保持 |
 | ESM-C21 | 状态表情优先复用现有 preset；若后续新增专用 listening/speaking 动画，只替换角色到 preset 的映射，不改变状态机事件/优先级合同 | 避免把视觉素材名称耦合进生命周期 | 新逻辑合同 |
 | ESM-C22 | 未来主动告警/主动播报必须复用同一 ScreenPowerGate/ExpressionCoordinator；其 announce/start-conversation 调用接口由后续独立规格核对后再定义 | 本批次不实现主动交互，不猜 HA 公开参数 | 预留 |

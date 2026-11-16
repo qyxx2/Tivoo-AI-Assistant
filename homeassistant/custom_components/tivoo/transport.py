@@ -535,6 +535,23 @@ class Esp32ConnectionAdapter:
                                 self._decode_json(message.payload)
                             )
                             self.device_status = payload
+                            # DEVICE_STATUS is the ESP32-side truth for whether
+                            # its 7777 server still owns this HA connection. An
+                            # ESP32 reset can leave the pre-reset client socket
+                            # looking ESTABLISHED locally until the next write.
+                            # Closing that stale writer lets the existing control
+                            # loop reconnect and resend the Bluetooth MAC.
+                            if (
+                                payload["tcp"]["7777"] == "disconnected"
+                                and self.states["control"] == "connected"
+                                and (control_writer := self._writers.get("control"))
+                                is not None
+                                and not control_writer.is_closing()
+                            ):
+                                _LOGGER.info(
+                                    "ESP32 reports stale 7777 control channel; reconnecting"
+                                )
+                                control_writer.close()
                             # A validated initial snapshot handles HA reload while
                             # Bluetooth remains connected and emits no new event.
                             if payload["spp"]["state"] in {"connected", "disconnected"}:

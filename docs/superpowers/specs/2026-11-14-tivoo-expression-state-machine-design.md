@@ -2,7 +2,7 @@
 
 > 日期：2026-11-14
 > 分支：`feature/p6-6-tivoo-expression-state-machine`
-> 状态：已实现至 P6.6b5；自动化、部署、idle 与屏幕门控验收通过，但真人语音链及 ESP32 单独 reset 后 7777 自动恢复仍有验收 GAP
+> 状态：已实现至 P6.6b5 并完成 C19 post-b5 修复；自动化、部署、idle、屏幕门控及 ESP32 单独 reset 后 7777/SPP 自动恢复已通过，真人语音链仍有验收 GAP
 > 合同矩阵：[Tivoo 表情状态机合同矩阵](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)
 > 分批计划：[P6.6 表情状态机与屏幕门控分批实施计划](../plans/2026-11-14-p6-6-tivoo-expression-state-machine-batch-execution-plan.md)
 > 验收报告：[P6.6b5 全量验收与生产部署](../reports/2026-11-14-p6-6-expression-state-machine-acceptance.md)
@@ -122,7 +122,7 @@ ScreenPowerGate 高于所有显示 intent。只要 gate 判定为 OFF：
 
 - session/turn 正常结束、错误、取消、follow-up timeout 或 generation 替换时，统一清除该 generation 的会话级 intents，然后 recompute；不写 A→B 的成对回退分支。
 - SPP 重连后：若 gate OFF，重新确保 OFF；若 gate ON，重新发送当前赢家。
-- HA 重载但 SPP 已连时，以校验通过的初始 `DEVICE_STATUS.spp.state` 同步一次；7777 控制连接晚于诊断快照时仍重放当前 desired，不依赖重新出现 `spp_connected` 事件。原始 `0x69/0x96` 仅为 hint，不用于认定物理 SPP 已连。
+- HA 重载但 SPP 已连时，以校验通过的初始 `DEVICE_STATUS.spp.state` 同步一次；7777 控制连接晚于诊断快照时仍重放当前 desired，不依赖重新出现 `spp_connected` 事件。若 ESP32 单独重启后新的已校验 `DEVICE_STATUS.tcp["7777"]` 明确为 `disconnected`、而 HA 仍保留旧 control socket 为 connected，则以 ESP32 侧状态为准关闭该 stale writer，让既有 control loop 重连并重新发送 Bluetooth MAC。原始 `0x69/0x96` 仅为 hint，不用于认定物理 SPP 已连。
 - `last_sent` 只表示 HA 已成功提交对应 transport 写入，不等于物理 16×16 像素已确认。
 - 不基于当前 opaque reverse SPP 字节构造“当前表情/当前像素”状态 API；后续只有获得经过型号实机验证的明确上游协议后才能增加。
 

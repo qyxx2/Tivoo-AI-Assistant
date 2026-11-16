@@ -1077,6 +1077,125 @@ async def test_diagnostic_heartbeat_sends_get_status_and_reconnects_only_7778(
         await diagnostic_server.wait_closed()
 
 
+async def test_device_status_recycles_stale_control_socket_after_esp32_reboot(
+    monkeypatch, socket_enabled
+):
+    """ESP32 truth wins when HA still holds a stale pre-reboot 7777 socket."""
+    import json
+
+    from custom_components.tivoo.diagnostics import TYPE_DEVICE_STATUS
+
+    control_clients = []
+    control_macs = []
+    diagnostic_clients = []
+    control_ready = asyncio.Event()
+    first_status_sent = asyncio.Event()
+    release_first_diagnostic = asyncio.Event()
+    second_status_sent = asyncio.Event()
+
+    async def control_handler(reader, writer):
+        control_clients.append(writer)
+        try:
+            control_macs.append(await reader.readexactly(7))
+            control_ready.set()
+            await reader.read()
+        except asyncio.IncompleteReadError:
+            pass
+
+    async def diagnostic_handler(reader, writer):
+        session_index = len(diagnostic_clients)
+        diagnostic_clients.append(writer)
+        hello = {
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "protocol_version": 1,
+            "capabilities": [
+                "spp_control",
+                "spp_reverse",
+                "remote_diagnostics",
+                "device_status",
+                "device_events",
+                "audio_resource_http",
+                "audio_control",
+            ],
+            "reset_reason": "ESP_RST_POWERON",
+        }
+        writer.write(_tvio_message(0x01, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        assert await _read_tvio_message(reader) == (0x02, 0, {"accepted": True})
+        status_request = await _read_tvio_message(reader)
+        await asyncio.wait_for(control_ready.wait(), 1)
+
+        after_reboot = session_index > 0
+        status = {
+            "request_id": status_request[2]["request_id"],
+            "device_id": "tivoo-esp32",
+            "firmware_version": "0.1.0+abcdef0",
+            "uptime_ms": 10 if after_reboot else 100_000,
+            "wifi": {"state": "connected", "ip": "127.0.0.1"},
+            "tcp": {
+                "7777": "disconnected" if after_reboot else "connected",
+                "7778": "connected",
+            },
+            "spp": {"state": "disconnected" if after_reboot else "connected"},
+            "audio_resource": {"state": "idle", "playback_id": None},
+        }
+        writer.write(_tvio_message(TYPE_DEVICE_STATUS, 1, json.dumps(status).encode()))
+        await writer.drain()
+
+        if not after_reboot:
+            first_status_sent.set()
+            await release_first_diagnostic.wait()
+            writer.close()
+            await writer.wait_closed()
+            return
+
+        second_status_sent.set()
+        await reader.read()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(
+        transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1]
+    )
+    monkeypatch.setattr(
+        transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1]
+    )
+
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=0.05
+    )
+    await adapter.async_start()
+    try:
+        await asyncio.wait_for(first_status_sent.wait(), 1)
+        for _ in range(100):
+            if adapter.device_status is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert adapter.device_status["tcp"]["7777"] == "connected"
+        assert control_macs == [bytes.fromhex("69 11 75 58 97 49 98")]
+
+        release_first_diagnostic.set()
+        await asyncio.wait_for(second_status_sent.wait(), 2)
+        for _ in range(200):
+            if len(control_macs) >= 2 and adapter.states["control"] == "connected":
+                break
+            await asyncio.sleep(0.01)
+
+        assert control_macs == [
+            bytes.fromhex("69 11 75 58 97 49 98"),
+            bytes.fromhex("69 11 75 58 97 49 98"),
+        ]
+        assert adapter.states["control"] == "connected"
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await _close_clients(control_clients + diagnostic_clients)
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
 async def test_invalid_pong_does_not_refresh_diagnostic_liveness(
     monkeypatch, socket_enabled
 ):

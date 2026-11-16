@@ -3,13 +3,13 @@
 日期：2026-11-16
 分支：`feature/p6-6-tivoo-expression-state-machine`
 基线：`2c32d09`（P6.6b4）
-范围：只执行 P6.6b5 验证、生产部署、真机验收与文档收尾；未实现新功能，未刷写 ESP32 firmware。
+范围：P6.6b5 验证、生产部署、真机验收与文档收尾，以及同日针对 b5 暴露的 ESM-C19 stale 7777 恢复缺口所做的 post-b5 修复；未修改 ESP32 firmware/protocol，未刷写固件。
 
 ## 1. 结论
 
-**P6.6b5 执行完成，但 P6.6 不能标记为“完整真机验收通过”。**
+**P6.6b5 已执行；b5 暴露的 ESM-C19 生产缺口已在同日 post-b5 修复并完成 gate ON/OFF 真机复验。P6.6 仍不能标记为“完整真机验收通过”，原因只剩真人语音链未执行。**
 
-自动化合同、HA/AstrBot 部署、生产 MCP 28 Tool、idle 定时切换、screen-off 硬门控与 ON 恢复均取得真实证据。验收同时发现一个生产级 GAP：**ESP32 单独硬重启后，7778 能自动重连，但 HA 侧旧 7777 control socket 可持续保持 ESTABLISHED；在 SPP disconnected 状态下 Coordinator 又不会发送显示写入，因此没有写失败来迫使 7777 重连，winner 也不会自动重发。HA 重启可以恢复双通道，但不能把这一点算作 ESP32 reset 自动恢复通过。**
+自动化合同、HA/AstrBot 部署、生产 MCP 28 Tool、idle 定时切换、screen-off 硬门控与 ON 恢复均取得真实证据。b5 原始验收曾发现：ESP32 单独硬重启后 7778 能自动重连，但 HA 侧旧 7777 control socket 可持续保持 ESTABLISHED，导致 SPP/winner 不恢复。根因确认后，transport 现在使用**已校验的 ESP32 `DEVICE_STATUS.tcp["7777"]`**与 HA 本地 control 状态对账；只有 ESP32 明确报告 7777 disconnected、而 HA 仍认为 connected 时，才关闭 stale writer 并复用既有 control reconnect + Bluetooth MAC 握手流程。该修复已通过自动化 RED/GREEN 与两次真实 ESP32 hard reset。
 
 此外，本次会话没有可替代真人物理讲话的输入，因此 KWS→STT→thinking→真实 TTS playback→speaking→follow-up、TTS 播放中真人 KWS 打断、真实 AstrBot tool phase、active-generation mood 三项生产语音链路按计划记为 **GAP / NOT RUN**；已有自动化证据保持 PASS，不伪装成真机结果。
 
@@ -24,6 +24,8 @@
 | Tivoo/AstrBot compileall | **PASS** |
 | `pip check` | **PASS — No broken requirements found** |
 | `git diff --check` | **PASS** |
+| C19 post-b5：`test_transport.py` | **25 passed, 0 failed**；含新增 stale-control reset 回归 |
+| C19 post-b5：Tivoo 全量 | **342 passed, 0 failed**, 169 warnings |
 
 全目录 Ruff 仍报告 27 个历史问题，全部位于未被 P6.6 修改的 `presets/emotion_presets.py` 与 `presets/presets.py`；`git diff 0fafc20..HEAD -- homeassistant/custom_components/tivoo/presets` 为空。该基线不在 b5 范围内，本批没有为了“全绿”顺带修改 preset 素材代码。
 
@@ -71,9 +73,41 @@ NAS 已有 `tivoo-esptool:4.8.1` 使用 `/dev/ttyACM0`。执行：
 
 串口证据确认 ESP32 重启、Wi-Fi 重新连接并取得 `192.168.3.28`。7778 从旧连接切换到新 source port，证明 diagnostic channel 实际重建。7777 却继续保留重启前的旧 HA socket；随后重复显式显示请求没有产生 7777 payload，串口窗口内也没有看到 SPP connected。
 
-代码与实测共同定位到恢复缺口：validated `spp_disconnected` 会令 Coordinator 停止显示发送，而 7777 control loop 没有 heartbeat；没有后续 write 就没有错误触发旧 socket 退出/重连。**因此“ESP32 单独 reset 后 SPP/control 自动恢复 winner”记 GAP。**
+代码与实测共同定位到恢复缺口：validated `spp_disconnected` 会令 Coordinator 停止显示发送，而 7777 control loop 没有 heartbeat；没有后续 write 就没有错误触发旧 socket 退出/重连。**这是 b5 当时的真实 GAP。**
 
-为恢复生产状态，随后只重启 HA；7777/7778 都建立了新的连接（最终观察到 `56326→7777`、`44420→7778`），且没有新增异常。这个恢复动作不改变上述 GAP 判定。
+为恢复当时生产状态，b5 随后只重启 HA；7777/7778 建立新连接。该动作只用于恢复生产，不被算作 C19 通过。
+
+### 5.1 C19 post-b5 修复与复验
+
+修复不新增 heartbeat，也不耦合 7777/7778 的正常独立重连。新的规则只处理一个已校验的状态冲突：当 ESP32 新的 `DEVICE_STATUS.tcp["7777"] == "disconnected"`，而 HA 本地 `states["control"] == "connected"` 且仍持有 writer 时，以 ESP32 侧状态为准关闭 stale writer；既有 control loop 随即重连并重新发送 Bluetooth MAC。普通 7778 重连若 ESP32 仍报告 7777 connected，不触发 control 重连。
+
+TDD 证据：
+
+- RED：新增 `test_device_status_recycles_stale_control_socket_after_esp32_reboot`，修复前 **1 failed**，只观察到第一次 7-byte MAC 握手，第二个 diagnostic session 报 7777 disconnected 后没有第二条 control 连接。
+- GREEN：新增测试 + diagnostic heartbeat 独立性 + DEVICE_STATUS 状态测试 **3 passed**。
+- 完整 `test_transport.py`：**25 passed**。
+- Tivoo custom-component 全量：**342 passed, 0 failed**。
+- 变更文件 Ruff check / format、compileall、`git diff --check`：**PASS**。
+
+生产只部署更新后的 `transport.py`，部署前备份为 `/volume1/docker/tivoo-backups/transport.py.pre-c19-20261116-111804`；HA 重启后 7777/7778 正常 ESTABLISHED。
+
+**gate ON 真机：**
+
+- reset 前：`48508→7777`、`36174→7778`，当前 explicit winner 固定为 `happy`。
+- 使用 esptool `run` 仅 hard reset ESP32，不写 flash。
+- HA 未重启；约 19 秒后自动形成新连接 `49510→7777`、`37098→7778`。
+- 新 7777 先发送 **7-byte** Bluetooth MAC 握手，随后约 1.37 秒自动发送 **266-byte** 当前 `happy` winner。
+- 因此 gate ON 的“reset → stale 7777 回收 → control/SPP 恢复 → winner 重发” **PASS**。
+
+**gate OFF 真机：**
+
+- 先调用 `tivoo.set_screen_power(false)`；reset 前为 `49510→7777`、`37098→7778`。
+- 再次仅 hard reset ESP32；HA 未重启。
+- 约 14 秒后自动形成新连接 `50366→7777`、`38148→7778`。
+- 新 7777 只观察到 **7-byte** Bluetooth MAC 握手与随后 **17-byte** OFF 重申；没有 266-byte winner 显示包。
+- 因此 gate OFF 的“reset → reconnect → 保持 OFF” **PASS**。
+
+复验结束后调用 `tivoo.set_screen_power(true)` 恢复原测试前亮屏状态；7777/7778 保持 ESTABLISHED，HA 日志无新增 Tivoo traceback / protocol error。以上抓包仍只证明 HA→ESP32 transport 写入，不宣称物理像素 ACK。
 
 ## 6. ESM-C01–C23 复核
 
@@ -97,7 +131,7 @@ NAS 已有 `tivoo-esptool:4.8.1` 使用 `/dev/ttyACM0`。执行：
 | C16 | PASS | 既有 golden tests；生产 off/on 17-byte transport |
 | C17 | PASS | 多 owner 自动化 + 生产 compatibility bool |
 | C18 | PASS(internal) | temporary wake 自动化；公开接口仍按合同延后 |
-| C19 | **GAP** | HA reload/restart 恢复 PASS；ESP32 单独 reset 的 7777 自动恢复 FAIL |
+| C19 | **PASS** | HA reload/restart 恢复 PASS；post-b5 修复后 ESP32 单独 reset 的 gate ON winner 恢复与 gate OFF 重申均真机 PASS |
 | C20 | PASS | desired/last_sent 自动化；报告不宣称像素 ACK |
 | C21 | PASS | preset 映射与状态自动化 |
 | C22 | **DEFERRED** | 主动 announce/start-conversation 明确不属于 P6.6 |
@@ -105,11 +139,11 @@ NAS 已有 `tivoo-esptool:4.8.1` 使用 `/dev/ttyACM0`。执行：
 
 ## 7. b5 Exit Gate
 
-- 自动化非预留合同：**PASS**，C19 的模拟 reconnect 路径仍有测试证据。
+- 自动化非预留合同：**PASS**；C19 post-b5 回归已加入并通过。
 - 生产部署、28 MCP Tool、idle、screen OFF/ON：**PASS**。
+- ESP32 单独 reset 后 7777/SPP 自动恢复：**PASS**，gate ON/OFF 均有真机证据。
 - 真人完整 voice/tooluse/interrupt/mood 链：**GAP / NOT RUN**。
-- ESP32 单独 reset 后 7777/SPP 自动恢复：**GAP / FAIL**。
 - ESP32 firmware/protocol：**未修改、未刷写**。
 - 主动 announce/start-conversation：**DEFERRED，未实现**。
 
-因此 b5 的“执行与记录真实结果”已完成；P6.6 当前应保持 **implemented with acceptance gaps**，不能标成 full real-device accepted。
+因此 C19 已关闭。P6.6 当前仍属于 **implemented with remaining runtime voice acceptance gaps**，不能标成 full real-device accepted；剩余原因不再包含 7777/SPP reset 恢复。
