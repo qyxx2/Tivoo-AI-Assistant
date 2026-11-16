@@ -275,3 +275,43 @@ async def test_interruption_suppresses_late_tts_events(hass):
 
     assert adapter.sent == []
     assert events.playback_id is None
+
+
+async def test_tts_send_awaits_optional_output_prepare_before_device_send(hass):
+    order = []
+
+    class OrderedAdapter(_TtsAdapter):
+        async def async_send_tts_play(self, playback_id, url, mime_type):
+            order.append(("send", playback_id))
+            await super().async_send_tts_play(playback_id, url, mime_type)
+
+    async def prepare(playback_id):
+        order.append(("prepare", playback_id))
+
+    adapter = OrderedAdapter()
+    manager = TtsResourceManager(hass, adapter, prepare_playback=prepare)
+    await manager.async_handle_pipeline_event(
+        _event(PipelineEventType.RUN_START, {"tts_output": _tts_output()})
+    )
+    await manager.async_handle_pipeline_event(
+        _event(PipelineEventType.TTS_END, {"tts_output": _tts_output()})
+    )
+
+    assert len(order) == 2
+    assert order[0] == ("prepare", adapter.sent[0]["playback_id"])
+    assert order[1] == ("send", adapter.sent[0]["playback_id"])
+
+
+async def test_pipeline_callback_factory_forwards_optional_output_prepare(hass):
+    prepared = []
+    adapter = _TtsAdapter()
+
+    async def prepare(playback_id):
+        prepared.append(playback_id)
+
+    callback = create_pipeline_event_callback(hass, adapter, prepare_playback=prepare)
+    callback(_event(PipelineEventType.RUN_START, {"tts_output": _tts_output()}))
+    callback(_event(PipelineEventType.TTS_END, {"tts_output": _tts_output()}))
+    await hass.async_block_till_done()
+
+    assert prepared == [adapter.sent[0]["playback_id"]]

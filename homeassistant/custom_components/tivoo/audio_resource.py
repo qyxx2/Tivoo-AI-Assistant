@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -72,9 +72,15 @@ class _TtsResource:
 class TtsResourceManager:
     """Translate one Assist Pipeline run's events into one TTS_PLAY message."""
 
-    def __init__(self, hass: HomeAssistant, adapter: Esp32ConnectionAdapter) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        adapter: Esp32ConnectionAdapter,
+        prepare_playback: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
         self.hass = hass
         self.adapter = adapter
+        self._prepare_playback = prepare_playback
         self._resource: _TtsResource | None = None
         self.playback_id: str | None = None
 
@@ -99,6 +105,8 @@ class TtsResourceManager:
         url = build_internal_tts_url(self.hass, resource.relative_url)
         resource.sent = True
         self.playback_id = resource.playback_id
+        if self._prepare_playback is not None:
+            await self._prepare_playback(resource.playback_id)
         await self.adapter.async_send_tts_play(
             resource.playback_id,
             url,
@@ -161,8 +169,13 @@ class TtsResourceManager:
 class PipelineTtsEvents:
     """Bind the public Satellite caller and its TTS events to one run."""
 
-    def __init__(self, hass: HomeAssistant, adapter: Esp32ConnectionAdapter) -> None:
-        self._manager = TtsResourceManager(hass, adapter)
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        adapter: Esp32ConnectionAdapter,
+        prepare_playback: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
+        self._manager = TtsResourceManager(hass, adapter, prepare_playback)
         self._hass = hass
         self._owner: PipelineTtsOwner | None = None
         self._caller: asyncio.Task | None = None
@@ -289,7 +302,9 @@ class PipelineTtsEvents:
 
 
 def create_pipeline_event_callback(
-    hass: HomeAssistant, adapter: Esp32ConnectionAdapter
+    hass: HomeAssistant,
+    adapter: Esp32ConnectionAdapter,
+    prepare_playback: Callable[[str], Awaitable[None]] | None = None,
 ) -> PipelineTtsEvents:
     """Create a per-run HA event callback and TTS lifecycle owner."""
-    return PipelineTtsEvents(hass, adapter)
+    return PipelineTtsEvents(hass, adapter, prepare_playback)
