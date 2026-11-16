@@ -110,3 +110,29 @@ P65-A13 不能标 PASS。此前缺少的“实际 TX→扬声器→麦克风存�
 ## 8. b3 收尾判定
 
 **P6.7b3 的部署与验收工作已完成，验收结果为 FAIL/GAP，而不是 PASS。** 当前生产文件已部署，开发分支不应标记 P6.7 整体完成。根据本批边界，本次不修改 ESP32 AEC/VAD 实现、不刷固件、不 push、不 merge main。
+
+## 9. 后续 AEC 固定延迟标定与复测
+
+b3 之后针对“固定 5 ms 声学延迟未经标定”单独进行了实机测量。临时测量探针在 feed_afe() 前、同一 AFE 时间轴上采集原始麦克风 M 与最终 TX 生成的 AEC reference R，并对真实提示音播放期间的数据做互相关；探针只用于测量，完成后已移除。
+
+三条素材独立重启后的最佳相关峰为：
+
+| 素材 | 最佳延迟 |
+| --- | ---: |
+| ready_01.mp3 / “我在” | 752 samples = 47.000 ms |
+| ready_02.mp3 / “在的” | 780 samples = 48.750 ms |
+| ready_03.mp3 / “你说” | 760 samples = 47.500 ms |
+
+中位数为 **760 samples / 47.5 ms**。因此原先的 80 samples / 5 ms 固定补偿少了约 680 samples / 42.5 ms。生产默认值随后由 80 调整为 760，并确认实际构建的 sdkconfig.h 为 CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES=760。
+
+在其它 AEC/VAD/提示音逻辑不变、无人讲话条件下重新刷机并逐条复测：
+
+| 素材 | playing | VAD speech_start | 相对 playing | MIC PCM 帧 | 结果 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| ready_01.mp3 | 216.5 ms | 688.9 ms | 472.4 ms | 162 | FAIL |
+| ready_02.mp3 | 264.3 ms | 826.4 ms | 562.1 ms | 173 | FAIL |
+| ready_03.mp3 | 226.2 ms | 718.2 ms | 492.0 ms | 167 | FAIL |
+
+三轮播放前 AFE 都是 vad=silence，且 ref_underruns=0、ref_misaligned=0。ready_03 首次复测曾在进入 playing 后出现一次 7778 EOF，该样本未用于判定；重启后独立重跑得到上表完整 FAIL 结果。
+
+因此，“5 ms 固定延迟未经标定”这个缺口已经关闭，但 **PR-C18 仍为 FAIL、PR-C21 仍为 GAP**。47.5 ms 标定是必要修正，却不是提示音自触发的唯一根因；后续排查不应再把未标定固定延迟作为主要假设。P65-A13 中“同步声学延迟标定”这一缺项已完成，但整体仍不能 PASS，因为本机提示音残余仍触发 VAD，真人同时讲话/KWS 负样本也尚未闭环。
