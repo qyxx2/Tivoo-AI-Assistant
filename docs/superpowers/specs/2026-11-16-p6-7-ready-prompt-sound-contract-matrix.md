@@ -2,7 +2,7 @@
 
 > 日期：2026-11-16
 > 基线：`main@e48c66a`（P6.6 已合入）；工作分支 `feature/p6-7-audio-prompts`
-> 状态：待实施合同；验收状态初始为 NOT RUN，不能把既有播放/AEC 单测视为本功能实测
+> 状态：b0–b3 已执行；b3 实机验收发现 PR-C18 FAIL、PR-C21 GAP，P6.7 整体未通过。详见 [P6.7b3 验收报告](../reports/2026-11-16-p6-7b3-device-acceptance.md)
 > 规格：[P6.7 语音等待提示音规格](2026-11-16-p6-7-ready-prompt-sound-design.md)
 > 分批：[P6.7 分批执行计划](../plans/2026-11-16-p6-7-ready-prompt-sound-batch-execution-plan.md)
 
@@ -12,7 +12,7 @@
 - **设备协议权威**：[P6 双向通信矩阵](2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)。现有 `TTS_PLAY=0x30`、`AUDIO_STOP=0x31`、`AUDIO_STATE=0x32`、7778 transport/HTTP GET 可复用，不新增消息类型。ESP32 `audio_resource.c` 仅接收 `audio/mpeg` 或 `TIVOO_PCM_MIME`；`source` 仍为 `tts_http`。
 - **显示权威**：[P6.6 表情矩阵](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)。`wake_confirmed`、`followup_wait`、`speaking` 仍从原有 turn / **正常 TTS** 播放 ID 更新。提示音必须单独按 ID 路由，不能作为一次正常回答。
 - **静态资源权威**：HA Core 2026.11.0 安装源码 `components/frontend/__init__.py` 注册 `hass.config.path("www")`→`/local`；`components/http/static.py` 按扩展名返回 MIME。对应资源所在 `www` 目录必须存在；MP3 的实际 200/Content-Type/HTTP 可达性由 b0 现场/服务检查锁定。
-- **真实模块**：`assist_satellite.AudioSessionCoordinator`、`audio_resource.PipelineTtsEvents`、`transport.Esp32ConnectionAdapter`、ESP32 `audio_resource/audio_playback/audio_output_manager/audio_frontend`。P6.5b11 `P65-A13` 回声声学验收尚缺。
+- **真实模块**：`assist_satellite.AudioSessionCoordinator`、`audio_resource.PipelineTtsEvents`、`transport.Esp32ConnectionAdapter`、ESP32 `audio_resource/audio_playback/audio_output_manager/audio_frontend`。b3 已取得本机提示音触发 VAD/MIC session 的真实回授证据，但未完成声学延迟标定、含唤醒词 KWS 负样本与真人并行讲话，因此 P6.5b11 `P65-A13` 仍不能标 PASS。
 - **边界补充**：P6.5 禁止 **VAD-only 停止正常 TTS、取消 LLM 或触发打断**；本 P6.7 允许取消当前短提示音的 *专属* ID 以给用户命令/实际回答让路，不改变 P6.5 规则。
 
 ## 2. 正式合同

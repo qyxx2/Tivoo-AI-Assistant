@@ -2,7 +2,7 @@
 
 > 日期：2026-11-16
 > 分支：`feature/p6-7-audio-prompts`（从已合入 P6.6 的 `main` 创建）
-> 状态：规划；未实施、未部署、未进行本功能声学验收
+> 状态：b0–b3 已实施并部署；b3 声学验收发现三条提示音均会自触发 VAD/MIC session，PR-C18 FAIL，P6.7 整体未通过
 > 合同：[P6.7 合同矩阵](2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)
 > 计划：[P6.7 分批计划](../plans/2026-11-16-p6-7-ready-prompt-sound-batch-execution-plan.md)
 
