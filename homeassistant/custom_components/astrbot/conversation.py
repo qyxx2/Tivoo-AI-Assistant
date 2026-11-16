@@ -18,7 +18,7 @@ from .api import (
     AstrBotSessionOwnerMismatchError,
     AstrBotTransportError,
 )
-from .const import CONF_API_KEY, CONF_BASE_URL, DOMAIN
+from .const import CONF_API_KEY, CONF_BASE_URL, DOMAIN, EVENT_ASTRBOT_PHASE
 from .session import AstrBotSessionManager
 from .sse import AstrBotSseProtocolError, iter_astrbot_sse
 
@@ -104,6 +104,16 @@ class AstrBotConversationEntity(conversation.ConversationEntity):
                                 await self._session_manager.async_confirm_session(
                                     event.data
                                 )
+                            elif event.type == "phase":
+                                if user_input.satellite_id is not None:
+                                    self.hass.bus.async_fire(
+                                        EVENT_ASTRBOT_PHASE,
+                                        {
+                                            "satellite_id": user_input.satellite_id,
+                                            "context_id": user_input.context.id,
+                                            "phase": event.data,
+                                        },
+                                    )
                             elif event.type == "plain":
                                 if not assistant_started:
                                     yield {"role": "assistant"}

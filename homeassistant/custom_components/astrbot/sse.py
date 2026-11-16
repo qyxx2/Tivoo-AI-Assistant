@@ -31,16 +31,14 @@ class AstrBotSseRemoteError(AstrBotSseError):
 class AstrBotSseEvent:
     """A validated event exposed to the Conversation layer."""
 
-    type: Literal["session_id", "plain", "end"]
+    type: Literal["session_id", "plain", "phase", "end"]
     data: str
 
 
 _IGNORED_TYPES = frozenset(
     {"user_message_saved", "message_saved", "agent_stats", "run_started", "complete"}
 )
-_IGNORED_CHAIN_TYPES = frozenset(
-    {"reasoning", "tool_call", "tool_call_result", "agent_stats"}
-)
+_IGNORED_CHAIN_TYPES = frozenset({"reasoning", "agent_stats"})
 _VISIBLE_CHAIN_TYPES = {None, "", "normal"}
 _NON_TEXT_TYPES = frozenset(
     {
@@ -157,6 +155,8 @@ async def iter_astrbot_sse(
                     raise AstrBotSseProtocolError(
                         "AstrBot plain streaming flag must be a boolean"
                     )
+                if chain_type in ("tool_call", "tool_call_result"):
+                    return AstrBotSseEvent("phase", chain_type)
                 if chain_type in _IGNORED_CHAIN_TYPES:
                     return None
                 if chain_type not in _VISIBLE_CHAIN_TYPES:

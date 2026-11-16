@@ -130,12 +130,24 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
                 "session_id": body["session_id"],
             },
         )
+        await send_event(
+            response,
+            {"type": "plain", "data": "hidden tool input", "chain_type": "tool_call"},
+        )
         if len(request_bodies) == 1:
             await send_event(response, {"type": "plain", "data": "第一段"})
             await allow_first_response_to_finish.wait()
             await send_event(response, {"type": "plain", "data": "第二段"})
         else:
             await send_event(response, {"type": "plain", "data": second_reply})
+        await send_event(
+            response,
+            {
+                "type": "plain",
+                "data": "hidden tool output",
+                "chain_type": "tool_call_result",
+            },
+        )
         await send_event(response, {"type": "end", "data": ""})
         await response.write_eof()
         return response
@@ -148,6 +160,8 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
 
     delta_events = []
     chat_logs = []
+    phases = []
+    unsubscribe = hass.bus.async_listen("astrbot_phase", phases.append)
 
     def on_delta(chat_log, delta):
         delta_events.append(dict(delta))
@@ -179,6 +193,13 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
         )
 
     first_result = first_task.result()
+    assert [
+        (event.data["phase"], event.data["satellite_id"], event.data["context_id"])
+        for event in phases
+    ] == [
+        ("tool_call", "satellite-1", first_input.context.id),
+        ("tool_call_result", "satellite-1", first_input.context.id),
+    ]
 
     assert isinstance(first_result, conversation.ConversationResult)
     assert first_result.continue_conversation is True
@@ -214,6 +235,8 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
     )
 
     assert second_result.continue_conversation is native_followup
+    assert len(phases) == 2  # Web/text turn has no satellite owner.
+    unsubscribe()
     assert second_result.conversation_id == "ha-conversation-two"
     assert second_result.response.as_dict()["speech"]["plain"]["speech"] == second_reply
     second_messages = [
@@ -387,6 +410,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
         )
         if len(chat_bodies) == 1:
             await send_event(response, {"type": "run_started", "data": None})
+            await send_event(
+                response,
+                {
+                    "type": "plain",
+                    "data": "internal tool payload",
+                    "chain_type": "tool_call",
+                },
+            )
             if after_plain:
                 await send_event(response, {"type": "plain", "data": "尚未完成"})
             await release_chat.wait()
@@ -434,12 +465,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
 
     monkeypatch.setattr(manager, "async_confirm_session", confirm_session)
     chat_logs = []
+    phase_events = []
+    unsubscribe = hass.bus.async_listen("astrbot_phase", phase_events.append)
     user_input = conversation.ConversationInput(
         text="请取消我",
         context=Context(user_id="ha-user-id"),
         conversation_id="cancelled-conversation",
         device_id=None,
-        satellite_id=None,
+        satellite_id="assist_satellite.tivoo",
         language="zh-CN",
         agent_id="conversation.astrbot",
         extra_system_prompt=None,
@@ -473,6 +506,15 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
         await asyncio.gather(task, return_exceptions=True)
 
     assert received_text == (["尚未完成"] if after_plain else [])
+    if after_plain:
+        assert [event.data for event in phase_events] == [
+            {
+                "satellite_id": "assist_satellite.tivoo",
+                "context_id": user_input.context.id,
+                "phase": "tool_call",
+            }
+        ]
+    unsubscribe()
     assert len(chat_bodies) == 1
     assert chat_bodies[0]["username"] == "api_key:key-123"
     assert len(stop_calls) == 1
@@ -804,9 +846,21 @@ async def test_assist_pipeline_consumes_astrbot_chatlog_deltas_as_streaming_tts_
             response,
             {"type": "session_id", "data": None, "session_id": body["session_id"]},
         )
+        await send_event(
+            response,
+            {"type": "plain", "data": "SECRET_TOOL_REQUEST", "chain_type": "tool_call"},
+        )
         for chunk in visible_chunks[:2]:
             await send_event(response, {"type": "plain", "data": chunk})
         await asyncio.wait_for(tts_first_chunk_consumed.wait(), timeout=5)
+        await send_event(
+            response,
+            {
+                "type": "plain",
+                "data": "SECRET_TOOL_RESULT",
+                "chain_type": "tool_call_result",
+            },
+        )
         await send_event(response, {"type": "plain", "data": visible_chunks[2]})
         await send_event(response, {"type": "end", "data": ""})
         await response.write_eof()

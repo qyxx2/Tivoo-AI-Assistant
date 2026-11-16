@@ -825,3 +825,94 @@ async def test_satellite_first_speech_candidate_uses_display_hold_and_cooldown(
     await hass.async_block_till_done()
     assert entity.display.active_generation is None
     assert entity.display.desired_state is DisplayState.IDLE
+
+
+async def test_astrbot_tool_phase_matches_live_satellite_context_and_restores_thinking(
+    hass, satellite, monkeypatch
+):
+    entity, manager, _ = satellite
+    entity.entity_id = "assist_satellite.tivoo"
+    turns = asyncio.Queue()
+
+    async def pipeline(audio, stage, *, context):
+        await turns.put(context)
+        await asyncio.Future()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await activity(manager, "speech_start")
+    first = await asyncio.wait_for(turns.get(), 1)
+    entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+    entity.on_pipeline_event(
+        PipelineEvent(Event.STT_END, {"stt_output": {"text": "天气"}})
+    )
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.THINKING
+
+    def phase(kind, satellite_id="assist_satellite.tivoo", context_id=None):
+        hass.bus.async_fire(
+            "astrbot_phase",
+            {
+                "satellite_id": satellite_id,
+                "context_id": first.id if context_id is None else context_id,
+                "phase": kind,
+            },
+        )
+
+    phase("tool_call", satellite_id="assist_satellite.not_tivoo")
+    phase("tool_call", context_id="old-context")
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.THINKING
+    phase("tool_call")
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.TOOLUSE
+    phase("tool_call_result")
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.THINKING
+    phase("tool_call")
+    await hass.async_block_till_done()
+    entity.coordinator._turn.tts._manager.playback_id = "playing"
+    entity.coordinator.on_playback("playing", "playing")
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.SPEAKING
+
+    # Session ended: delayed phase cannot reintroduce a session intent.
+    await manager.async_disconnect()
+    await hass.async_block_till_done()
+    phase("tool_call")
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.IDLE
+    assert entity.display.active_generation is None
+
+
+async def test_astrbot_phase_old_context_cannot_modify_new_generation(
+    hass, satellite, monkeypatch
+):
+    entity, manager, _ = satellite
+    entity.entity_id = "assist_satellite.tivoo"
+    started = asyncio.Event()
+
+    async def pipeline(audio, stage, *, context):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await activity(manager, "speech_start")
+    await asyncio.wait_for(started.wait(), 1)
+    old = entity.coordinator._turn.context.id
+    entity.display.begin_generation("new-context")
+    await entity.display.async_set_intent(
+        DisplayState.THINKING,
+        build_expression_command("thinking"),
+        generation="new-context",
+    )
+    hass.bus.async_fire(
+        "astrbot_phase",
+        {
+            "satellite_id": "assist_satellite.tivoo",
+            "context_id": old,
+            "phase": "tool_call",
+        },
+    )
+    await hass.async_block_till_done()
+    assert entity.display.desired_state is DisplayState.THINKING
+    assert entity.display.active_generation == "new-context"

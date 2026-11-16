@@ -20,7 +20,7 @@ from homeassistant.components.assist_satellite import (
     AssistSatelliteEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Context, HomeAssistant, callback
+from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
@@ -32,6 +32,8 @@ from .transport import Esp32ConnectionAdapter
 
 _LOGGER = logging.getLogger(__name__)
 _WAKE_WORD_ID = "tivoo-wake"
+# Listen by event name without making Tivoo depend on the AstrBot installation.
+_ASTRBOT_PHASE_EVENT = "astrbot_phase"
 
 
 async def async_setup_entry(
@@ -527,12 +529,48 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         self.adapter = adapter
         self.display = display
         self.coordinator = AudioSessionCoordinator(self, ingress, display)
+        self._unsubscribe_phase: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Bind transport callbacks after the entity is ready."""
         self.adapter.register_playback_handler(self.coordinator.on_playback)
         self.coordinator.ingress.on_activity = self.coordinator.on_activity
         self.coordinator.ingress.on_end = self.coordinator.on_end
+        self._unsubscribe_phase = self.hass.bus.async_listen(
+            _ASTRBOT_PHASE_EVENT, self._on_astrbot_phase
+        )
+
+    @callback
+    def _on_astrbot_phase(self, event: Event) -> None:
+        """Accept only phases belonging to this satellite's active HA turn."""
+        turn = self.coordinator._turn
+        data = event.data
+        if (
+            turn is None
+            or self.coordinator._session_id is None
+            or self.coordinator._followup
+            or turn.error
+            or data.get("satellite_id") != self.entity_id
+            or data.get("context_id") != turn.context.id
+            or self.display.active_generation != turn.context.id
+        ):
+            return
+        if data.get("phase") == "tool_call":
+            self.coordinator._show(
+                self.display.async_set_intent(
+                    DisplayState.TOOLUSE,
+                    build_expression_command("tooluse"),
+                    generation=turn.context.id,
+                ),
+                "tool phase",
+            )
+        elif data.get("phase") == "tool_call_result":
+            self.coordinator._show(
+                self.display.async_clear_intent(
+                    DisplayState.TOOLUSE, generation=turn.context.id
+                ),
+                "tool result",
+            )
 
     @callback
     def wake_word_provider(
@@ -574,6 +612,9 @@ class TivooAssistSatellite(AssistSatelliteEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Close the upload and wait for its Pipeline before transport unload."""
+        if self._unsubscribe_phase is not None:
+            self._unsubscribe_phase()
+            self._unsubscribe_phase = None
         await self.coordinator.async_shutdown()
         self.coordinator.ingress.on_activity = None
         self.coordinator.ingress.on_end = None

@@ -15,3 +15,6 @@ SESSION_DATA_VERSION = 1
 SESSION_TTL = timedelta(hours=24)
 
 SERVICE_NEW_CONVERSATION = "new_conversation"
+
+# Internal lifecycle signal; never part of the visible Conversation/ChatLog stream.
+EVENT_ASTRBOT_PHASE = "astrbot_phase"

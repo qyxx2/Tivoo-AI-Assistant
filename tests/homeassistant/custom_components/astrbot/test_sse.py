@@ -93,6 +93,8 @@ async def test_parser_preserves_visible_text_and_ignores_metadata_and_internal_c
         AstrBotSseEvent("plain", "B"),
         AstrBotSseEvent("plain", "C"),
         AstrBotSseEvent("plain", "D"),
+        AstrBotSseEvent("phase", "tool_call"),
+        AstrBotSseEvent("phase", "tool_call_result"),
         AstrBotSseEvent("end", ""),
     ]
 
