@@ -28,6 +28,7 @@ from .audio_resource import PipelineTtsEvents
 from .audio_session import AudioSessionManager
 from .const import DOMAIN
 from .display_state import DisplayState, ExpressionCoordinator, build_expression_command
+from .prompt_audio import PromptSoundPlayer
 from .transport import Esp32ConnectionAdapter
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class _Turn:
     command_started: bool = False
     playback_completed: bool = False
     interrupted: bool = False
+    confirmed: bool = False
 
 
 class AudioSessionCoordinator:
@@ -91,9 +93,54 @@ class AudioSessionCoordinator:
         self._followup = False
         self._closing: asyncio.Future | None = None
         self._event_turn: _Turn | None = None
+        self._prompt_generation: str | None = None
+        self._prompt_tasks: set[asyncio.Task] = set()
 
     def _show(self, coroutine, name: str) -> None:
         self.entity.hass.async_create_task(coroutine, f"Tivoo display {name}")
+
+    def _spawn_prompt(self, coroutine, name: str) -> None:
+        task = self.entity.hass.async_create_task(coroutine, f"Tivoo prompt {name}")
+        self._prompt_tasks.add(task)
+        task.add_done_callback(self._prompt_tasks.discard)
+
+    def _request_prompt(self, turn: _Turn, phase: str) -> None:
+        player = self.entity.prompt_player
+        if player is None:
+            return
+        generation = f"{turn.context.id}:{phase}"
+        if generation == self._prompt_generation:
+            return
+
+        self._prompt_generation = generation
+
+        async def request() -> None:
+            await asyncio.sleep(0)
+            if self._prompt_generation != generation or self._turn is not turn:
+                return
+            try:
+                await player.async_request(generation)
+            except Exception:
+                _LOGGER.exception("Tivoo ready prompt request failed")
+
+        self._spawn_prompt(request(), phase)
+
+    def _cancel_prompt(self) -> None:
+        generation = self._prompt_generation
+        if generation is None:
+            return
+        self._prompt_generation = None
+        player = self.entity.prompt_player
+        if player is None:
+            return
+
+        async def cancel() -> None:
+            try:
+                await player.async_cancel(generation)
+            except Exception:
+                _LOGGER.exception("Tivoo ready prompt cancellation failed")
+
+        self._spawn_prompt(cancel(), "cancel")
 
     def _cancel_timer(self, reason: str) -> None:
         if cancel := self._timers.pop(reason, None):
@@ -137,6 +184,7 @@ class AudioSessionCoordinator:
         if session_id != self._session_id or turn is None:
             return
         if self._followup and state == "speech_start":
+            self._cancel_prompt()
             self._start_turn(PipelineStage.STT)
         elif turn.waiting_for_wake:
             if state == "speech_start":
@@ -163,11 +211,17 @@ class AudioSessionCoordinator:
         # PCM following the speech-start frame in the same TCP read.
         if start is None:
             start = self.ingress.ingress_offset(session_id)
+        player = self.entity.prompt_player
         turn = _Turn(
             session_id,
             Context(),
-            PipelineTtsEvents(self.entity.hass, self.entity.adapter),
+            PipelineTtsEvents(
+                self.entity.hass,
+                self.entity.adapter,
+                player.async_yield_to_tts if player is not None else None,
+            ),
             waiting_for_wake=stage == PipelineStage.WAKE_WORD,
+            confirmed=confirmed,
         )
         previous = self._turn
         self._turn = turn
@@ -383,13 +437,17 @@ class AudioSessionCoordinator:
                     )
                     self._clear_timers()
                     self._arm(5, "command_timeout")
+                    self._request_prompt(turn, "wake")
             case PipelineEventType.STT_START:
                 if "command_timeout" not in self._timers:
                     self._arm(5, "command_timeout")
+                if turn.confirmed:
+                    self._request_prompt(turn, "confirmed")
                 self._start_watcher(turn)
             case PipelineEventType.STT_VAD_START:
                 turn.command_started = True
                 self._cancel_timer("command_timeout")
+                self._cancel_prompt()
             case PipelineEventType.STT_VAD_END | PipelineEventType.STT_END:
                 self.ingress.release_subscription(turn.session_id, turn)
                 if event.type is PipelineEventType.STT_END:
@@ -419,6 +477,9 @@ class AudioSessionCoordinator:
     @callback
     def on_playback(self, playback_id: str, state: str) -> None:
         """Use the matching physical playback terminal state."""
+        player = self.entity.prompt_player
+        if player is not None and player.on_playback(playback_id, state):
+            return
         turn = self._turn
         if turn is None or turn.tts.playback_id != playback_id or self._followup:
             return
@@ -454,6 +515,8 @@ class AudioSessionCoordinator:
                 "followup wait",
             )
         self._arm(8, "followup_timeout")
+        if self._turn is not None:
+            self._request_prompt(self._turn, "followup")
 
     @callback
     def on_end(self, session_id: str, _reason: str) -> None:
@@ -462,6 +525,7 @@ class AudioSessionCoordinator:
             return
         self._session_id = None
         self._followup = False
+        self._cancel_prompt()
         self._clear_timers()
         turn, self._turn = self._turn, None
         if turn is not None:
@@ -503,7 +567,10 @@ class AudioSessionCoordinator:
 
     async def async_shutdown(self) -> None:
         """Join the Pipeline and its owned TTS resources on unload."""
+        self._cancel_prompt()
         await self.ingress.async_shutdown()
+        if self._prompt_tasks:
+            await asyncio.gather(*tuple(self._prompt_tasks), return_exceptions=True)
         if self._closing is not None:
             await asyncio.gather(self._closing, return_exceptions=True)
 
@@ -528,11 +595,13 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         }
         self.adapter = adapter
         self.display = display
+        self.prompt_player: PromptSoundPlayer | None = None
         self.coordinator = AudioSessionCoordinator(self, ingress, display)
         self._unsubscribe_phase: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Bind transport callbacks after the entity is ready."""
+        self.prompt_player = PromptSoundPlayer(self.hass, self.adapter)
         self.adapter.register_playback_handler(self.coordinator.on_playback)
         self.coordinator.ingress.on_activity = self.coordinator.on_activity
         self.coordinator.ingress.on_end = self.coordinator.on_end
