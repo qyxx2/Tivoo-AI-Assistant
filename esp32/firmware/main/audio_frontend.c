@@ -75,6 +75,11 @@ static void upload(tivoo_mic_producer_t *mic)
             mic->session_id);
         if (send_json(mic, TVIO_TYPE_MIC_SESSION_END, json)) {
             forget_session(mic);
+            /* A server-side timeout can end the network session while VAD
+             * still reports continuous speech (for example, TV dialogue).
+             * Re-arm the local speech edge so the next speech frame can open
+             * a fresh wake-word session without requiring intervening silence. */
+            mic->speech = false;
         }
         return;
     }

@@ -151,6 +151,31 @@ static void test_backpressure_and_reconnect(void)
     assert(starts == 1 && packets == 50);
 }
 
+static void test_continuous_speech_restarts_after_stop(void)
+{
+    starts = activities = ends = packets = 0;
+    next_pcm = 0;
+    block_start = block_pcm = block_activity = false;
+    tivoo_mic_producer_t mic = {.send = send_frame, .new_id = new_id};
+
+    for (int i = 0; i < 25; ++i) {
+        push(&mic, 7, false, i);
+    }
+    push(&mic, 7, true, 25);
+    assert(starts == 1 && ends == 0 && mic.speech);
+
+    assert(tivoo_mic_stop(&mic, 7, session_id));
+    push(&mic, 7, true, 26);
+    assert(ends == 1);
+
+    /* HA may stop a 15-second wake candidate while TV speech remains active.
+     * The next speech frame must be allowed to open a fresh wake session even
+     * though ESP-SR VAD never emitted an intervening silence transition. */
+    block_activity = true;
+    push(&mic, 7, true, 27);
+    assert(starts == 2 && ends == 1 && mic.speech);
+}
+
 static void test_prompt_suppression(void)
 {
     starts = activities = ends = packets = 0;
@@ -178,6 +203,7 @@ int main(void)
     test_capture();
     test_session();
     test_backpressure_and_reconnect();
+    test_continuous_speech_restarts_after_stop();
     test_prompt_suppression();
     return 0;
 }
