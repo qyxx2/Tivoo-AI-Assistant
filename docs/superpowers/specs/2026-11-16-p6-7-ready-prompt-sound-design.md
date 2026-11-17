@@ -16,7 +16,7 @@
 
 ## 1. 目标与边界
 
-首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及 HA 明确返回 `continue_conversation=true` 后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首次/确认等待使用三种 ready 候选短句“我在”“在的”“你说”，随机选择且不连续重复；follow-up 只使用独立 `followup_01.mp3`（“嗯？”），允许跨 generation 重复；不再使用“嘟”声。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
+首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及 HA 明确返回 `continue_conversation=true` 后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首次/确认等待使用三种 ready 候选短句“我在”“在的”“你说”，随机选择且不连续重复；follow-up 只使用独立 `followup_01.mp3` 的单次短“嘟”提示音，允许跨 generation 重复。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
 
 本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO message type。为区分提示音和正常 TTS，沿用 `0x30 TTS_PLAY` 并允许可选布尔字段 `suppress_vad`；省略/false 保持原语义，只有 `PromptSoundPlayer` 对预制提示音置 true。仅在本规格定义的实际“等待命令”入口播放。
 
@@ -34,7 +34,7 @@
 
 `HA AudioSessionCoordinator` 作为触发决策 owner；新建轻量 `PromptSoundPlayer` 管理独立提示音 `playback_id`、去重随机选择、异步下发、终态与定向取消。接在既有 Adapter 的状态回调路径中，按 `playback_id` 将提示音事件分流，不将其当作 `_Turn.tts.playback_id`，不得影响正常 `_open_followup()` 或 P6.6 `speaking` 显示。
 
-素材源文件建议置于仓库 `homeassistant/prompt_assets/`，生产副本放 HA 的 `/config/www/tivoo/prompts/`，LAN URL 为 `http(s)://<HA内部地址>/local/tivoo/prompts/<文件名>.mp3`。当前固定 `ready_01.mp3`…`ready_03.mp3` 加 `followup_01.mp3`；32 kHz、单声道、MP3、`audio/mpeg`、尽量不超过 0.9 秒。所有短句必须使用当前生产 HA Pipeline 实际绑定的同一 TTS Provider/模型/voice 参数一次性生成（当前为 `tts.sherpa_onnx_matcha_baker`、voice `0`、Matcha Baker + Vocos、`sid=0`、`speed=1.0`），不得用其它“可用 TTS”替代；转码前后只允许为适配播放加入必要静音和采样率/封装转换，不做改变音色的额外处理。每条文件前后都要保留可检测的短静音，避免掐头去尾；**每次播放只读取已存在的文件**。首期不做素材上传 UI 或配置页面；更换素材替换对应文件即可。资产制作与来源/使用权限记录在 b0，不把第三方模型示例语音当作可随意重分发素材。
+素材源文件建议置于仓库 `homeassistant/prompt_assets/`，生产副本放 HA 的 `/config/www/tivoo/prompts/`，LAN URL 为 `http(s)://<HA内部地址>/local/tivoo/prompts/<文件名>.mp3`。当前固定 `ready_01.mp3`…`ready_03.mp3` 加 `followup_01.mp3`；32 kHz、单声道、MP3、`audio/mpeg`、尽量不超过 0.9 秒。三条 ready 短句必须使用当前生产 HA Pipeline 实际绑定的同一 TTS Provider/模型/voice 参数一次性生成（当前为 `tts.sherpa_onnx_matcha_baker`、voice `0`、Matcha Baker + Vocos、`sid=0`、`speed=1.0`），不得用其它“可用 TTS”替代；`followup_01.mp3` 为固定短正弦“嘟”声，不经过 TTS。所有素材转码前后只允许为适配播放加入必要静音和采样率/封装转换。每条文件前后都要保留可检测的短静音，避免掐头去尾；**每次播放只读取已存在的文件**。首期不做素材上传 UI 或配置页面；更换素材替换对应文件即可。资产制作与来源/使用权限记录在 b0，不把第三方模型示例语音当作可随意重分发素材。
 
 内部 URL 由 HA 现有 LAN 地址推导，复用 `get_url(... allow_internal=True, allow_external=False, allow_cloud=False, allow_ip=True)` 的限制；单独构造、校验 `/local/tivoo/prompts/` 下的固定文件名。不得把 `audio_resource.build_internal_tts_url` 的 `/api/tts_proxy/` 白名单放宽；该函数继续只处理 TTS Proxy。
 

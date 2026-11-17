@@ -27,7 +27,7 @@
 
 ## Follow-up asset
 
-首期文件固定为 `followup_01.mp3`。内容采用短促、与 ready 三句可听区分的“嗯？”，由当前生产 Sherpa Wyoming 的同一 Matcha Baker/Vocos 模型一次性生成。只做与 ready 素材相同的前后静音和 32 kHz mono MP3 适配，不改变音色、速度或响度处理。文件可日后直接替换，不需要改代码。
+首期文件固定为 `followup_01.mp3`。内容采用短促、与 ready 三句可听区分的单次“嘟”声：1 kHz 正弦约 180 ms，带短淡入淡出，并保留约 120 ms 前静音和 180 ms 后静音；直接固化为 32 kHz mono MP3，不经过 TTS。文件可日后直接替换，不需要改代码。
 
 ## Non-goals
 
