@@ -17,7 +17,7 @@ RUN python -m pip install --no-cache-dir --requirement /tmp/requirements.txt \
     && python -m pip check \
     && rm /tmp/requirements.txt
 
-COPY *.py MODEL_SOURCES.md MODEL_SHA256SUMS /app/sherpa_wyoming/
+COPY *.py MODEL_SOURCES.md MODEL_SHA256SUMS custom_en.phone /app/sherpa_wyoming/
 COPY providers/ /app/sherpa_wyoming/providers/
 
 EXPOSE 10400/tcp

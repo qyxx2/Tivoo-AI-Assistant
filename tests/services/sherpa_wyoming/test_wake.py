@@ -262,6 +262,34 @@ def test_keyword_generation_uses_official_cli_and_configured_phrase(
     assert command[command.index("--lexicon") + 1] == str(paths.kws_lexicon)
 
 
+def test_keyword_generation_layers_pinkman_pronunciation_without_modifying_model_lexicon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = model_utils.get_model_paths(tmp_path)
+    paths.kws_dir.mkdir(parents=True)
+    original_lexicon = "HEY HH EY1\n"
+    paths.kws_lexicon.write_text(original_lexicon, encoding="utf-8")
+    monkeypatch.setattr(
+        model_utils.shutil, "which", lambda name: "/venv/bin/sherpa-onnx-cli"
+    )
+
+    def fake_run(command, **kwargs):
+        lexicon = Path(command[command.index("--lexicon") + 1])
+        assert lexicon != paths.kws_lexicon
+        assert lexicon.read_text(encoding="utf-8") == (
+            original_lexicon + "PINKMAN P IH1 NG K M AH0 N\n"
+        )
+        Path(command[-1]).write_text("P IH1 NG K M AH0 N @PINKMAN\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(model_utils.subprocess, "run", fake_run)
+
+    result = model_utils.generate_kws_keywords(tmp_path, "PINKMAN")
+
+    assert result.read_text(encoding="utf-8") == "P IH1 NG K M AH0 N @PINKMAN\n"
+    assert paths.kws_lexicon.read_text(encoding="utf-8") == original_lexicon
+
+
 @pytest.mark.parametrize("phrase", ["", "   ", "first\nsecond", "phrase @label"])
 def test_keyword_generation_rejects_empty_or_multiline_or_reserved_phrase(
     tmp_path: Path, phrase: str

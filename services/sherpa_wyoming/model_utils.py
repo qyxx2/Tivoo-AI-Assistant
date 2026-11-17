@@ -12,6 +12,7 @@ WAKE_WORD_ID = "tivoo-wake"
 STT_MODEL = "sherpa-onnx-paraformer-zh-small-2024-03-09"
 TTS_MODEL = "matcha-icefall-zh-baker"
 DEFAULT_MANIFEST_PATH = Path(__file__).with_name("MODEL_SHA256SUMS")
+CUSTOM_KWS_LEXICON_PATH = Path(__file__).with_name("custom_en.phone")
 
 KWS_FILES = (
     f"kws/{KWS_MODEL}/encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
@@ -161,6 +162,30 @@ def verify_model_files(
     return verified
 
 
+def _kws_lexicon_for_phrase(paths: ModelPaths, phrase: str) -> Path:
+    """Overlay project-owned pronunciations without modifying the pinned model."""
+
+    if not CUSTOM_KWS_LEXICON_PATH.is_file():
+        return paths.kws_lexicon
+
+    custom_lines = [
+        line.strip()
+        for line in CUSTOM_KWS_LEXICON_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    custom_words = {line.split(maxsplit=1)[0]: line for line in custom_lines}
+    needed = [custom_words[word] for word in phrase.split() if word in custom_words]
+    if not needed:
+        return paths.kws_lexicon
+    if not paths.kws_lexicon.is_file():
+        raise ModelAssetError(f"KWS English lexicon is missing: {paths.kws_lexicon}")
+
+    merged_path = paths.kws_dir / "en.phone.runtime"
+    official = paths.kws_lexicon.read_text(encoding="utf-8").rstrip("\n")
+    merged_path.write_text(official + "\n" + "\n".join(needed) + "\n", encoding="utf-8")
+    return merged_path
+
+
 def generate_kws_keywords(models_dir: Path, phrase: str) -> Path:
     """Generate the one configured wake keyword with Sherpa's pinned CLI."""
 
@@ -189,7 +214,7 @@ def generate_kws_keywords(models_dir: Path, phrase: str) -> Path:
         "--tokens-type",
         "phone+ppinyin",
         "--lexicon",
-        str(paths.kws_lexicon),
+        str(_kws_lexicon_for_phrase(paths, phrase)),
         str(raw_path),
         str(temporary_path),
     ]
@@ -205,7 +230,7 @@ def generate_kws_keywords(models_dir: Path, phrase: str) -> Path:
             if "not in lexicon" in cli_output:
                 raise ModelAssetError(
                     "text2token skipped an English token missing from en.phone; "
-                    "add its pronunciation to the KWS lexicon"
+                    "add its pronunciation to custom_en.phone"
                 )
             raise ModelAssetError("text2token did not produce exactly one keyword")
         encoded, generated_label = lines[0].rsplit("@", maxsplit=1)

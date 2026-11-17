@@ -47,8 +47,10 @@ object is constructed.
   exist in the model's `en.phone` lexicon. Sherpa can exit successfully while
   skipping an unknown English word; the generator detects the empty result
   and fails with a lexicon diagnostic instead of accepting an empty keyword.
-  The current lexicon does not contain `TIVOO`; a custom English wake word
-  needs an explicit pronunciation entry before it can be encoded.
+  The pinned model lexicon does not contain every proper name. Project-owned
+  additions live in `custom_en.phone` and are layered at keyword-generation
+  time without modifying the checksummed upstream `en.phone`. `PINKMAN` is
+  provided as `P IH1 NG K M AH0 N`.
 - The runtime loader must generate the keywords file from the same
   `ServiceConfig.wake_word_phrase` used for Wyoming WakeModel metadata before
   constructing KeywordSpotter. This is a startup-order integration point for
