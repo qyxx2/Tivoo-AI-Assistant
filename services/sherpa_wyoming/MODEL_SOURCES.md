@@ -50,7 +50,7 @@ object is constructed.
   The pinned model lexicon does not contain every proper name. Project-owned
   additions live in `custom_en.phone` and are layered at keyword-generation
   time without modifying the checksummed upstream `en.phone`. `PINKMAN` is
-  provided as `P IH1 NG K M AH0 N`.
+  provided as `P IH1 NG K M AE1 N`.
 - The runtime loader must generate the keywords file from the same
   `ServiceConfig.wake_word_phrase` used for Wyoming WakeModel metadata before
   constructing KeywordSpotter. This is a startup-order integration point for

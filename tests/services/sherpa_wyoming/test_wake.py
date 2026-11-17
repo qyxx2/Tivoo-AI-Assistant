@@ -277,16 +277,16 @@ def test_keyword_generation_layers_pinkman_pronunciation_without_modifying_model
         lexicon = Path(command[command.index("--lexicon") + 1])
         assert lexicon != paths.kws_lexicon
         assert lexicon.read_text(encoding="utf-8") == (
-            original_lexicon + "PINKMAN P IH1 NG K M AH0 N\n"
+            original_lexicon + "PINKMAN P IH1 NG K M AE1 N\n"
         )
-        Path(command[-1]).write_text("P IH1 NG K M AH0 N @PINKMAN\n", encoding="utf-8")
+        Path(command[-1]).write_text("P IH1 NG K M AE1 N @PINKMAN\n", encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(model_utils.subprocess, "run", fake_run)
 
     result = model_utils.generate_kws_keywords(tmp_path, "PINKMAN")
 
-    assert result.read_text(encoding="utf-8") == "P IH1 NG K M AH0 N @PINKMAN\n"
+    assert result.read_text(encoding="utf-8") == "P IH1 NG K M AE1 N @PINKMAN\n"
     assert paths.kws_lexicon.read_text(encoding="utf-8") == original_lexicon
 
 
