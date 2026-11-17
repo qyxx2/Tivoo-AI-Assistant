@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from custom_components.tivoo import tts_lifecycle
-from custom_components.tivoo.tts_lifecycle import PipelineTtsOwner
+from custom_components.tivoo.tts_lifecycle import PipelineTtsOwner, _OwnedCache
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -64,3 +64,31 @@ async def test_cancel_timeout_joins_producer_before_returning_error(monkeypatch)
     finally:
         producer.cancel()
         await asyncio.gather(producer, return_exceptions=True)
+
+
+async def test_proxy_consumer_waits_for_cache_producer_start():
+    """A Proxy GET racing the producer must not observe a false empty stream."""
+
+    async def source():
+        await asyncio.sleep(0)
+        yield b"first"
+        yield b"second"
+
+    stream = SimpleNamespace(token="race-token", extension="mp3")
+    cache = _OwnedCache(stream, source())
+
+    async def consume() -> bytes:
+        return b"".join([chunk async for chunk in cache.async_stream_data()])
+
+    consumer = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    assert not consumer.done()
+
+    producer = asyncio.create_task(cache.async_load_data())
+    try:
+        assert await consumer == b"firstsecond"
+        assert await producer == b"firstsecond"
+    finally:
+        consumer.cancel()
+        producer.cancel()
+        await asyncio.gather(consumer, producer, return_exceptions=True)

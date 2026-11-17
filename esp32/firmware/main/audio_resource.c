@@ -9,6 +9,7 @@
 #include "cJSON.h"
 
 #ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #endif
 
@@ -413,6 +414,10 @@ static const char *read_audio(
         }
         if (!started && tivoo_audio_playback_has_pcm(playback)) {
             started = true;
+            const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+            ESP_LOGI(TAG, "generation=%lu internal_free=%zu largest=%zu",
+                (unsigned long)request->generation, heap_caps_get_free_size(caps),
+                heap_caps_get_largest_free_block(caps));
             send_audio_state(request, "playing", NULL, true);
         }
         if (eof && bytes < sizeof(buffer)) {

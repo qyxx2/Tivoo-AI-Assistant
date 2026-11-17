@@ -17,6 +17,7 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #endif
 
 #ifdef ESP_PLATFORM
@@ -39,7 +40,8 @@
 #define LOG_MODULE_MAX 48U
 #define ERROR_CODE_MAX 40U
 #define RX_BUFFER_SIZE (TVIO_HEADER_SIZE + TVIO_MAX_JSON_PAYLOAD + 2048U)
-#define SEND_TIMEOUT_MS 500U
+// Allow the configured lwIP TCP retransmission (initial RTO: 1500 ms).
+#define SEND_TIMEOUT_MS 2500U
 #define WORKER_DELAY_MS 25U
 
 #define TVIO_TYPE_HELLO 0x01U
@@ -353,6 +355,11 @@ static bool send_all(int fd, const uint8_t *data, size_t size)
     size_t sent = 0U;
 
     while (sent < size) {
+        const uint64_t elapsed = uptime_ms() - started;
+        if (elapsed >= SEND_TIMEOUT_MS) {
+            errno = ETIMEDOUT;
+            return false;
+        }
         if (sent >= fail_after) {
             return false;
         }
@@ -375,6 +382,7 @@ static bool send_all(int fd, const uint8_t *data, size_t size)
             continue;
         }
         if (result == 0) {
+            errno = ECONNRESET;
             return false;
         }
         if (errno == EINTR) {
@@ -384,18 +392,17 @@ static bool send_all(int fd, const uint8_t *data, size_t size)
             return false;
         }
 
+        const uint64_t remaining = SEND_TIMEOUT_MS - elapsed;
         struct timeval timeout = {
             .tv_sec = 0,
-            .tv_usec = 100000,
+            .tv_usec = (remaining < 100U ? remaining : 100U) * 1000U,
         };
         fd_set writable;
         FD_ZERO(&writable);
         FD_SET(fd, &writable);
         const int ready = select(fd + 1, NULL, &writable, NULL, &timeout);
-        if (ready < 0 && errno == EINTR) {
-            continue;
-        }
-        if (ready <= 0 || uptime_ms() - started >= SEND_TIMEOUT_MS) {
+        // Keep the frame offset across individual polls until the send deadline.
+        if (ready < 0 && errno != EINTR) {
             return false;
         }
     }
@@ -426,7 +433,17 @@ static bool send_message_locked(
     if (payload_size > 0U) {
         memcpy(&s_tx_buffer[TVIO_HEADER_SIZE], payload, payload_size);
     }
-    return send_all(fd, s_tx_buffer, TVIO_HEADER_SIZE + payload_size);
+    if (send_all(fd, s_tx_buffer, TVIO_HEADER_SIZE + payload_size)) {
+        return true;
+    }
+#ifdef ESP_PLATFORM
+    const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const int send_errno = errno;
+    ESP_LOGW("tivoo_diag", "TVIO send failed type=0x%02x errno=%d internal_free=%zu largest=%zu",
+        (unsigned int)message_type, send_errno, heap_caps_get_free_size(caps),
+        heap_caps_get_largest_free_block(caps));
+#endif
+    return false;
 }
 
 static char *build_hello_payload(size_t *payload_size)

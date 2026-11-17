@@ -503,6 +503,12 @@ class AudioSessionCoordinator:
                         )
             case PipelineEventType.ERROR:
                 turn.error = True
+                data = event.data or {}
+                _LOGGER.warning(
+                    "Tivoo Assist Pipeline error code=%s message=%s",
+                    data.get("code"),
+                    data.get("message"),
+                )
                 self._show(self.display.async_end_generation(turn.context.id), "error")
 
     @callback
@@ -559,6 +565,17 @@ class AudioSessionCoordinator:
         self._cancel_prompt()
         self._clear_timers()
         turn, self._turn = self._turn, None
+        if (
+            turn is not None
+            and turn.tts.playback_id is not None
+            and not turn.playback_completed
+        ):
+            _LOGGER.warning(
+                "Tivoo microphone session ended during active TTS reason=%s "
+                "playback_id=%s",
+                reason,
+                turn.tts.playback_id,
+            )
         if turn is not None:
             if self.entity.prompt_player is not None and (
                 reason == "disconnected" or turn.tts.send_failed

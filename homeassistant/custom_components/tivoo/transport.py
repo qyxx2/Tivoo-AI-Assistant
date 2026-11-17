@@ -317,6 +317,15 @@ class Esp32ConnectionAdapter:
             if not isinstance(state, str):
                 raise TypeError("invalid AUDIO_STATE state")
             if payload.get("source") == "tts_http":
+                if state in {"failed", "stopped", "interrupted"}:
+                    _LOGGER.warning(
+                        "ESP32 TTS playback terminal state=%s audio_id=%s "
+                        "bytes_received=%s error_code=%s",
+                        state,
+                        audio_id,
+                        payload.get("bytes_received"),
+                        payload.get("error_code"),
+                    )
                 handler(audio_id, state)
 
         self.register_message_handler(TYPE_AUDIO_STATE, handle_playback)

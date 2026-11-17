@@ -126,6 +126,7 @@ def _start_simulator(tmp_path: Path):
             str(CJSON),
             str(ROOT / "esp32/tests/p5b3_control_simulator/control_bridge_host_stub.c"),
             str(SIMULATOR),
+            "-Wl,--wrap=send,--wrap=select",
             "-o",
             str(binary),
         ],
@@ -245,6 +246,25 @@ def test_queue_saturation_drops_new_records_and_reports_dropped_count(tmp_path):
     finally:
         if client is not None:
             client.close()
+        _stop(process)
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize("stall_polls", [1, 18])
+def test_send_backpressure_preserves_playback_channel(tmp_path, stall_polls):
+    process, _, diagnostic_port = _start_simulator(tmp_path)
+    try:
+        _command(process, "up")
+        with _connect(diagnostic_port) as client:
+            client.settimeout(3)
+            _handshake(client)
+            client.sendall(struct.pack("<4sBBHII", b"TVIO", 1, 0x03, 0, 2, 1) + b"{}")
+            assert _read_frame(client) == (0x04, 1, {})
+            _command(process, f"stall_send {stall_polls}")
+            completed = b'{"state":"completed"}'
+            _command(process, f"send 0x32 {completed.hex()}")
+            assert _read_frame(client) == (0x32, 2, {"state": "completed"})
+    finally:
         _stop(process)
 
 

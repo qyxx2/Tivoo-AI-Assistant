@@ -27,9 +27,16 @@ class _OwnedCache(tts.TTSCache):
     def __init__(self, stream: tts.ResultStream, audio: AsyncGenerator[bytes]) -> None:
         super().__init__(stream.token, stream.extension, audio)
         self.closed = False
+        self._load_started = asyncio.Event()
+
+    async def async_load_data(self) -> bytes:
+        """Publish producer readiness before the first source await."""
+        self._load_started.set()
+        return await super().async_load_data()
 
     def stop_delivery(self) -> None:
         self.closed = True
+        self._load_started.set()
         if self._consumers is not None:
             for queue in self._consumers:
                 while not queue.empty():
@@ -39,6 +46,14 @@ class _OwnedCache(tts.TTSCache):
     async def async_stream_data(self) -> AsyncGenerator[bytes]:
         if self.closed:
             return
+        if (
+            self._result_data is None
+            and self._partial_data is None
+            and self._loading_error is None
+        ):
+            await self._load_started.wait()
+            if self.closed:
+                return
         if self._result_data is not None:
             yield self._result_data
             return

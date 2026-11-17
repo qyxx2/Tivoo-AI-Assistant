@@ -1,10 +1,44 @@
 #include "diagnostics.h"
 #include "network_listeners.h"
 
+#include <errno.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+
+static atomic_uint stall_next_send;
+static _Thread_local unsigned int pending_stall_polls;
+
+ssize_t __real_send(int fd, const void *data, size_t size, int flags);
+int __real_select(int nfds, fd_set *read, fd_set *write, fd_set *error,
+    struct timeval *timeout);
+
+ssize_t __wrap_send(int fd, const void *data, size_t size, int flags)
+{
+    if (pending_stall_polls == 0) {
+        pending_stall_polls = atomic_exchange(&stall_next_send, 0);
+    }
+    if (pending_stall_polls != 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    return __real_send(fd, data, size, flags);
+}
+
+int __wrap_select(int nfds, fd_set *read, fd_set *write, fd_set *error,
+    struct timeval *timeout)
+{
+    if (pending_stall_polls != 0 && read == NULL && write != NULL) {
+        pending_stall_polls--;
+        struct timeval pause = *timeout;
+        return __real_select(0, NULL, NULL, NULL, &pause);
+    }
+    return __real_select(nfds, read, write, error, timeout);
+}
 
 static bool decode_hex(
     const char *text, uint8_t *output, size_t capacity, size_t *size)
@@ -157,6 +191,11 @@ int main(int argc, char **argv)
             }
         } else if (strcmp(command, "mic_stop_off") == 0) {
             tivoo_diagnostics_set_mic_capture_stop_handler(NULL);
+        } else if (strcmp(command, "stall_send") == 0) {
+            char *polls = strtok_r(NULL, " \t\r\n", &save);
+            if (polls != NULL) {
+                atomic_store(&stall_next_send, (unsigned int)strtoul(polls, NULL, 10));
+            }
         } else if (strcmp(command, "fail_after") == 0) {
             char *size_value = strtok_r(NULL, " \t\r\n", &save);
             if (size_value != NULL) {
