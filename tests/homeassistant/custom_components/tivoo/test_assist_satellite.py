@@ -89,7 +89,11 @@ def prompt_asset(hass):
     hass.config.internal_url = "http://ha-internal.local:8123"
     root = Path(hass.config.path("www", "tivoo", "prompts"))
     root.mkdir(parents=True, exist_ok=True)
-    paths = [root / "ready_01.mp3", root / "ready_02.mp3"]
+    paths = [
+        root / "ready_01.mp3",
+        root / "ready_02.mp3",
+        root / "followup_01.mp3",
+    ]
     for path in paths:
         path.write_bytes(b"prompt")
     yield paths
@@ -334,8 +338,10 @@ async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts
             break
         await asyncio.sleep(0)
     assert entity.adapter.async_send_tts_play.await_count == 3
-    followup_prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
+    followup_call = entity.adapter.async_send_tts_play.await_args
+    followup_prompt_id = followup_call.args[0]
     assert followup_prompt_id not in {wake_prompt_id, real_tts_id}
+    assert followup_call.args[1].endswith("/followup_01.mp3")
     assert entity.coordinator._followup is True
 
     await activity(manager, "speech_start")

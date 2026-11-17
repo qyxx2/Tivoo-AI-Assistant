@@ -65,6 +65,9 @@ async def test_prompt_url_is_fixed_to_local_prompt_assets(hass):
     assert build_internal_prompt_url(hass, "ready_01.mp3") == (
         INTERNAL_URL + "/local/tivoo/prompts/ready_01.mp3"
     )
+    assert build_internal_prompt_url(hass, "followup_01.mp3") == (
+        INTERNAL_URL + "/local/tivoo/prompts/followup_01.mp3"
+    )
 
     for invalid in (
         "../ready_01.mp3",
@@ -86,32 +89,56 @@ async def test_request_deduplicates_generation_and_never_repeats_adjacent_asset(
     )
     player = PromptSoundPlayer(hass, adapter)
 
-    assert await player.async_request("g1") is True
-    assert await player.async_request("g1") is False
+    assert await player.async_request("g1", "ready") is True
+    assert await player.async_request("g1", "ready") is False
     first = adapter.sent[-1]
     assert first["url"].endswith("/ready_01.mp3")
     assert first["mime_type"] == "audio/mpeg"
     assert first["suppress_vad"] is True
 
     player.on_playback(first["playback_id"], "completed")
-    assert await player.async_request("g2") is True
+    assert await player.async_request("g2", "ready") is True
     second = adapter.sent[-1]
     assert second["url"].endswith("/ready_02.mp3")
     assert second["playback_id"] != first["playback_id"]
+
+
+async def test_followup_phase_uses_dedicated_single_asset_on_every_generation(hass):
+    _install(hass, "ready_01.mp3", "followup_01.mp3")
+    adapter = _Adapter()
+    player = PromptSoundPlayer(hass, adapter)
+
+    assert await player.async_request("followup-1", "followup") is True
+    first = adapter.sent[-1]
+    assert first["url"].endswith("/followup_01.mp3")
+    player.on_playback(first["playback_id"], "completed")
+
+    assert await player.async_request("followup-2", "followup") is True
+    second = adapter.sent[-1]
+    assert second["url"].endswith("/followup_01.mp3")
+    assert second["playback_id"] != first["playback_id"]
+
+
+async def test_unknown_prompt_phase_is_rejected(hass):
+    _install(hass)
+    player = PromptSoundPlayer(hass, _Adapter())
+
+    with pytest.raises(ValueError, match="prompt phase"):
+        await player.async_request("bad-phase", "unexpected")
 
 
 async def test_missing_assets_and_prompt_send_failure_are_silent(hass):
     adapter = _Adapter()
     player = PromptSoundPlayer(hass, adapter)
 
-    assert await player.async_request("missing") is False
+    assert await player.async_request("missing", "ready") is False
     assert adapter.sent == []
 
     _install(hass, "ready_01.mp3")
     adapter.async_send_tts_play = AsyncMock(
         side_effect=HomeAssistantError("diagnostic disconnected")
     )
-    assert await player.async_request("send-failed") is False
+    assert await player.async_request("send-failed", "ready") is False
     assert player.playback_id is None
 
 
@@ -125,9 +152,9 @@ async def test_single_remaining_asset_is_not_repeated_on_adjacent_generation(
     )
     player = PromptSoundPlayer(hass, adapter)
 
-    assert await player.async_request("g1") is True
+    assert await player.async_request("g1", "ready") is True
     player.on_playback(adapter.sent[-1]["playback_id"], "completed")
-    assert await player.async_request("g2") is False
+    assert await player.async_request("g2", "ready") is False
     assert len(adapter.sent) == 1
 
 
@@ -141,10 +168,10 @@ async def test_new_generation_stops_old_prompt_and_stale_cancel_cannot_touch_new
     )
     player = PromptSoundPlayer(hass, adapter, release_timeout=1)
 
-    assert await player.async_request("g1") is True
+    assert await player.async_request("g1", "ready") is True
     old_id = adapter.sent[-1]["playback_id"]
 
-    next_request = asyncio.create_task(player.async_request("g2"))
+    next_request = asyncio.create_task(player.async_request("g2", "ready"))
     await asyncio.sleep(0)
     assert len(adapter.sent) == 1
     assert adapter.messages[-1][0] == TYPE_AUDIO_STOP
@@ -168,7 +195,7 @@ async def test_tts_prepare_stops_prompt_waits_for_release_and_blocks_new_prompt(
     adapter = _Adapter()
     player = PromptSoundPlayer(hass, adapter, release_timeout=1)
 
-    assert await player.async_request("g1") is True
+    assert await player.async_request("g1", "ready") is True
     prompt_id = adapter.sent[-1]["playback_id"]
     tts_id = "11111111-1111-4111-8111-111111111111"
 
@@ -180,10 +207,10 @@ async def test_tts_prepare_stops_prompt_waits_for_release_and_blocks_new_prompt(
     assert player.on_playback(prompt_id, "stopped") is True
     await prepare
 
-    assert await player.async_request("g2") is False
+    assert await player.async_request("g2", "ready") is False
     assert player.on_playback(tts_id, "playing") is False
     assert player.on_playback(tts_id, "completed") is False
-    assert await player.async_request("g3") is True
+    assert await player.async_request("g3", "ready") is True
 
 
 async def test_existing_tts_owner_prevents_prompt_without_audio_busy_retry(hass):
@@ -193,12 +220,12 @@ async def test_existing_tts_owner_prevents_prompt_without_audio_busy_retry(hass)
     tts_id = "22222222-2222-4222-8222-222222222222"
 
     await player.async_yield_to_tts(tts_id)
-    assert await player.async_request("g1") is False
+    assert await player.async_request("g1", "ready") is False
     assert adapter.sent == []
     assert adapter.messages == []
 
     player.on_playback(tts_id, "failed")
-    assert await player.async_request("g2") is True
+    assert await player.async_request("g2", "ready") is True
 
 
 async def test_prompt_release_timeout_is_quiet_and_does_not_block_real_tts(hass):
@@ -206,7 +233,7 @@ async def test_prompt_release_timeout_is_quiet_and_does_not_block_real_tts(hass)
     adapter = _Adapter()
     player = PromptSoundPlayer(hass, adapter, release_timeout=0.01)
 
-    assert await player.async_request("g1") is True
+    assert await player.async_request("g1", "ready") is True
     await asyncio.wait_for(
         player.async_yield_to_tts("33333333-3333-4333-8333-333333333333"),
         timeout=0.2,
@@ -222,7 +249,7 @@ async def test_missing_internal_url_skips_prompt_without_error(hass):
     adapter = _Adapter()
     player = PromptSoundPlayer(hass, adapter)
 
-    assert await player.async_request("no-internal-url") is False
+    assert await player.async_request("no-internal-url", "ready") is False
     assert adapter.sent == []
     assert player.playback_id is None
 
@@ -232,7 +259,7 @@ async def test_prompt_stop_send_failure_releases_owner_without_error(hass):
     adapter = _Adapter()
     player = PromptSoundPlayer(hass, adapter)
 
-    assert await player.async_request("g1") is True
+    assert await player.async_request("g1", "ready") is True
     adapter.async_send_message = AsyncMock(
         side_effect=HomeAssistantError("diagnostic disconnected")
     )
@@ -247,6 +274,6 @@ async def test_stale_tts_release_cannot_unlock_new_playback(hass):
     await player.async_yield_to_tts("old")
     await player.async_yield_to_tts("new")
     player.release_tts("old")
-    assert await player.async_request("still-busy") is False
+    assert await player.async_request("still-busy", "ready") is False
     player.release_tts("new")
-    assert await player.async_request("released") is True
+    assert await player.async_request("released", "ready") is True

@@ -19,14 +19,25 @@ from .transport import Esp32ConnectionAdapter
 
 _LOGGER = logging.getLogger(__name__)
 
-PROMPT_FILENAMES = ("ready_01.mp3", "ready_02.mp3", "ready_03.mp3")
+READY_PROMPT_FILENAMES = ("ready_01.mp3", "ready_02.mp3", "ready_03.mp3")
+FOLLOWUP_PROMPT_FILENAMES = ("followup_01.mp3",)
+PROMPT_FILENAMES = READY_PROMPT_FILENAMES + FOLLOWUP_PROMPT_FILENAMES
+_READY_PHASES = frozenset({"ready", "wake", "confirmed"})
 _TERMINAL_STATES = frozenset({"completed", "stopped", "failed"})
+
+
+def _filenames_for_phase(phase: str) -> tuple[str, ...]:
+    if phase in _READY_PHASES:
+        return READY_PROMPT_FILENAMES
+    if phase == "followup":
+        return FOLLOWUP_PROMPT_FILENAMES
+    raise ValueError(f"unsupported prompt phase: {phase}")
 
 
 def build_internal_prompt_url(hass: HomeAssistant, filename: str) -> str:
     """Build the LAN-only HA /local URL for one fixed prompt asset."""
     if filename not in PROMPT_FILENAMES:
-        raise HomeAssistantError("Prompt asset must be one of the fixed ready prompts")
+        raise HomeAssistantError("Prompt asset must be one of the fixed prompt files")
 
     try:
         base_url = get_url(
@@ -83,16 +94,18 @@ class PromptSoundPlayer:
         active = self._active
         return active.playback_id if active is not None else None
 
-    def _available_assets(self) -> list[str]:
+    def _available_assets(self, phase: str) -> list[str]:
         root = Path(self._hass.config.path("www", "tivoo", "prompts"))
-        available = [name for name in PROMPT_FILENAMES if (root / name).is_file()]
-        if self._last_filename in available:
+        available = [
+            name for name in _filenames_for_phase(phase) if (root / name).is_file()
+        ]
+        if phase != "followup" and self._last_filename in available:
             available = [name for name in available if name != self._last_filename]
         return available
 
-    def has_available_assets(self) -> bool:
-        """Whether this wait can play one of the installed prompts."""
-        return bool(self._available_assets())
+    def has_available_assets(self, phase: str) -> bool:
+        """Whether this wait can play one of the installed prompt assets."""
+        return bool(self._available_assets(phase))
 
     async def async_wait_completed(self, generation: str) -> None:
         """Wait for the short prompt, with bounded failure fallback."""
@@ -105,8 +118,8 @@ class PromptSoundPlayer:
         except TimeoutError:
             await self.async_cancel(generation)
 
-    async def async_request(self, generation: str) -> bool:
-        """Play at most one ready prompt for this generation."""
+    async def async_request(self, generation: str, phase: str) -> bool:
+        """Play at most one prompt from the phase-specific asset pool."""
         async with self._lock:
             if generation == self._generation:
                 return False
@@ -117,7 +130,7 @@ class PromptSoundPlayer:
             if self._tts_playback_id is not None:
                 return False
 
-            available = self._available_assets()
+            available = self._available_assets(phase)
             if not available:
                 return False
             filename = random.choice(available)

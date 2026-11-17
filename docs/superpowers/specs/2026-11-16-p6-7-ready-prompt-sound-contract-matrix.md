@@ -27,8 +27,8 @@
 | PR-C04 | 仅当当前 turn 的 `INTENT_END.intent_output.continue_conversation` 严格为 `true` 时，跟随实际正常 TTS `completed` 或无 TTS 的有效响应打开 8 秒 follow-up；`false`/缺失时结束 MIC session；提示音 `completed` 不得打开 follow-up | `_open_followup` / playback dispatcher | b2 + 2026-11-17 fix |
 | PR-C05 | 非提示音 gate 期间的 follow-up `speech_start` 仍立刻启动免唤醒词 STT。提示音 gate 内不产生新的 VAD/MIC_ACTIVITY/MIC_PCM；整句完全落在该短窗口内可能被忽略，这是明确产品取舍。gate 恢复后下一次 `speech_start` 仍按原逻辑启动 STT | `on_activity` / Pipeline / ESP32 AFE | b2 + post-b3 fix |
 | PR-C06 | `suppress_vad=true` 的提示音 gate 中 MIC RX/AFE/AEC 必须持续；VAD/MIC_ACTIVITY/MIC_PCM 向 HA 的输出明确暂停，已有 speech 状态最多归零一次。禁止停 RX/AEC，也禁止把 gate 扩大到普通 TTS | ESP32 AFE / HA ingress | b3 + post-b3 fix |
-| PR-C07 | 三个预制短 MP3（`ready_01`…`ready_03`，内容“我在/在的/你说”），32 kHz、mono、`audio/mpeg`、目标 ≤0.9 秒；必须由当前生产 HA 实际 TTS Provider/模型/voice 参数一次性生成，前后保留短静音避免掐头去尾；运行时不 TTS | `homeassistant/prompt_assets/` / `/config/www/tivoo/prompts/` | b0 |
-| PR-C08 | 随机选已配置文件且相邻两次不同；文件缺失/没有可用文件静默跳过，不产生推理或影响语音转移 | `PromptSoundPlayer` | b1 |
+| PR-C07 | 四个预制短 MP3：`ready_01`…`ready_03`（“我在/在的/你说”）和 follow-up 专属 `followup_01`（“嗯？”）；32 kHz、mono、`audio/mpeg`、目标 ≤0.9 秒；必须由当前生产 HA 实际 TTS Provider/模型/voice 参数一次性生成，前后保留短静音避免掐头去尾；运行时不 TTS | `homeassistant/prompt_assets/` / `/config/www/tivoo/prompts/` | b0 + 2026-11-17 phase split |
+| PR-C08 | `ready/wake/confirmed` 只从 `ready_01..03` 随机选择且相邻两次不同；`followup` 只使用 `followup_01` 并允许跨 generation 重复。对应素材缺失时静默跳过，不回退到其它素材池、不产生推理或影响语音转移 | `PromptSoundPlayer` | b1 + 2026-11-17 phase split |
 | PR-C09 | 生产 URL 使用 HA 内网基址 `/local/tivoo/prompts/<固定文件>.mp3`；ESP32 GET 200，Content-Type 为 `audio/mpeg`，不经认证重定向、不可使用外网/Cloud 位置 | HA 静态资源 / URL 构造 | b0/b3 |
 | PR-C10 | 不扩大 `build_internal_tts_url()` 的 `/api/tts_proxy/` 限制；提示音 URL 单独限定为固定本地素材 | HA prompt URL helper | b1 |
 | PR-C11 | 复用现有 `async_send_tts_play()` / `0x30`；只增加可选 `suppress_vad` 布尔字段且默认 false，不新增 message type；ESP32 解码与 I²S TX 仍走唯一 `audio_output_manager`，不得混音或另起 DAC owner | HA adapter / ESP32 audio_resource | b1/b3 + post-b3 fix |

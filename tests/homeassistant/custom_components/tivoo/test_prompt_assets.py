@@ -10,7 +10,9 @@ import pytest
 from homeassistant.setup import async_setup_component
 
 ASSETS = Path(__file__).resolve().parents[4] / "homeassistant" / "prompt_assets"
-NAMES = tuple(f"ready_{number:02d}.mp3" for number in range(1, 4))
+NAMES = tuple(f"ready_{number:02d}.mp3" for number in range(1, 4)) + (
+    "followup_01.mp3",
+)
 
 
 def _check_asset(path: Path) -> None:

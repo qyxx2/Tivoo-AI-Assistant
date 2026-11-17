@@ -124,7 +124,7 @@ class AudioSessionCoordinator:
             if self._prompt_generation != generation or self._turn is not turn:
                 return
             try:
-                await player.async_request(generation)
+                await player.async_request(generation, phase)
                 if wait:
                     await player.async_wait_completed(generation)
             except Exception:
@@ -458,7 +458,7 @@ class AudioSessionCoordinator:
                     turn.waiting_for_wake = False
                     self.display.end_candidate(turn.context.id)
                     player = self.entity.prompt_player
-                    if player is not None and player.has_available_assets():
+                    if player is not None and player.has_available_assets("ready"):
                         turn.interrupted = True
                         turn.tts.stop_dispatch()
                         self._start_turn(

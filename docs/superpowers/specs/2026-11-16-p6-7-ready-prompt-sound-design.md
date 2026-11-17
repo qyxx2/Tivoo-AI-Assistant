@@ -16,14 +16,14 @@
 
 ## 1. 目标与边界
 
-首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及 HA 明确返回 `continue_conversation=true` 后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
+首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及 HA 明确返回 `continue_conversation=true` 后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首次/确认等待使用三种 ready 候选短句“我在”“在的”“你说”，随机选择且不连续重复；follow-up 只使用独立 `followup_01.mp3`（“嗯？”），允许跨 generation 重复；不再使用“嘟”声。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
 
-本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO message type。为区分提示音和正常 TTS，沿用 `0x30 TTS_PLAY` 并允许可选布尔字段 `suppress_vad`；省略/false 保持原语义，只有 `PromptSoundPlayer` 对三条提示音置 true。仅在本规格定义的实际“等待命令”入口播放。
+本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO message type。为区分提示音和正常 TTS，沿用 `0x30 TTS_PLAY` 并允许可选布尔字段 `suppress_vad`；省略/false 保持原语义，只有 `PromptSoundPlayer` 对预制提示音置 true。仅在本规格定义的实际“等待命令”入口播放。
 
 ## 2. 已核对的实现事实
 
 - `homeassistant/custom_components/tivoo/assist_satellite.py` 的 `AudioSessionCoordinator`：`WAKE_WORD_END` 成功时启动 5 秒 `command_timeout`；确认打断从 `_start_turn(STT, confirmed=True)` 经旧轮清理进入新 STT，5 秒从 `STT_START` 起算；当前 turn 记录 `INTENT_END.intent_output.continue_conversation`，仅值严格为 `true` 时在对应 TTS `AUDIO_STATE=completed` 或无 TTS 的有效轮次结束后调用 `_open_followup()`；否则结束当前 MIC session。
-- `audio_session.py` 保留单个 MIC session 的 AEC 后 PCM 与跨 turn 订阅。正常路径的 follow-up `speech_start` 仍立即开启 STT；三条提示音实际输出期间 ESP32 暂停 VAD 判定以及 MIC_ACTIVITY/MIC_PCM 上送，RX/AFE/AEC 继续；gate 结束后下一次真人语音可重新产生 `speech_start`。
+- `audio_session.py` 保留单个 MIC session 的 AEC 后 PCM 与跨 turn 订阅。正常路径的 follow-up `speech_start` 仍立即开启 STT；所有预制提示音实际输出期间 ESP32 暂停 VAD 判定以及 MIC_ACTIVITY/MIC_PCM 上送，RX/AFE/AEC 继续；gate 结束后下一次真人语音可重新产生 `speech_start`。
 - `transport.py` 有 `async_send_tts_play(playback_id, url, mime_type)`，通过既有 `0x30 TTS_PLAY` 发送；回放状态 `0x32 AUDIO_STATE` 已由 `register_playback_handler` 交给 Satellite。
 - ESP32 `audio_resource.c` 已接受 `audio/mpeg` 或项目的原始 PCM MIME，增量 HTTP GET 并以 `playback_id` 进行单音源排他、重复去重、`AUDIO_STOP` 定向停止，终态为 `completed/stopped/failed`；设备状态消息中的 `source` 固定是 `tts_http`，即便复用该通道播放提示音也不会变成新 source。
 - `audio_output_manager.c` 为唯一 32 kHz DAC PCM owner，最终 I²S TX 派生 16 kHz AEC 回声参考；`audio_frontend.c` 的 RX/AFE 开机常驻且全局 `vad_mute_playback=false`。AEC 固定参考延迟已实测标定为 760 samples / 47.5 ms；仅当当前 `TTS_PLAY` 明确带 `suppress_vad=true` 时，ESP-SR VAD 在该提示音实际播放 owner 生命周期内 disable/reset，终态 enable/reset。普通 TTS 不进入此路径。
@@ -34,7 +34,7 @@
 
 `HA AudioSessionCoordinator` 作为触发决策 owner；新建轻量 `PromptSoundPlayer` 管理独立提示音 `playback_id`、去重随机选择、异步下发、终态与定向取消。接在既有 Adapter 的状态回调路径中，按 `playback_id` 将提示音事件分流，不将其当作 `_Turn.tts.playback_id`，不得影响正常 `_open_followup()` 或 P6.6 `speaking` 显示。
 
-素材源文件建议置于仓库 `homeassistant/prompt_assets/`，生产副本放 HA 的 `/config/www/tivoo/prompts/`，LAN URL 为 `http(s)://<HA内部地址>/local/tivoo/prompts/<文件名>.mp3`。首期固定三个文件 `ready_01.mp3`…`ready_03.mp3`；32 kHz、单声道、MP3、`audio/mpeg`、尽量不超过 0.9 秒。三个短句必须使用当前生产 HA Pipeline 实际绑定的同一 TTS Provider/模型/voice 参数一次性生成（当前为 `tts.sherpa_onnx_matcha_baker`、voice `0`、Matcha Baker + Vocos、`sid=0`、`speed=1.0`），不得用其它“可用 TTS”替代；转码前后只允许为适配播放加入必要静音和采样率/封装转换，不做改变音色的额外处理。每条文件前后都要保留可检测的短静音，避免掐头去尾；**每次播放只读取已存在的文件**。首期不做素材上传 UI 或配置页面；更换素材替换对应文件即可。资产制作与来源/使用权限记录在 b0，不把第三方模型示例语音当作可随意重分发素材。
+素材源文件建议置于仓库 `homeassistant/prompt_assets/`，生产副本放 HA 的 `/config/www/tivoo/prompts/`，LAN URL 为 `http(s)://<HA内部地址>/local/tivoo/prompts/<文件名>.mp3`。当前固定 `ready_01.mp3`…`ready_03.mp3` 加 `followup_01.mp3`；32 kHz、单声道、MP3、`audio/mpeg`、尽量不超过 0.9 秒。所有短句必须使用当前生产 HA Pipeline 实际绑定的同一 TTS Provider/模型/voice 参数一次性生成（当前为 `tts.sherpa_onnx_matcha_baker`、voice `0`、Matcha Baker + Vocos、`sid=0`、`speed=1.0`），不得用其它“可用 TTS”替代；转码前后只允许为适配播放加入必要静音和采样率/封装转换，不做改变音色的额外处理。每条文件前后都要保留可检测的短静音，避免掐头去尾；**每次播放只读取已存在的文件**。首期不做素材上传 UI 或配置页面；更换素材替换对应文件即可。资产制作与来源/使用权限记录在 b0，不把第三方模型示例语音当作可随意重分发素材。
 
 内部 URL 由 HA 现有 LAN 地址推导，复用 `get_url(... allow_internal=True, allow_external=False, allow_cloud=False, allow_ip=True)` 的限制；单独构造、校验 `/local/tivoo/prompts/` 下的固定文件名。不得把 `audio_resource.build_internal_tts_url` 的 `/api/tts_proxy/` 白名单放宽；该函数继续只处理 TTS Proxy。
 
