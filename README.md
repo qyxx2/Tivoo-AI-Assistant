@@ -106,7 +106,7 @@ Home Assistant 不作为另一个独立聊天机器人，也不在普通语音�
 2. 空闲时只在 ESP32 本地运行 RX/AEC/VAD，不上传。VAD 首次检测到人声后打开一个网络 MIC session，先发送 AEC 预录缓冲，再持续发送 16 kHz、16-bit、单声道 PCM（包括静音帧）。HA 使用 `AssistSatelliteEntity.async_accept_pipeline_from_satellite()` 从 `PipelineStage.WAKE_WORD` 启动原有 KWS Pipeline。
 3. 首次 KWS 候选最近一次 `speech_end` 后 3 秒无新语音则结束；首次候选从 `speech_start` 起 15 秒仍未命中也结束。KWS 命中后同一 Pipeline 进入 STT；若唤醒短语结束后 5 秒没有新命令语音，则取消空 STT turn。唤醒词后连续讲话不增加等待。
 4. Pipeline 到达 `STT_START` 时，HA 在同一有序 MIC ingress 上并行启动独立 Sherpa KWS watcher，与 STT 并行消费音频；因此 STT、AstrBot 推理/SSE、TTS 生成及 DAC 播放期间都能检测下一次唤醒词。**播放期间只有 NAS KWS 返回有效 `Detection(tivoo-wake)` 才能停止音频和取消旧对话；ESP32 VAD 的 speech_start 绝不直接停止 DAC，也不发送 `AUDIO_INTERRUPTED`。** 新一轮复用当前 MIC session，旧轮清理完成后从 `PipelineStage.STT` 接管有界 PCM handoff。
-5. 正常回答的最后一段音频实际播放完成后，进入 8 秒 follow-up 窗口；这段时间 VAD speech_start 可直接启动免唤醒词 STT。窗口到期后结束网络 MIC session，后续需要重新说唤醒词。follow-up 中的环境人声可能造成无效 STT，但不会中断播放（此时上一轮 TTS 已实际完成）。
+5. 正常回答由 HA `INTENT_END.intent_output.continue_conversation` 决定是否续聊：仅 `true` 时在最后一段音频实际播放完成后进入 8 秒 follow-up，VAD speech_start 可直接启动免唤醒词 STT；`false` 或字段缺失时回答完成即结束网络 MIC session，下一轮必须重新说唤醒词。
 6. HA STT Provider 将指令音频识别为文字。指令结束由 HA Pipeline/Provider 的 VAD 或端点检测机制处理（取决于 Provider 能力）；这与 ESP32 仅用于本地上传门控的 VAD 是不同职责。
 7. HA 自定义 Conversation Agent 将文字、稳定用户标识及映射后的 AstrBot `session_id` 发送到 AstrBot 自有 HTTP OpenAPI：`POST /api/v1/chat`（AstrBot v4.18.0+；`enable_streaming: true` 时使用 SSE）。这不是 OpenAI 兼容的 `/v1/chat/completions` 接口。
 8. AstrBot 使用指定人格、会话上下文和检索到的长期记忆处理请求，并按需作为 MCP Client 调用 HA MCP Server 的工具，控制家庭设备或 Tivoo。

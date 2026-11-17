@@ -10,7 +10,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.intent import IntentResponseType
 
 from .api import (
     AstrBotApiClient,
@@ -169,15 +168,4 @@ class AstrBotConversationEntity(conversation.ConversationEntity):
             finally:
                 await deltas.aclose()
 
-        result = conversation.async_get_result_from_chat_log(user_input, chat_log)
-        if (
-            user_input.satellite_id is not None
-            and result.response.response_type is not IntentResponseType.ERROR
-            and result.response.speech.get("plain", {}).get("speech")
-        ):
-            return conversation.ConversationResult(
-                response=result.response,
-                conversation_id=result.conversation_id,
-                continue_conversation=True,
-            )
-        return result
+        return conversation.async_get_result_from_chat_log(user_input, chat_log)

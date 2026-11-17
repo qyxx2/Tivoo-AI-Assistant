@@ -24,7 +24,7 @@
 | PR-C01 | 只在首次有效 `WAKE_WORD_END`、确认打断产生的命令等待、每轮实际 follow-up 等待各播放最多一次；`VAD` 候选、每个 `STT_START`、普通 TTS 生成不得误触发 | `AudioSessionCoordinator` | b2 |
 | PR-C02 | 首次命中且有可用素材时，结束旧 wake Pipeline，等待提示音终态后以新鲜 PCM 启动 STT；5 秒从新 STT_START 起计，wake tail 不得取消提示音或进入命令 | `AudioSessionCoordinator` | b2 |
 | PR-C03 | 确认打断后旧 turn owner 清理优先；新轮 STT_START 才启动 5 秒，MIC handoff 即使提示音未发出也不能丢 | `_interrupt_turn` / `_run_turn` | b2 |
-| PR-C04 | 跟随实际正常 TTS `completed` 或无 TTS 的有效响应打开 8 秒 follow-up；提示音 `completed` 不得打开 follow-up | `_open_followup` / playback dispatcher | b2 |
+| PR-C04 | 仅当当前 turn 的 `INTENT_END.intent_output.continue_conversation` 严格为 `true` 时，跟随实际正常 TTS `completed` 或无 TTS 的有效响应打开 8 秒 follow-up；`false`/缺失时结束 MIC session；提示音 `completed` 不得打开 follow-up | `_open_followup` / playback dispatcher | b2 + 2026-11-17 fix |
 | PR-C05 | 非提示音 gate 期间的 follow-up `speech_start` 仍立刻启动免唤醒词 STT。提示音 gate 内不产生新的 VAD/MIC_ACTIVITY/MIC_PCM；整句完全落在该短窗口内可能被忽略，这是明确产品取舍。gate 恢复后下一次 `speech_start` 仍按原逻辑启动 STT | `on_activity` / Pipeline / ESP32 AFE | b2 + post-b3 fix |
 | PR-C06 | `suppress_vad=true` 的提示音 gate 中 MIC RX/AFE/AEC 必须持续；VAD/MIC_ACTIVITY/MIC_PCM 向 HA 的输出明确暂停，已有 speech 状态最多归零一次。禁止停 RX/AEC，也禁止把 gate 扩大到普通 TTS | ESP32 AFE / HA ingress | b3 + post-b3 fix |
 | PR-C07 | 三个预制短 MP3（`ready_01`…`ready_03`，内容“我在/在的/你说”），32 kHz、mono、`audio/mpeg`、目标 ≤0.9 秒；必须由当前生产 HA 实际 TTS Provider/模型/voice 参数一次性生成，前后保留短静音避免掐头去尾；运行时不 TTS | `homeassistant/prompt_assets/` / `/config/www/tivoo/prompts/` | b0 |

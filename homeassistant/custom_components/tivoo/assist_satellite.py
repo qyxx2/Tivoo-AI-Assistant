@@ -74,6 +74,7 @@ class _Turn:
     interrupted: bool = False
     confirmed: bool = False
     prompt_before_command: bool = False
+    continue_conversation: bool = False
 
 
 class AudioSessionCoordinator:
@@ -330,7 +331,16 @@ class AudioSessionCoordinator:
         if turn.error or not turn.command_started or turn.tts.send_failed:
             await self.ingress.async_stop_session(turn.session_id, "pipeline_failed")
         elif turn.tts.playback_id is None and not self._followup:
+            await self._complete_response(turn)
+
+    async def _complete_response(self, turn: _Turn) -> None:
+        """Open follow-up only when HA explicitly requests another turn."""
+        if self._turn is not turn:
+            return
+        if turn.continue_conversation:
             self._open_followup()
+            return
+        await self.ingress.async_stop_session(turn.session_id, "conversation_complete")
 
     async def _interrupt_turn(self, turn: _Turn) -> None:
         """Join the interrupted caller and its audio owner before reusing Assist."""
@@ -479,6 +489,12 @@ class AudioSessionCoordinator:
                 turn.command_started = True
                 self._cancel_timer("command_timeout")
                 self._cancel_prompt()
+            case PipelineEventType.INTENT_END:
+                intent_output = (event.data or {}).get("intent_output")
+                turn.continue_conversation = (
+                    isinstance(intent_output, dict)
+                    and intent_output.get("continue_conversation") is True
+                )
             case PipelineEventType.STT_VAD_END | PipelineEventType.STT_END:
                 self.ingress.release_subscription(turn.session_id, turn)
                 if event.type is PipelineEventType.STT_END:
@@ -531,7 +547,9 @@ class AudioSessionCoordinator:
             )
         elif state == "completed":
             turn.playback_completed = True
-            self._open_followup()
+            self.entity.hass.async_create_task(
+                self._complete_response(turn), "Tivoo response complete"
+            )
         elif state in ("stopped", "interrupted", "failed"):
             self._show(
                 self.display.async_clear_intent(

@@ -24,7 +24,7 @@
 | ESM-C05 | `thinking` 只能在当前非错误、已开始命令的 turn 到达 `STT_END` 后进入；不得从 `STT_START` 提前进入 | 当前 Pipeline event 路径；STT_START 时用户仍可能在说话 | 新逻辑合同 |
 | ESM-C06 | 当前 Tivoo satellite 的 AstrBot `tool_call` 提交 `tooluse`；对应 `tool_call_result` 移除它并重新仲裁 | P3/SSE 已识别这两个 chain_type，但当前明确丢弃；只能增加内部 phase 观察，不得写 ChatLog/TTS | 新逻辑合同 |
 | ESM-C07 | `speaking` 只由当前 playback id 的真实 `AUDIO_STATE=playing` 进入；`completed/stopped/interrupted/failed` 退出 | 当前 ESP32/transport/playback handler；HA TTS_START/TTS_END 不能替代物理播放状态 | 新逻辑合同 |
-| ESM-C08 | `AUDIO_STATE=completed` 后沿用现有 8 秒 follow-up；等待期可显示弱 `followup_wait`，新的 `speech_start` 再进入 active listening/STT | P6.5 当前 `_open_followup()` 与 8 秒 timer | 新逻辑合同 |
+| ESM-C08 | 仅当前 turn 的 `continue_conversation=true` 且 `AUDIO_STATE=completed` 后进入 8 秒 follow-up；等待期可显示弱 `followup_wait`，新的 `speech_start` 再进入 active listening/STT。`false`/缺失时结束会话并回 idle | P6.5 `_open_followup()` 与 8 秒 timer | 2026-11-17 修订 |
 | ESM-C09 | 覆盖顺序固定为：`wake_confirmed > speaking > tooluse > thinking > active_listening > explicit_content > ai_mood > followup_wait > idle` | 这是显示仲裁策略；KWS 高于 speaking 用于打断确认即时反馈 | 新逻辑合同 |
 | ESM-C10 | 每个会话级 intent 必须绑定当前 turn/generation；旧轮取消、失败、session end、follow-up timeout 或新 generation 替换时统一清除旧 intents；迟到事件不得恢复旧画面 | P6.5 已有旧 playback/generation 隔离语义 | 新逻辑合同 |
 | ESM-C11 | AI mood 只能提交低优先级、session-scoped、有限 TTL 的 mood intent；首期 TTL 5 秒；不自动从回答文本做情绪分类 | 当前已有 mood preset；Persona 可决定是否调用，HA 必须强制生命周期 | 新逻辑合同 |

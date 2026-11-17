@@ -78,7 +78,7 @@ ExpressionCoordinator
 | 5 | `active_listening` | 首次候选人声通过下述自然化门槛；或 follow-up 中出现 `speech_start` | speech_end、KWS miss、STT/turn 转移 | `standby` |
 | 6 | `explicit_content` | 用户/自动化明确要求显示表情、图片、文字等 | 被新的显式内容替换或调用方清除 | 现有显示命令内容 |
 | 7 | `ai_mood` | AstrBot Persona 在有明确情绪表达价值时调用专用 mood 意图 | TTL、generation 结束或取消 | mood 白名单 |
-| 8 | `followup_wait` | 实际 playback completed 后进入现有 8 秒 follow-up | 新 speech_start 或 8 秒超时 | `standby` |
+| 8 | `followup_wait` | `continue_conversation=true` 且实际 playback completed 后进入 8 秒 follow-up | 新 speech_start 或 8 秒超时 | `standby` |
 | 9 | `idle` | 没有更高优先级 intent | 任意更高状态出现 | idle 池 |
 
 KWS 确认高于 speaking，保证打断成功后屏幕立即反馈“已听见”，不会等旧播放终态才改变。

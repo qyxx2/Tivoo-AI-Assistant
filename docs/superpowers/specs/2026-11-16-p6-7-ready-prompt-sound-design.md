@@ -16,13 +16,13 @@
 
 ## 1. 目标与边界
 
-首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及每轮回答完成后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
+首次 KWS 唤醒成功、确认打断进入新一轮命令等待，以及 HA 明确返回 `continue_conversation=true` 后进入免唤醒词 follow-up 时，立即异步请求播放一条短暂的本地预制提示音。首期固定三种候选短句“我在”“在的”“你说”，随机选择且不连续重复；不再使用“嘟”声。首次唤醒的 5 秒从提示音结束后的 STT_START 开始；确认打断和 follow-up 的 5/8 秒保持原时序；但提示音实际输出期间明确暂停人声检测与 MIC 上传，声学尾部结束后立即恢复。整句完全落在该短窗口内可能被忽略，这是本 workaround 的明确取舍；MIC RX/AFE/AEC 始终继续运行。
 
 本功能只增强 P6.5 的音频会话层；P6.6 表情 Coordinator、screen gate、AstrBot 对话及 TTS 合成链保持各自所有权。提示音无须 LLM、无运行时 TTS、无第二套音频输出链或新 ESP32 TVIO message type。为区分提示音和正常 TTS，沿用 `0x30 TTS_PLAY` 并允许可选布尔字段 `suppress_vad`；省略/false 保持原语义，只有 `PromptSoundPlayer` 对三条提示音置 true。仅在本规格定义的实际“等待命令”入口播放。
 
 ## 2. 已核对的实现事实
 
-- `homeassistant/custom_components/tivoo/assist_satellite.py` 的 `AudioSessionCoordinator`：`WAKE_WORD_END` 成功时启动 5 秒 `command_timeout`；确认打断从 `_start_turn(STT, confirmed=True)` 经旧轮清理进入新 STT，5 秒从 `STT_START` 起算；`_open_followup()` 在对应 TTS 的 `AUDIO_STATE=completed` 后开启 8 秒 `followup_timeout`，无 TTS 的有效轮次亦能进入 follow-up。
+- `homeassistant/custom_components/tivoo/assist_satellite.py` 的 `AudioSessionCoordinator`：`WAKE_WORD_END` 成功时启动 5 秒 `command_timeout`；确认打断从 `_start_turn(STT, confirmed=True)` 经旧轮清理进入新 STT，5 秒从 `STT_START` 起算；当前 turn 记录 `INTENT_END.intent_output.continue_conversation`，仅值严格为 `true` 时在对应 TTS `AUDIO_STATE=completed` 或无 TTS 的有效轮次结束后调用 `_open_followup()`；否则结束当前 MIC session。
 - `audio_session.py` 保留单个 MIC session 的 AEC 后 PCM 与跨 turn 订阅。正常路径的 follow-up `speech_start` 仍立即开启 STT；三条提示音实际输出期间 ESP32 暂停 VAD 判定以及 MIC_ACTIVITY/MIC_PCM 上送，RX/AFE/AEC 继续；gate 结束后下一次真人语音可重新产生 `speech_start`。
 - `transport.py` 有 `async_send_tts_play(playback_id, url, mime_type)`，通过既有 `0x30 TTS_PLAY` 发送；回放状态 `0x32 AUDIO_STATE` 已由 `register_playback_handler` 交给 Satellite。
 - ESP32 `audio_resource.c` 已接受 `audio/mpeg` 或项目的原始 PCM MIME，增量 HTTP GET 并以 `playback_id` 进行单音源排他、重复去重、`AUDIO_STOP` 定向停止，终态为 `completed/stopped/failed`；设备状态消息中的 `source` 固定是 `tts_http`，即便复用该通道播放提示音也不会变成新 source。
@@ -44,7 +44,7 @@
 |---|---|---|
 | 初次唤醒 | 当前 turn 的有效 `WAKE_WORD_END`（含 `wake_word_output`） | 存在素材时先结束旧 WAKE_WORD Pipeline，再等待提示音结束；新 STT 从新鲜 PCM 开始并启动 5 秒计时 |
 | 确认打断 | side KWS 成功引起新 `_start_turn(STT, confirmed=True)` | 优先完成旧轮定向 AUDIO_STOP / owner 清理；新 STT 仍先获得 handoff PCM；原有 5 秒从新 `STT_START` 起算；提示音不得抢占旧 TTS |
-| 连续对话等待 | `_open_followup()` 首次进入等待阶段 | 原有 8 秒从相关播放真实 completed / 无 TTS 的有效结束起算；异步请求提示音。提示音实际输出期间暂停 VAD/MIC_ACTIVITY/MIC_PCM，RX/AFE/AEC 继续；最后 TX 样本再等待实测 47.5 ms 声学尾部后恢复 VAD→STT 门控 |
+| 连续对话等待 | 当前 turn 的 `continue_conversation=true` 且回答完成后 `_open_followup()` 首次进入等待阶段 | 8 秒从相关播放真实 completed / 无 TTS 的有效结束起算；异步请求提示音。`false`/缺失时不进入该阶段并结束 MIC session。提示音实际输出期间暂停 VAD/MIC_ACTIVITY/MIC_PCM，RX/AFE/AEC 继续；最后 TX 样本再等待实测 47.5 ms 声学尾部后恢复 VAD→STT 门控 |
 | 后续新增命令等待入口 | 仅在明确接入 `AudioSessionCoordinator` 的真实状态转移后 | 必须显式登记、复用同一触发 API；不能靠每个语音事件通用推断 |
 
 除上述首次唤醒改为提示音之后起计 5 秒外，提示音事件不得重置现有等待定时器，不得调用 `tts_response_finished()`、不触发另一次 follow-up、不影响用户当前的 Pipeline/ASTRBOT 结果。音频请求失败时安静跳过，不让等待命令或对话因提示音失败而失败。

@@ -138,6 +138,112 @@ async def test_command_timeout_starts_after_ready_prompt_finishes(
     stop.assert_awaited_once_with(SESSION_1, "command_timeout")
 
 
+async def test_valid_turn_without_tts_or_continue_signal_ends_session(
+    hass, satellite, monkeypatch
+):
+    entity, manager, stop = satellite
+    monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
+
+    async def pipeline(audio, stage, *, context):
+        assert stage is PipelineStage.STT
+        await anext(audio)
+        entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+        entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+        entity.on_pipeline_event(
+            PipelineEvent(Event.STT_END, {"stt_output": {"text": "本地命令"}})
+        )
+        entity.on_pipeline_event(PipelineEvent(Event.RUN_END))
+
+    entity.async_accept_pipeline_from_satellite = pipeline
+    entity.coordinator._session_id = SESSION_1
+    entity.coordinator._start_turn(PipelineStage.STT)
+    turn_task = entity.coordinator._turn.task
+    assert turn_task is not None
+    await manager.async_push_pcm(SESSION_1, b"ok")
+    await asyncio.wait_for(turn_task, 1)
+
+    assert entity.coordinator._followup is False
+    stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
+    assert manager.active_session_id is None
+
+
+async def test_tts_completion_without_continue_conversation_ends_session_without_followup_prompt(
+    hass, satellite, prompt_asset, monkeypatch
+):
+    entity, manager, stop = satellite
+    monkeypatch.setattr(entity, "wake_word_provider", lambda _pipeline_id: None)
+    stages = asyncio.Queue()
+
+    async def pipeline(audio, stage, *, context):
+        await stages.put(stage)
+        if stage is PipelineStage.WAKE_WORD:
+            await anext(audio)
+            entity.on_pipeline_event(
+                PipelineEvent(
+                    Event.WAKE_WORD_END,
+                    {"wake_word_output": {"wake_word_id": "tivoo-wake"}},
+                )
+            )
+            await asyncio.Future()
+
+        assert stage is PipelineStage.STT
+        await anext(audio)
+        entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+        entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+        entity.on_pipeline_event(
+            PipelineEvent(
+                Event.INTENT_END,
+                {"intent_output": {"continue_conversation": False}},
+            )
+        )
+        entity.on_pipeline_event(PipelineEvent(Event.TTS_START))
+        entity.on_pipeline_event(
+            PipelineEvent(
+                Event.TTS_END,
+                {
+                    "tts_output": {
+                        "url": "/api/tts_proxy/test.mp3",
+                        "mime_type": "audio/mpeg",
+                    }
+                },
+            )
+        )
+        entity.on_pipeline_event(PipelineEvent(Event.RUN_END))
+
+    entity.async_accept_pipeline_from_satellite = pipeline
+    await activity(manager, "speech_start")
+    await manager.async_push_pcm(SESSION_1, b"wake")
+    assert await asyncio.wait_for(stages.get(), 1) is PipelineStage.WAKE_WORD
+
+    for _ in range(10):
+        if entity.adapter.async_send_tts_play.await_count >= 1:
+            break
+        await asyncio.sleep(0)
+    assert entity.adapter.async_send_tts_play.await_count == 1
+    wake_prompt_id = entity.adapter.async_send_tts_play.await_args.args[0]
+    entity.coordinator.on_playback(wake_prompt_id, "completed")
+
+    assert await asyncio.wait_for(stages.get(), 1) is PipelineStage.STT
+    await manager.async_push_pcm(SESSION_1, b"cmd!")
+    for _ in range(10):
+        if entity.adapter.async_send_tts_play.await_count >= 2:
+            break
+        await asyncio.sleep(0)
+    assert entity.adapter.async_send_tts_play.await_count == 2
+    real_tts_id = entity.adapter.async_send_tts_play.await_args.args[0]
+    entity.coordinator.on_playback(real_tts_id, "completed")
+    # A playback-tail/ambient speech transition arriving immediately after
+    # completed must not become a follow-up STT turn for a finished response.
+    await activity(manager, "speech_start")
+    assert stages.empty()
+    await hass.async_block_till_done()
+
+    assert entity.coordinator._followup is False
+    assert entity.adapter.async_send_tts_play.await_count == 2
+    stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
+    assert manager.active_session_id is None
+
+
 async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts_stt(
     hass, satellite, prompt_asset, monkeypatch
 ):
@@ -176,6 +282,12 @@ async def test_real_tts_completion_opens_one_prompted_followup_and_speech_starts
             await continue_tts.wait()
             entity.on_pipeline_event(PipelineEvent(Event.STT_START))
             entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+            entity.on_pipeline_event(
+                PipelineEvent(
+                    Event.INTENT_END,
+                    {"intent_output": {"continue_conversation": True}},
+                )
+            )
             entity.on_pipeline_event(PipelineEvent(Event.TTS_START))
             entity.on_pipeline_event(
                 PipelineEvent(
@@ -382,6 +494,12 @@ async def test_upload_survives_run_end_and_starts_followup_after_playback(
             )
         entity.on_pipeline_event(PipelineEvent(Event.STT_START))
         entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+        entity.on_pipeline_event(
+            PipelineEvent(
+                Event.INTENT_END,
+                {"intent_output": {"continue_conversation": True}},
+            )
+        )
         entity.on_pipeline_event(PipelineEvent(Event.TTS_START))
         entity.on_pipeline_event(
             PipelineEvent(
@@ -957,6 +1075,12 @@ async def test_voice_display_context_kws_stt_playback_and_followup(
     assert display.desired_state is DisplayState.IDLE
     entity.on_pipeline_event(
         PipelineEvent(Event.STT_END, {"stt_output": {"text": "开灯"}})
+    )
+    entity.on_pipeline_event(
+        PipelineEvent(
+            Event.INTENT_END,
+            {"intent_output": {"continue_conversation": True}},
+        )
     )
     await hass.async_block_till_done()
     assert display.desired_state is DisplayState.THINKING

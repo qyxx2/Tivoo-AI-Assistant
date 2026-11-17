@@ -108,6 +108,8 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
     first_delta_seen = asyncio.Event()
     allow_first_response_to_finish = asyncio.Event()
     request_bodies = []
+    first_reply = "第一段第二段？" if native_followup else "第一段第二段"
+    first_second_part = "第二段？" if native_followup else "第二段"
     second_reply = "第二轮回答？" if native_followup else "第二轮回答"
 
     async def send_event(response, payload):
@@ -137,7 +139,7 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
         if len(request_bodies) == 1:
             await send_event(response, {"type": "plain", "data": "第一段"})
             await allow_first_response_to_finish.wait()
-            await send_event(response, {"type": "plain", "data": "第二段"})
+            await send_event(response, {"type": "plain", "data": first_second_part})
         else:
             await send_event(response, {"type": "plain", "data": second_reply})
         await send_event(
@@ -202,17 +204,15 @@ async def test_assist_conversation_streams_chatlog_deltas_and_returns_native_res
     ]
 
     assert isinstance(first_result, conversation.ConversationResult)
-    assert first_result.continue_conversation is True
+    assert first_result.continue_conversation is native_followup
     assert first_result.conversation_id == "ha-conversation-one"
-    assert (
-        first_result.response.as_dict()["speech"]["plain"]["speech"] == "第一段第二段"
-    )
+    assert first_result.response.as_dict()["speech"]["plain"]["speech"] == first_reply
     first_messages = [
         item for item in chat_logs[0].content if item.role in {"user", "assistant"}
     ]
     assert [item.role for item in first_messages] == ["user", "assistant"]
     assert first_messages[0].content == FIRST_MESSAGE
-    assert first_messages[1].content == "第一段第二段"
+    assert first_messages[1].content == first_reply
 
     persisted_session = await Store(
         hass, SESSION_STORE_VERSION, SESSION_STORE_KEY
