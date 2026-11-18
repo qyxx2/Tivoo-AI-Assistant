@@ -44,9 +44,9 @@
 
 **Consumes:** T01 pin/target；T02 独立传输。**Produces:** AFE-C01–05/C12 的同步双麦 sample index、真实 TX/RX、32k mono output；原普通下行基础。
 **Files:** `esp32/firmware/main/{audio_capture,audio_playback,audio_output_manager,audio_resource}.c`，现对应 headers；`tests/esp32/{test_audio_rx_timeline,test_p65b8_audio,test_p65b10_output,test_p6_audio_resource}.py`。
-- [ ] T03-A：标记双声道 32-bit 高24位、有符号/饱和/滤波、相位、32→16k 31-tap、不同块长一致，RX/TX 共 BCLK/WS；独立敲击/示波验证 L/R、上电128ms 丢弃。先实现双通道采集和标记，不把单麦平均假称 BSS。
-- [ ] T03-B：实际 TX（含零填/stop/音量）与 RX 样本轴同源，60ms DMA/160ms reference 初值；模拟 EOF gap、丢帧只计一次、长间隙继续、尾部 drain、取消、HTTPS/HTTP 格式/URL 无回归；真实 AUX 波形/双向并发，宽带脉冲相关重测参考位置/声学延迟，不照抄47.5ms。报告水位/内部 heap，b4 再测 AFE。
-- [ ] 验证：上述4 test 文件及 IDF S3 build；实物无声学数据时保留 GAP；报告/提交。
+- [ ] T03-A（软件 PASS；实物 GAP）：标记双声道 32-bit 高24位、有符号/饱和/滤波、相位、32→16k 31-tap、不同块长一致，RX/TX 共 BCLK/WS；独立敲击/示波验证 L/R、上电128ms 丢弃。先实现双通道采集和标记，不把单麦平均假称 BSS。
+- [ ] T03-B（软件 PASS；实物 GAP）：实际 TX（含零填/stop/音量）与 RX 样本轴同源，60ms DMA/160ms reference 初值；模拟 EOF gap、丢帧只计一次、长间隙继续、尾部 drain、取消、HTTPS/HTTP 格式/URL 无回归；真实 AUX 波形/双向并发，宽带脉冲相关重测参考位置/声学延迟，不照抄47.5ms。报告水位/内部 heap，b4 再测 AFE。
+- [x] 软件验证：上述4 test 文件及新增双麦/参考主机用例通过，IDF S3 build 通过；ESP32 全量复跑有一项断线测试波动、单独复跑通过，见 [b3 软件验收报告](../reports/2026-11-18-p6-8-b3-audio-acceptance.md)。T03-A/B 实物 GAP 保留；未部署、未刷机。
 
 ## b4 — 双麦 AFE、本地 WakeNet
 
