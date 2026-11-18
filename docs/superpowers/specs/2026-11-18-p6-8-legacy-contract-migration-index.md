@@ -170,7 +170,7 @@
 | P65-A01 | 常驻采集 | 迁移 | b0.3 / b3,b4,b10 | AFE 常驻、双麦和播放/桥并发，不以数字链证明声学 |
 | P65-A02 | 首次 VAD 上传 | 替代 | b0.4 / b5,b9,b10 | 本地 wake 替代首 VAD 上传和远程候选 3/15s；待机零上行且可重唤醒 |
 | P65-A03 | wakeword miss | 替代 | b0.4 / b5,b9,b10 | 本地 wake 替代首 VAD 上传和远程候选 3/15s；待机零上行且可重唤醒 |
-| P65-A04 | wakeword hit 后命令等待 | 替代 | b0.4 / b5,b6,b10 | 先提示音再命令；5s 从物理命令 gate 计时，准备并行且有界缓存，VOICE-C04/C07；取消连说要求 |
+| P65-A04 | wakeword hit 后命令等待 | 替代 | b0.4 / b5,b6,b10 | 先提示音再命令；3s 从物理命令 gate 计时，准备并行且有界缓存，VOICE-C04/C07；取消连说要求 |
 | P65-A05 | STT endpoint | 迁移 | b0.4 / b6,b10 | S3 断句与尾帧→iterator EOF→AudioStop；VOICE-C03/C05/C06，已验证同版源码路径，完整 Pipeline 待 b5/b6 |
 | P65-A06 | 跨 Pipeline session | 迁移 | b0.4,b0.5 / b5,b7,b10 | 跨轮 PCM/有界/无旧帧串轮; 物理 MIC session 语义允许依新合同调整 |
 | P65-A07 | partial SSE 取消 | 迁移 | b0.5 / b7,b10 | 显式取消与资源 owner、普通 VAD 无打断权、WakeNet 全阶段打断、授权 follow-up/代次隔离 |
@@ -181,7 +181,7 @@
 | P65-A12 | AstrBot/SSE 阶段打断 | 迁移 | b0.5 / b7,b10 | 显式取消与资源 owner、普通 VAD 无打断权、WakeNet 全阶段打断、授权 follow-up/代次隔离 |
 | P65-A13 | TTS 回声负样本 | 迁移 | b0.3,b0.5 / b4,b7,b10 | 真实 TTS 声学负样本、回声及含词样本 |
 | P65-A14 | 全双工 DAC | 迁移 | b0.3 / b3,b4,b10 | AFE 常驻、双麦和播放/桥并发，不以数字链证明声学 |
-| P65-A15 | follow-up 窗口 | 迁移 | b0.5 / b7,b10 | 显式取消与资源 owner、普通 VAD 无打断权、WakeNet 全阶段打断、授权 follow-up/代次隔离 |
+| P65-A15 | follow-up 窗口 | 迁移 | b0.5 / b7,b10 | 授权 follow-up 4s 从安全 gate 计时，LIFE-C06/C07；代次隔离 |
 | P65-A16 | generation 隔离 | 迁移 | b0.5 / b7,b10 | 显式取消与资源 owner、普通 VAD 无打断权、WakeNet 全阶段打断、授权 follow-up/代次隔离 |
 
 ## [2026-11-14-tivoo-expression-state-machine-contract-matrix.md](2026-11-14-tivoo-expression-state-machine-contract-matrix.md)（23 项）
@@ -195,7 +195,7 @@
 | ESM-C05 | `thinking` 只能在当前非错误、已开始命令的 turn 到达 `STT_END` 后进入；不得从 `STT_START` 提前进入 | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
 | ESM-C06 | 当前 Tivoo satellite 的 AstrBot `tool_call` 提交 `tooluse`；对应 `tool_call_result` 移除它并重新仲裁 | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
 | ESM-C07 | `speaking` 只由当前 playback id 的真实 `AUDIO_STATE=playing` 进入；`completed/stopped/interrupted/failed` 退出 | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
-| ESM-C08 | 仅当前 turn 的 `continue_conversation=true` 且 `AUDIO_STATE=completed` 后进入 8 秒 follow-up；等待期可显示弱 `followup_wait`，新的 `speech_start` 再进入 active listening/STT。`false`/缺失时结束会话并回 idle | 替代事件来源 | b0.5 / b7,b8,b10 | S3 确认、有效命令和真实回复完成+授权；提示音不算回复 |
+| ESM-C08 | 仅当前 turn 的 `continue_conversation=true` 且 `AUDIO_STATE=completed` 后进入 8 秒 follow-up；等待期可显示弱 `followup_wait`，新的 `speech_start` 再进入 active listening/STT。`false`/缺失时结束会话并回 idle | 替代事件来源 | b0.5 / b7,b8,b10 | S3 确认、有效命令和真实回复完成+授权；提示音不算回复；新续聊窗口为安全 gate 后4s，LIFE-C06/C07 |
 | ESM-C09 | 覆盖顺序固定为：`wake_confirmed > speaking > tooluse > thinking > active_listening > explicit_content > ai_mood > followup_wait > idle` | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
 | ESM-C10 | 每个会话级 intent 必须绑定当前 turn/generation；旧轮取消、失败、session end、follow-up timeout 或新 generation 替换时统一清除旧 intents；迟到事件不得恢复旧画面 | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
 | ESM-C11 | AI mood 只能提交低优先级、session-scoped、有限 TTL 的 mood intent；首期 TTL 5 秒；不自动从回答文本做情绪分类 | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
@@ -210,7 +210,7 @@
 | ESM-C20 | HA 的 `desired_state/last_sent` 是本状态机权威；`last_sent` 只证明 transport 写入，不证明物理像素；当前不得从 opaque SPP reverse 推导“当前表情/当前像素” | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
 | ESM-C21 | 状态表情优先复用现有 preset；若后续新增专用 listening/speaking 动画，只替换角色到 preset 的映射，不改变状态机事件/优先级合同 | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
 | ESM-C22 | 未来主动告警/主动播报必须复用同一 ScreenPowerGate/ExpressionCoordinator；其 announce/start-conversation 调用接口由后续独立规格核对后再定义 | 延后 | P9 / b8,b10 保持复用约束 | 主动对话/播报后置，不另建仲裁 |
-| ESM-C23 | 表情状态机不得改变 P6.5 的 VAD/KWS 打断权、8 秒 follow-up、playback id/generation 规则，也不得改变 P3 的 SSE 可见文本和 Stop owner | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部 |
+| ESM-C23 | 表情状态机不得改变 P6.5 的 VAD/KWS 打断权、8 秒 follow-up、playback id/generation 规则，也不得改变 P3 的 SSE 可见文本和 Stop owner | 保留/迁移事件 | b0.5 / b8,b10 | 原 HA 唯一仲裁、mood/screen/TTL/显式内容；匹配新真实事件与 SPP 状态，C13 已实现，C18 仅内部；新续聊4s由语音合同决定，显示不得改变 |
 
 ## [2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md](2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)（21 项）
 
@@ -219,7 +219,7 @@
 | PR-C01 | 只在首次有效 `WAKE_WORD_END`、确认打断产生的命令等待、每轮实际 follow-up 等待各播放最多一次；`VAD` 候选、每个 `STT_START`、普通 TTS 生成不得误触发 | 迁移 | b0.4,b0.5 / b6,b7,b8,b10 | 本地素材/独立嘟声、提示音 gate、参考时间轴、唯一音频 owner、故障跳过；不把旧 HTTP/48ms 当新合同 |
 | PR-C02 | 首次命中且有可用素材时，结束旧 wake Pipeline，等待提示音终态后以新鲜 PCM 启动 STT；5 秒从新 STT_START 起计，wake tail 不得取消提示音或进入命令 | 迁移 | b0.4,b0.5 / b6,b7,b8,b10 | 本地素材/独立嘟声、提示音 gate、参考时间轴、唯一音频 owner、故障跳过；不把旧 HTTP/48ms 当新合同 |
 | PR-C03 | 确认打断后旧 turn owner 清理优先；新轮 STT_START 才启动 5 秒，MIC handoff 即使提示音未发出也不能丢 | 迁移 | b0.4,b0.5 / b6,b7,b8,b10 | 本地素材/独立嘟声、提示音 gate、参考时间轴、唯一音频 owner、故障跳过；不把旧 HTTP/48ms 当新合同 |
-| PR-C04 | 仅当当前 turn 的 `INTENT_END.intent_output.continue_conversation` 严格为 `true` 时，跟随实际正常 TTS `completed` 或无 TTS 的有效响应打开 8 秒 follow-up；`false`/缺失时结束 MIC session；提示音 `completed` 不得打开 follow-up | 迁移 | b0.5 / b7,b10 | 严格 continue_conversation、真实回复完毕（无 TTS 有效响应例外需核对）、8s，取消错误不续轮 |
+| PR-C04 | 仅当当前 turn 的 `INTENT_END.intent_output.continue_conversation` 严格为 `true` 时，跟随实际正常 TTS `completed` 或无 TTS 的有效响应打开 8 秒 follow-up；`false`/缺失时结束 MIC session；提示音 `completed` 不得打开 follow-up | 迁移 | b0.5 / b7,b10 | 严格 continue_conversation、真实回复完毕（有效无 TTS 例外）、安全 gate 后4s，取消错误不续轮 |
 | PR-C05 | 非提示音 gate 期间的 follow-up `speech_start` 仍立刻启动免唤醒词 STT。提示音 gate 内不产生新的 VAD/MIC_ACTIVITY/MIC_PCM；整句完全落在该短窗口内可能被忽略，这是明确产品取舍。gate 恢复后下一次 `speech_start` 仍按原逻辑启动 STT | 迁移 | b0.4,b0.5 / b6,b7,b8,b10 | 本地素材/独立嘟声、提示音 gate、参考时间轴、唯一音频 owner、故障跳过；不把旧 HTTP/48ms 当新合同 |
 | PR-C06 | `suppress_vad=true` 的提示音 gate 中 MIC RX/AFE/AEC 必须持续；VAD/MIC_ACTIVITY/MIC_PCM 向 HA 的输出明确暂停，已有 speech 状态最多归零一次。禁止停 RX/AEC，也禁止把 gate 扩大到普通 TTS | 迁移 | b0.4,b0.5 / b6,b7,b8,b10 | 本地素材/独立嘟声、提示音 gate、参考时间轴、唯一音频 owner、故障跳过；不把旧 HTTP/48ms 当新合同 |
 | PR-C07 | 四个预制短 MP3：`ready_01`…`ready_03`（“我在/在的/你说”）和 follow-up 专属 `followup_01`（单次短“嘟”声）；32 kHz、mono、`audio/mpeg`、目标 ≤0.9 秒。三条 ready 必须由当前生产 HA 实际 TTS Provider/模型/voice 参数一次性生成；follow-up 为固定短正弦提示音、不经过 TTS；均前后保留短静音，运行时不合成 | 迁移 | b0.4,b0.5 / b6,b7,b8,b10 | 本地素材/独立嘟声、提示音 gate、参考时间轴、唯一音频 owner、故障跳过；不把旧 HTTP/48ms 当新合同 |

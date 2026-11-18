@@ -43,8 +43,8 @@
 只接受当前 _Turn 在有效 speech_start/非空 STT 和无 error 下的 INTENT_END.intent_output.continue_conversation is True；同时要求 response 为合法成功 response_type（非 error）。授权与完成是两个条件，必须等 public run 正常返回（RUN_END 无 ERROR、已 join 待处理 TTS dispatch）且普通 TTS 若已尝试则同 UUID+playback ID 的真实 completed；两者到达先后不限，只执行一次。TTS_START/生成或 dispatch 失败、send_failed、终态 stopped/interrupted/failed、空 STT/intercept-only、取消、断开、缺失或 false 均不授权。无 TTS 的有效正常 Intent 回复保留旧 PR-C04 例外：确认成功 INTENT_END、真实正常 run 结束、无普通 TTS 尝试/待发资源，不能单凭 playback_id is None 推断。若正常播放但授权 false，同样等待正常终态再结束（不截短回复）。调用原 public tts_response_finished 只对仍有权的旧 caller执行一次，在新 caller 启动前完成。
 
 - 完成且授权：HA 同步记录待消费 grant 后发 0x27；S3 若旧 UUID 已被 wake/reset 取代则忽略；有效时创建新 UUID 并发 local_followup START，HA 原子消费 grant，以新 Context 启动 STT 准备，旧 normal output 已释放。不继续共享旧 MIC UUID 或重放旧音频。新轮关联同一 HA chat session/AstrBot 会话，wake_word_phrase=None，不假装用户再次唤醒。先前 Pipeline 正常退出，设备无需额外旧 stop ACK。
-- 本地只播独立 followup_01 beep 一次，使用同 output manager 和 b0.4 drain+尾部 gate；不使用人声 ready 或生成 TTS。安全 gate 后8s 从设备单调时钟计时；HA 的8s 监察容纳 ready 缓冲/传输，设备已有 speech_start 即取消；后续命令按原 15s 限、1s ready 限、gate后前导/PCM/EOF。短提示期间不上传 VAD/PCM，不把 beep 当新唤醒或有效回复；完全在短 gate 内的话按现产品取舍忽略。真实新 wake（短 gate 外）优先于免唤醒 speech_start，执行 local_wake 并撤销 grant，改为 ready/5s 窗口。普通非授权回复不启动任何等待 gate。
-- 发送 grant 失败、未收到对应 START：HA 用 b0.4 5s gate 前 watchdog 作为初始同量级 handoff 上限（从 grant 发出至收到 START，超时撤销并定向 MIC_CAPTURE_STOP 旧 UUID；若后到 START 无 grant，定向结束新 UUID），收到合法 START 后转入原 prompt watchdog；设备端同一 UUID 一次接受，不因重复网络事件重播。无命令8s/准备失败/提示异常无法确认无声则释放回待机；本地缺资产且安全无声按 b0.4 skip，窗口照常。没有额外自动续轮或 beep 循环。
+- 本地只播独立 followup_01 beep 一次，使用同 output manager 和 b0.4 drain+尾部 gate；不使用人声 ready 或生成 TTS。安全 gate 后4s 从设备单调时钟计时；HA 的4s 监察容纳 ready 缓冲/传输，设备已有 speech_start 即取消；后续命令按原 15s 限、1s ready 限、gate后前导/PCM/EOF。短提示期间不上传 VAD/PCM，不把 beep 当新唤醒或有效回复；完全在短 gate 内的话按现产品取舍忽略。真实新 wake（短 gate 外）优先于免唤醒 speech_start，执行 local_wake 并撤销 grant，改为 ready/3s 窗口。普通非授权回复不启动任何等待 gate。
+- 发送 grant 失败、未收到对应 START：HA 用 b0.4 5s gate 前 watchdog 作为初始同量级 handoff 上限（从 grant 发出至收到 START，超时撤销并定向 MIC_CAPTURE_STOP 旧 UUID；若后到 START 无 grant，定向结束新 UUID），收到合法 START 后转入原 prompt watchdog；设备端同一 UUID 一次接受，不因重复网络事件重播。无命令4s/准备失败/提示异常无法确认无声则释放回待机；本地缺资产且安全无声按 b0.4 skip，窗口照常。没有额外自动续轮或 beep 循环。
 
 ## 5. 表情：复用原 HA 仲裁，替换事件来源
 
@@ -57,7 +57,7 @@
 | active_listening | gate 后真实 command speech_start，standby；清 wake 或 followup；speech_end 清 listening，STT_END 才进入 thinking，不从待机 VAD、STT_START 或 prompt 触发。 |
 | explicit_content | 用户/自动化明确要求的既有内容；被高优先会话覆盖后仍有效则恢复。 |
 | ai_mood | 现白名单/5s TTL/active voice generation，保留 SetMood；不能由回答文本自动分类。 |
-| followup_wait | 仅已授权且新 local_followup 的 COMMAND_GATE 安全开放后，standby；beep 内不置 followup_wait、不计8s；speech_start/超时/换代退出，不发 wake_confirmed。 |
+| followup_wait | 仅已授权且新 local_followup 的 COMMAND_GATE 安全开放后，standby；beep 内不置 followup_wait、不计4s；speech_start/超时/换代退出，不发 wake_confirmed。 |
 | idle | standby/smiley/sleepy/sun/fish 原 30–90s 随机轮换，无候选显示概率/700ms/10s cooldown（legacy 共存可保留旧路径至 b9）。 |
 
 所有显示更新只经 ExpressionCoordinator，begin_generation 原子清旧 session intents（含 mood/TTL），async_end_generation/异步回调按捕获 generation 检查。wake→listening、listening→thinking、followup→listening 通过同协调器一次状态转移/recompute，防止旧 wake_confirmed 优先级遮盖 listening。speech_end 到 STT_END 的短阶段不伪造 thinking；按现剩余 intent/idle 仲裁。旧候选/旧终态不能起屏，提示音不生成 speaking。HA 公开 Satellite state 仍由 Core 管理，不拿其 LISTENING 当真实听音要求。SPP 发送慢不阻塞诊断 reader/音频；显示任务复核 generation/gate，由现 lock 串行重算最新赢家，不回放每个过期画面。
@@ -89,7 +89,7 @@ HA/设备双方失联清理不依赖对端再发 terminal；新握手前设备�
 | LIFE-C04 | 普通 TTS 必须匹配 UUID+ID+epoch；单 output manager、stop/drain 后释放，旧请求不建 HTTP/新 owner，旧 terminal 不改新 | b5/b6 基础绑定、b7 stale 0x30/0x31/0x32、pending、hold/duplicate terminal、stop drain、长间隙/错误；b10 实机 | P65-A08/A09/A14/A16、PR-C11–C17、H08/H10 |
 | LIFE-C05 | 原 ResultStream token/producer/GET/Wyoming FIN→EOF/FFmpeg 与 AstrBot session Stop 所有权；partial 文本保留、失败不假装成功 | b7 真实 HA/Wyoming mock cancellation、SSE 已接受/结束/失败/stop timeout，唯一 stop、锁顺序、未确认禁止复用；b10 实际服务 | P3-11/P3-T13/P3-T15、P65-A07–A09/A12、H12 |
 | LIFE-C06 | 严格 true+有效 Intent+正常 run+真实 completed，或已证实无 TTS 的有效回答；只开一次授权 | b7 双事件先后/早 terminal/普通回复、缺失/false/error/取消/无 TTS有效 vs send 失败、duplicate grant；b10 | P65-A15、PR-C04/C12/C13、ESM-C08、H11 |
-| LIFE-C07 | 0x27 单次授权→新 local_followup UUID/独立 beep，8s 从安全 gate，之后有效 speech 启 STT，真 wake 优先 | b7 codec/假钟 8s（beep前不计）、5s handoff watchdog、旧 grant、ready race、无命令/新 wake/短提示自触发，b6素材，b10真人 | P65-A04/A06/A15、PR-C01–C08/C14/C19、H11 |
+| LIFE-C07 | 0x27 单次授权→新 local_followup UUID/独立 beep，4s 从安全 gate，之后有效 speech 启 STT，真 wake 优先 | b7 codec/假钟 4s（beep前不计）、5s handoff watchdog、旧 grant、ready race、无命令/新 wake/短提示自触发，b6素材，b10真人 | P65-A04/A06/A15、PR-C01–C08/C14/C19、H11 |
 | LIFE-C08 | 失联/unload/S3 reset 定向关旧语音，身份不跨连接；经典 ESP32/SPP/7777 状态不重置语音 | b7 双端 disconnect/timeout/reload/旧消息，b2桥独立，b8重连表情，b10独立重启 | P65-A06/A16、VOICE-C01/C07/C10、P68-HB15 |
 | VIEW-C01 | 复用原优先级、idle/显式内容；wake、listening、thinking 按真实事件；移除本地模式候选随机显示 | b8 fake clock/事件序列、idle 30–90s、wake 100%、gate/speech/STT成功/空/错误/结束、覆盖恢复；b10 | ESM-C01–C05/C09/C14/C21/C23 |
 | VIEW-C02 | tooluse/speaking/followup 只接收当前 generation 的真实事件，prompt 不作 ordinary TTS；旧事件/TTL/stop 不恢复旧 | b8 context/satellite/playback/UUID、乱序/重复/迟到、取消/新轮/续聊，b10 | ESM-C06–C10/C23、PR-C12–C14/C20 |

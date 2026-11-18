@@ -61,7 +61,7 @@ HA MCP / 服务 / ExpressionCoordinator / ScreenPowerGate
 1. S3 待机始终 AFE/WakeNet，本地确认后，通知 HA 准备仅从 STT 开始的轮次，同时本地提示音开始。命令门在提示音真实完成/声学尾部及 HA 可接收协调后开放；用户明确听完再说，不携带旧 wake tail；缓冲与准备竞态由 b0.4 验证。准备失败可恢复待机，不遗留任何等待。
 2. VADNet 输出命令开始/结束，尾部有效 PCM 先于结束事件交给 STT。HA 如何消费结束并生成 Wyoming AudioStop，必须 b0.4 查生产源码和做最小验证，未验证不假设关闭 HA VAD 可行。
 3. 正常 TTS 播放中持续真实 TX AEC 参考与 WakeNet；普通人声不得抢占。确认新 wake 由 S3 先停止旧音频、HA 对旧代次定向停止 Pipeline/TTS/AstrBot session，不能以旧终态覆盖新轮；本地物理 stop 与 HA owner cleanup 并行协调，禁止旧 producer 继续下发到新音频 owner；详细事件见 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md)。
-4. 仅当前 HA 结果授权且回复正常完成才进入 follow-up，独立嘟声而非 ready 人声；保留明确无 TTS 有效回答的旧语义，判据见 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md) §4。5/8s 等待窗口在真实可收音边界计时；取消、错误、普通回答不打开续轮。提示音 gate 内有意不接收命令，普通 TTS 不扩大 gate。
+4. 仅当前 HA 结果授权且回复正常完成才进入 follow-up，独立嘟声而非 ready 人声；保留明确无 TTS 有效回答的旧语义，判据见 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md) §4。3/4s 等待窗口（首次/续聊）在真实可收音边界计时；取消、错误、普通回答不打开续轮。提示音 gate 内有意不接收命令，普通 TTS 不扩大 gate。
 5. 显示事件迁移：S3 wake→wake_confirmed（立即高于旧 speaking）；有效命令 speech→active_listening；非空有效 STT_END→thinking；实际 AstrBot 工具事件→tooluse；匹配真实回复播放→speaking；授权并真实回复/嘟声完成→followup_wait。idle 随机轮换保持，但去掉旧候选人声显示。显式内容、mood、screen inhibit、TTL 和重连重发保留。桥报告真实 SPP，UART 连通不代表 SPP 已连。
 6. 任一板/HA 网络失联、设备重启：当前旧代次失效、定向资源清理，新握手恢复真实状态、不重播过时提示/回复；具体恢复时序分别 b0.2/4/5 审核。UART 帧错误不得阻塞音频，不提前引入通用消息总线。
 
