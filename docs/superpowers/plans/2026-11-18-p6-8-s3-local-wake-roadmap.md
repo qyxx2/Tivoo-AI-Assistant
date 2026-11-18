@@ -1,6 +1,6 @@
 # P6.8 — ESP32-S3 双板语音终端与原生 WakeNet 改造路线
 
-> 状态：总体路线，尚未实施；设计阶段拆为 b0.1–b0.6，随后为 b1–b10 实施阶段，共 16 批；当前仅总体路线，下一步 b0.1。
+> 状态：总体路线，尚未实施；设计阶段拆为 b0.1–b0.6，随后为 b1–b10 实施阶段，共 16 批；b0.1 总体设计与历史合同索引已完成，下一步 b0.2。
 > 基线：main @ d79775f（2026-11-18）；分支 feature/p6-8-s3-local-wake。
 > 本文是 P6.8 的后续执行入口；旧规格保留已实现行为和证据，涉及旧硬件、远程 KWS、提示音和阶段归属的冲突按本文的目标方向在 b0.1–b0.6 分域修订并统一交叉审查。不得把规划当成当前生产行为。
 
@@ -61,6 +61,8 @@
 | P6.8b10 | 双板综合实机验收、性能测量、稳定性回归；核销旧阶段转入的合同/GAP，必要时修复再验收。 | 记录真实声学、两类延迟、长 TTS、电视、连续打断、表情/屏幕/工具、重启/断网、UART 压力和 CPU/IRAM/DRAM/PSRAM；完整部署和证据。 |
 
 ## 2.1 设计批次细化（b0.1–b0.6）
+
+**b0.1 交付：** [总体设计与迁移前基线](../specs/2026-11-18-p6-8-b0-1-overall-design-baseline.md)、[历史合同迁移索引初版](../specs/2026-11-18-p6-8-legacy-contract-migration-index.md)。完整声学/固件版本缺测及分域待核实事项见设计文档。
 
 **执行顺序：** b0.1 → b0.2 → b0.3 → b0.4 → b0.5 → b0.6 → b1–b10。每一批仅完成其设计范围，产出可独立审阅的文档或报告，不提前修改生产实现。跨域发现应回写所属规格，避免同一规则在多个规格中重复定义。设计阶段不等于声学/生产验收。
 
@@ -124,4 +126,4 @@ SPP 连接状态来源为蓝牙桥的真实状态，经 S3 转发；UART 重连/
 - [ESP-IDF S3 UART](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/uart.html)
 - [HA Assist Satellite](https://developers.home-assistant.io/docs/core/entity/assist-satellite/)；[HA Assist Pipeline](https://developers.home-assistant.io/docs/voice/pipelines)
 
-本路线只设定总体步骤，不是详细规格、合同矩阵或可直接执行的实现清单；下一步仅展开 P6.8b0.1；b0.2–b0.6 依序完成，b0.6 审查通过后进入 b1。
+本路线只设定总体步骤，不是详细规格、合同矩阵或可直接执行的实现清单；b0.1 文档设计出口已记录，下一步仅展开 P6.8b0.2；b0.2–b0.6 依序完成，b0.6 审查通过后进入 b1。
