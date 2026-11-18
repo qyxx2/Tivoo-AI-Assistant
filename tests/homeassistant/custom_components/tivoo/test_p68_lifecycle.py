@@ -243,3 +243,79 @@ async def test_followup_grant_timeout_and_late_start(hass, satellite, monkeypatc
     await manager.async_start_session(followup(),persistent=True,local_mode=True)
     assert manager.active_session_id is None
     assert stop.await_args.args == (SESSION_2,"invalid_followup")
+
+@pytest.mark.parametrize("phase", ["before_ready", "stt", "intent", "synthesis", "playing", "followup"])
+async def test_true_wake_retires_each_local_phase(hass, satellite, monkeypatch, phase):
+    entity, manager, stop = satellite
+    await manager.async_end_session(SESSION_1,"test")
+    hass.config.internal_url = "http://ha-internal.local:8123"
+    monkeypatch.setattr(entity,"validate_local_pipeline",lambda: ("select.test","local"))
+    ready, reached, next_entered, sent = (asyncio.Event() for _ in range(4))
+    trace = []
+    runs = 0
+    async def send(kind, payload):
+        if kind == 0x25:
+            ready.set()
+        elif kind == 0x31:
+            trace.append("stop")
+        elif kind == 0x27:
+            reached.set()
+    entity.adapter.async_send_message.side_effect = send
+    entity.adapter.async_send_tts_play.side_effect = lambda *args, **kwargs: sent.set()
+
+    async def run(audio, stage, *, context, wake_word_phrase):
+        nonlocal runs
+        runs += 1
+        if runs == 2:
+            assert trace[-1] == "old_finally"
+            next_entered.set()
+            await asyncio.Future()
+        try:
+            entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+            if phase == "before_ready":
+                reached.set()
+                await asyncio.Future()
+            async for _ in audio:
+                if phase == "stt":
+                    reached.set()
+                    await asyncio.Future()
+            entity.on_pipeline_event(PipelineEvent(Event.STT_END, {"stt_output": {"text": "command"}}))
+            if phase == "intent":
+                reached.set()
+                await asyncio.Future()
+            entity.on_pipeline_event(PipelineEvent(Event.INTENT_END, {"intent_output": {
+                "continue_conversation": True, "response": {"response_type": "query_answer"}
+            }}))
+            if phase == "followup":
+                entity.on_pipeline_event(PipelineEvent(Event.RUN_END))
+                return
+            entity.on_pipeline_event(PipelineEvent(Event.TTS_START))
+            if phase == "synthesis":
+                reached.set()
+                await asyncio.Future()
+            entity.on_pipeline_event(PipelineEvent(Event.TTS_END, {"tts_output": {
+                "url": "/api/tts_proxy/test.mp3", "mime_type": "audio/mpeg"
+            }}))
+            await sent.wait()
+            entity.coordinator.on_playback(entity.adapter.async_send_tts_play.await_args.args[0], "playing")
+            reached.set()
+            await asyncio.Future()
+        finally:
+            trace.append("old_finally")
+
+    monkeypatch.setattr(entity,"async_accept_pipeline_from_satellite",run)
+    await manager.async_start_session(local_start(),persistent=True,local_mode=True)
+    if phase != "before_ready":
+        await manager.async_handle_gate(gate())
+        await asyncio.wait_for(ready.wait(),1)
+        await manager.async_handle_activity(activity("speech_start"))
+        await manager.async_push_pcm(SESSION_1,b"x"*640)
+        if phase != "stt":
+            await manager.async_handle_activity(activity("speech_end",pcm_samples=320))
+    await asyncio.wait_for(reached.wait(),1)
+    await manager.async_start_session(local_start(SESSION_2,101),persistent=True,local_mode=True)
+    await asyncio.wait_for(next_entered.wait(),1)
+    assert manager.active_session_id == SESSION_2
+    assert trace == (["stop","old_finally"] if phase == "playing" else ["old_finally"])
+    await manager.async_end_session(SESSION_1,"late_old_end")
+    assert manager.active_session_id == SESSION_2
