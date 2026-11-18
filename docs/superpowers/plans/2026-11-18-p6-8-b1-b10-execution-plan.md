@@ -27,9 +27,9 @@
 
 **Consumes:** HB01–04、AFE-C06/C08（smoke）。**Produces:** 两独立 target/flash manifest、GPIO/电源实物记录、S3 model partition。
 **Files:** `esp32/firmware/{CMakeLists.txt,sdkconfig.defaults,partitions.csv,dependencies.lock,main/}`；新 `esp32/bridge_firmware/` 对应配置与 main；`tests/esp32/test_p5_hardware_memory.py`；复用 `esp32/tests/p5b0_compatibility/` 的编译验证逻辑。
-- [ ] T01-A：先断言独立 target、组件图不交叉、16MiB 区间无重叠/不越界、S3 8MiB app/4MiB model、classic NVS 不迁移/擦除、S3 无 Classic；运行 host test，随后分目标配置/构建并复验。S3 暂用 wn9_hilexin smoke，非用户最终词；实际 lock、map、size、生成 flash_args、srmodels.bin 均归档。S3 网络/诊断 scaffold 不声称 b2 SPP 已通。
-- [ ] T01-B：对照 b0.2 丝印/通断/电源/USB/芯片 flash ID；在两个真实端口独立刷写并启动，记录完整/分段产物哈希、boot log、heap、NVS/Bond 保全、板载 RGB 关闭。无实物只能报告软件部分通过，不能过物理 gate。现经典板仍是生产单板，刷桥将使旧语音不可用；b1 真实刷写只在明确授权的隔离/维护窗口并备有旧完整 app/manifest 回退，完成测试后如尚未切换拓扑就恢复旧产物并核验，不把 b1 当正式接管生产。
-- [ ] 验证：上述 host 文件、两个 build exit 0；报告及本地提交；物理接线安全/独立启动通过后才 b2 真机。
+- [x] T01-A（软件 PASS，见 [b1 报告](../reports/2026-11-18-p6-8-b1-build-acceptance.md)）：先断言独立 target、组件图不交叉、16MiB 区间无重叠/不越界、S3 8MiB app/4MiB model、classic NVS 不迁移/擦除、S3 无 Classic；运行 host test，随后分目标配置/构建并复验。S3 暂用 wn9_hilexin smoke，非用户最终词；实际 lock、map、size、生成 flash_args、srmodels.bin 均归档。S3 网络/诊断 scaffold 不声称 b2 SPP 已通。
+- [ ] T01-B（GAP：S3/第二颗 INMP441 未到货，用户禁止刷写生产经典板）：对照 b0.2 丝印/通断/电源/USB/芯片 flash ID；在两个真实端口独立刷写并启动，记录完整/分段产物哈希、boot log、heap、NVS/Bond 保全、板载 RGB 关闭。无实物只能报告软件部分通过，不能过物理 gate。现经典板仍是生产单板，刷桥将使旧语音不可用；b1 真实刷写只在明确授权的隔离/维护窗口并备有旧完整 app/manifest 回退，完成测试后如尚未切换拓扑就恢复旧产物并核验，不把 b1 当正式接管生产。
+- [ ] 验证：上述 host 文件、两个 build exit 0 及软件报告/本地提交已完成；T01-B 实物门禁未通过，物理接线安全/独立启动通过后才 b2 真机。
 
 ## b2 — 7777/UART/SPP 桥
 
