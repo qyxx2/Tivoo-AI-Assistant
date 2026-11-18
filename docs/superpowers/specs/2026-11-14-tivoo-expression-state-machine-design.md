@@ -1,6 +1,6 @@
 # Tivoo 表情状态机与屏幕门控规格
 
-> **P6.8 迁移说明（2026-11-18）：** 保留 HA 显示仲裁和 ScreenPowerGate；wake_confirmed、active_listening、followup_wait、真实 playback/SPP 等事件来源以 P6.8 路线 §3 为修改方向，b8 实现、b10 验收。 参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+> **P6.8 迁移说明（2026-11-18）：** 保留 HA 显示仲裁和 ScreenPowerGate；wake_confirmed、active_listening、followup_wait、真实 playback/SPP 等事件来源以 P6.8 路线 §3 为修改方向，b8 实现、b10 验收。 本地模式替代条款以 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md) 为准。参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
 
 > 日期：2026-11-14
 > 分支：`feature/p6-6-tivoo-expression-state-machine`

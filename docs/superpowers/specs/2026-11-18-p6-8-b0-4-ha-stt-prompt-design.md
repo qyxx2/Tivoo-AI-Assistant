@@ -29,14 +29,14 @@
 
 | 消息/方向 | 本地模式 payload 与语义 |
 |---|---|
-| 0x20 MIC_SESSION_START S3→HA | 复用已有 UUID session_id, sample_rate=16000, channels=1, sample_format=s16le, frame_duration_ms=20, preroll_ms=0（确认时尚无命令前导），trigger_source=local_wake；新增 wake_word_phrase（实际官方模型确认字符串，非固定旧词）、uptime_ms（设备单调时钟）。这是确认唤醒事件及开轮的合一入口，仅真正 WakeNet 确认发一次；无独立重复 wake 事件。续聊的 local_followup 入口和授权由 b0.5 定，在该模式必须区分真实 wake。 |
+| 0x20 MIC_SESSION_START S3→HA | 复用已有 UUID session_id, sample_rate=16000, channels=1, sample_format=s16le, frame_duration_ms=20, preroll_ms=0（确认时尚无命令前导），trigger_source=local_wake；新增 wake_word_phrase（实际官方模型确认字符串，非固定旧词）、uptime_ms（设备单调时钟）。这是确认唤醒事件及开轮的合一入口，仅真正 WakeNet 确认发一次；无独立重复 wake 事件。续聊的 local_followup 入口和授权见 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md) §2/4，在该模式必须区分真实 wake。 |
 | 0x25 STT_READY HA→S3 | JSON session_id，仅在当前 STT Provider 已开始 pull 本轮 iterator 时发送一次；实际 Wyoming 路径已先写 Transcribe/AudioStart，STT_START 不作为 ready。以背景发送避免阻塞 RX。失败使用既有 MIC_CAPTURE_STOP；不是 HA 指令执行确认。 |
 | 0x26 COMMAND_GATE S3→HA | JSON session_id, uptime_ms, prompt_result（completed/skipped/failed）；按本轮物理 prompt drain+标定尾部或确认无输出且无尾巴之后发一次，表示可开始命令（HA 可能仍正在准备）；不是实际 speech_start。 |
 | 0x24 MIC_ACTIVITY S3→HA | 保留 session_id,state=speech_start/speech_end,uptime_ms；speech_end 新增 pcm_samples（累计实际已发送样本，含最后补零）。仅在 gate 后有效 VADNet 事件；start 必须先于该轮 PCM，end 必须在全部尾部 PCM 的同一 TX FIFO 之后，禁止照搬旧前端每帧活动事件先于该帧 PCM 的 end 排序。 |
 | 0x21 MIC_PCM S3→HA | 保留无 JSON header 的 640B（320样本×s16LE），单活跃命令及可靠 FIFO 关联；仅 local_wake/local_followup 的合法 gate+speech_start 后发送，不能拼接另一 UUID。末尾不足320样本以零补齐到完整20ms，记录 valid/padded 数量于设备诊断；不因 padding 产生新 speech。 |
 | 0x22 MIC_SESSION_END S3→HA / 0x23 MIC_CAPTURE_STOP HA→S3 | 保留 session_id,reason；用于完整轮次结束/取消/失败（含 timeout/overflow/disconnect），匹配 UUID，不当作正常 STT EOF。S3 发送 speech_end 后保持该轮身份直到完整生命周期结束；正常语音之后仍允许 TTS/Intent。b0.5 定正常回复后释放、重新唤醒及旧 owner 停止顺序。 |
 
-一条诊断连接 epoch + session UUID 绑定一个 HA _Turn/Context 与当前唯一 ingress，后续 playback ID 映射归 b0.5；Context 不在 S3 伪造。仅同一 epoch+当前 UUID 可推进状态，重复 start/gate/活动/ready 不重新启动 pipeline 或播放（幂等/诊断）。同 TCP 内 MIC_PCM 不额外加 UUID，必须由唯一发送队列按 session 管理：新 start 前丢弃旧未发帧或先完成合法旧帧终止；不允许旧 PCM 排在新 start 后。重连丢掉旧连接队列/身份，不重放旧唤醒。b5 校验 payload 类型、UUID、enum、非负时钟、整帧、字节计数、方向，未知/越序失败只影响语音轮，不影响 SPP。speech_end 必须在 FIFO 最后有效数据之后且计数准确，否则取消该轮（不能将截断语音交给 Intent）。
+一条诊断连接 epoch + session UUID 绑定一个 HA _Turn/Context 与当前唯一 ingress，后续 playback ID 映射见 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md) §2；Context 不在 S3 伪造。仅同一 epoch+当前 UUID 可推进状态，重复 start/gate/活动/ready 不重新启动 pipeline 或播放（幂等/诊断）。同 TCP 内 MIC_PCM 不额外加 UUID，必须由唯一发送队列按 session 管理：新 start 前丢弃旧未发帧或先完成合法旧帧终止；不允许旧 PCM 排在新 start 后。重连丢掉旧连接队列/身份，不重放旧唤醒。b5 校验 payload 类型、UUID、enum、非负时钟、整帧、字节计数、方向，未知/越序失败只影响语音轮，不影响 SPP。speech_end 必须在 FIFO 最后有效数据之后且计数准确，否则取消该轮（不能将截断语音交给 Intent）。
 
 ## 4. 正常时序、缓冲、终止与超时
 

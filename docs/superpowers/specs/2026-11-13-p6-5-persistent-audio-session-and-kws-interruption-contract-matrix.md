@@ -1,6 +1,6 @@
 # P6.5 常驻音频会话与 KWS 确认打断合同矩阵
 
-> **P6.8 迁移说明（2026-11-18）：** 迁移前音频/KWS 合同；NAS KWS watcher、待机候选上传等由 P6.8 本地 WakeNet 替代，音频/取消所有权和剩余现场 GAP 保留追踪。 参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+> **P6.8 迁移说明（2026-11-18）：** 迁移前音频/KWS 合同；NAS KWS watcher、待机候选上传等由 P6.8 本地 WakeNet 替代，音频/取消所有权和剩余现场 GAP 保留追踪。 本地模式替代条款以 [b0.5 生命周期与表情合同](2026-11-18-p6-8-b0-5-lifecycle-display-design.md) 为准。参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
 
 > 日期：2026-11-13  
 > 分支：`feature/p6-5-ha-cancellation-preflight`  
