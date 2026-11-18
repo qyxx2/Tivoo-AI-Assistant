@@ -1,6 +1,6 @@
 # P6.8 — ESP32-S3 双板语音终端与原生 WakeNet 改造路线
 
-> 状态：总体路线，尚未实施；设计阶段拆为 b0.1–b0.6，随后为 b1–b10 实施阶段，共 16 批；b0.1 总体设计与历史合同索引、b0.2 硬件与桥接设计已完成，下一步 b0.3。
+> 状态：总体路线，尚未实施；设计阶段拆为 b0.1–b0.6，随后为 b1–b10 实施阶段，共 16 批；b0.1 总体设计与历史合同索引、b0.2 硬件与桥接设计、b0.3 音频/AFE 合同已完成，下一步 b0.4。
 > 基线：main @ d79775f（2026-11-18）；分支 feature/p6-8-s3-local-wake。
 > 本文是 P6.8 的后续执行入口；旧规格保留已实现行为和证据，涉及旧硬件、远程 KWS、提示音和阶段归属的冲突按本文的目标方向在 b0.1–b0.6 分域修订并统一交叉审查。不得把规划当成当前生产行为。
 
@@ -8,7 +8,7 @@
 
 - 微雪 ESP32-S3-DEV-KIT-N16R8-M（型号已由用户确定）作为主控制器：Wi-Fi、TCP 7777/7778、双 INMP441、AFE（AEC/BSS/VADNet/WakeNet）、本地提示音、PCM5102 DAC、TTS 拉流/解码/输出；待机常驻收音但不向 HA 上传环境 PCM。
 - 经典 ESP32 只承担 Classic Bluetooth SPP（含配对、持久化、重连及双向状态），关闭其 Wi-Fi/音频运行时；与 S3 通过独立硬件 UART（TX/RX/GND）交换指令和状态。HA 仍只访问 S3；保持原 TVIO、SPP、MCP 及控制接口，必要的新事件由 b0.4/b0.5 定义。UART 波特率、引脚和帧边界见 b0.2 规格，不透传无界数据阻塞音频任务。
-- 使用 ESP-SR 原生 WakeNet9 系列及实际组件内自带官方唤醒词；不使用 microWakeWord，不训练任意文本唤醒词，不引入 MultiNet。具体官方模型与词语由 b0.3/b4 核验和用户选定。当前锁定 esp-sr 2.6.1，优先复用其 S3 实现。
+- 使用锁定 ESP-SR 原生 WakeNet9/9L，亦允许 b0.3 核实的 WakeNet10 官方模型，经 b4 实测与用户择定；不使用 microWakeWord，不训练任意文本唤醒词，不引入 MultiNet。具体官方模型与词语由 b0.3/b4 核验和用户选定。当前锁定 esp-sr 2.6.1，优先复用其 S3 实现。
 - HA 保持 Assist Satellite / 本地 Intent 优先 / AstrBot fallback / TTS / 取消所有权以及唯一 ExpressionCoordinator 和 ScreenPowerGate。Sherpa Paraformer STT（整句解码）及 Matcha TTS 保留，不为缩短延迟盲目换模型。
 - 目标链：待机 WakeNet → 本地确认唤醒 → 本地 ready 提示音 + 通知 HA 并行准备 STT → 提示音结束开放命令 → 增强 PCM 上行 → 本地断句 → HA 从 STT 到 Intent/TTS → S3 播放。用户明确要求听完提示音才发命令；无需支持旧计划的唤醒词与指令不间断连说。
 - 任意正常处理/普通 TTS 阶段 WakeNet 确认可打断；VAD 单独不得取消普通 TTS/LLM。连续对话仅由当前 HA 对话结果 continue_conversation（保留既有问号规则）和真实回复完成共同授权，独立嘟声后免唤醒收音；取消、错误、普通回答不得误开 follow-up。
@@ -52,7 +52,7 @@
 | P6.8b1 | 建立 S3 主固件与经典 ESP32 蓝牙桥两个独立构建/刷写目标；复用 firmware 主模块，配置 S3 Flash/PSRAM/模型分区及完整烧录，核对 USB/串口和 GPIO 安全。 | 两个目标分别构建及刷写，型号/内存/模型分区正确。 |
 | P6.8b2 | 拆分 SPP/Bond/重连，复用 tivoo_spp、tivoo_spp_session、control_bridge；S3 TCP ↔ UART ↔ 经典 ESP32 ↔ Tivoo，恢复真实 SPP 状态及 reverse channel。 | 既有 HA/MCP/亮度/屏幕/倒计时/GIF、独立重启恢复全部可用；大 GIF 不阻塞语音。 |
 | P6.8b3 | S3 双 INMP441 同步采集（L/R）、PCM5102 输出及 AEC 数字参考和采样对齐；迁移 audio_capture、audio_playback、audio_output_manager、audio_resource、网络与既有 TTS 欠载修复。暂分离新算法变量，保留原始采集和诊断能力。 | 双声道数据正确、AUX 清晰、长音频不中断、收音和 UART 并行；重新标定声学延迟，不照搬旧 47.5 ms。 |
-| P6.8b4 | 启用 S3 官方 AFE 双麦/参考布局（如 MMNR，实际按锁定版本验证），BSS/AEC/VADNet、WakeNet；模型加载、wake state/重触发、VAD 缓存及时间轴；以官方示例为参考。 | 独立于 HA 的官方词唤醒、误/漏唤醒、电视及自身播放干扰下的声学测试；记录负载与内存。 |
+| P6.8b4 | 启用 S3 官方 AFE 双麦/参考布局（b0.3 确定 MMNR/FD HIGH_PERF 初始图，实际 pipeline 与声学由 b4 验证），BSS/AEC/VADNet、WakeNet；模型加载、wake state/重触发、VAD 缓存及时间轴；以官方示例为参考。 | 独立于 HA 的官方词唤醒、误/漏唤醒、电视及自身播放干扰下的声学测试；记录负载与内存。 |
 | P6.8b5 | HA 本地唤醒入口：新增设备确认事件与必要 session/代次关联（具体字段在 b0.4/b0.5），修改 protocol、diagnostics、audio_session、assist_satellite；直接从 STT 启动 HA Pipeline，网络保持连接，命令 PCM 与 STT 准备协调；B5 可用测试/过渡提示音验证入口，量产本地提示音在 b6 完成；处理准备竞态和失败回退。 | 无 NAS WAKE_WORD run 的本地唤醒→STT→本地控制和 AstrBot/TTS；待机无 PCM，命令首尾不丢。 |
 | P6.8b6 | 本地提示音与断句：复用生产音色现成 ready 素材/独立 follow-up beep 转 PCM 存 Flash，统一音频出口并与 AEC 实际 TX 参考一致；短提示音时隔离命令采集，结束后开放。S3 VADNet speech_end 驱动 STT 输入结束，按序消费尾部 PCM，再发 AudioStop；核对已部署 HA 公开接口和 VAD 行为，不改 HA Core 或盲目关闭 VAD。 | 无远程 MP3 提示音依赖；无自触发/旧播音抢占；约 400–600ms 初始静音参数实测调优，HA 不额外等待无意义断句。 |
 | P6.8b7 | 本地 WakeNet 打断与连续对话：保持 AFE 常驻；确认后 S3 立即停止旧输出、通知 HA 按旧 generation/playback ID 取消 Pipeline/TTS/AstrBot SSE，旧轮清理与新轮准备协调；复用现有 owner 机制，避免旧 TTS 抢占；follow-up 只在真实回复完成且获授权时开放，保留 5/8 秒窗口意图并在 b0.4/b0.5 明确计时起点。 | 普通人声不打断，真实唤醒在识别/思考/合成/播放均有效，连续多次打断无旧音频或错误自动续轮。 |
@@ -65,6 +65,8 @@
 **b0.1 交付：** [总体设计与迁移前基线](../specs/2026-11-18-p6-8-b0-1-overall-design-baseline.md)、[历史合同迁移索引初版](../specs/2026-11-18-p6-8-legacy-contract-migration-index.md)。完整声学/固件版本缺测及分域待核实事项见设计文档。
 
 **b0.2 交付：** [双板硬件、构建/烧录与 UART/SPP 桥接规格及合同矩阵](../specs/2026-11-18-p6-8-b0-2-hardware-uart-spp-design.md)。GPIO、双 target、model 分区、UART 私有协议、真实 SPP 回报与恢复边界均在此定义；实物及构建验收留实施批。
+
+**b0.3 交付：** [双麦 I2S、DAC、AFE 与本地唤醒规格及合同矩阵](../specs/2026-11-18-p6-8-b0-3-audio-afe-design.md)。含 ESP-IDF v6.1/ESP-SR 2.6.1 兼容核对、81 个原厂模型打包清单、双麦/真实 TX 参考/端点和声学验收约束。最终唤醒词未代选；b1 构建及 b4 实机 gate 保留。
 
 **执行顺序：** b0.1 → b0.2 → b0.3 → b0.4 → b0.5 → b0.6 → b1–b10。每一批仅完成其设计范围，产出可独立审阅的文档或报告，不提前修改生产实现。跨域发现应回写所属规格，避免同一规则在多个规格中重复定义。设计阶段不等于声学/生产验收。
 
@@ -128,4 +130,4 @@ SPP 连接状态来源为蓝牙桥的真实状态，经 S3 转发；UART 重连/
 - [ESP-IDF S3 UART](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/uart.html)
 - [HA Assist Satellite](https://developers.home-assistant.io/docs/core/entity/assist-satellite/)；[HA Assist Pipeline](https://developers.home-assistant.io/docs/voice/pipelines)
 
-本路线只设定总体步骤，不是详细规格、合同矩阵或可直接执行的实现清单；b0.1/b0.2 文档设计出口已记录，下一步仅展开 P6.8b0.3；b0.3–b0.6 依序完成，b0.6 审查通过后进入 b1。
+本路线只设定总体步骤，不是详细规格、合同矩阵或可直接执行的实现清单；b0.1–b0.3 文档设计出口已记录，下一步仅展开 P6.8b0.4；b0.4–b0.6 依序完成，b0.6 审查通过后进入 b1。
