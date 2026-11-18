@@ -71,9 +71,11 @@
 
 **Consumes:** T03 physical output/T04 samples/T05 ingress；**Produces:** VOICE-C05–10，实际 gate/提示音资产、正常 STT end。
 **Files:** `homeassistant/prompt_assets/`（保留源）、S3 app build 资产生成及 audio_output_manager/audio_frontend/audio_capture、HA 既有 prompt_audio/audio_session/assist_satellite 测试。
-- [ ] T06-A：校验 b0.4 四源 SHA、确定性 FFmpeg 32k mono s16le、输出总179160B、app image 余量、ready 相邻不重复、beep 独立、缺失不跨池/不请求 HTTP；构建 Flash 只读短 PCM。记录实际 hash/版本。
-- [ ] T06-B：先用 fake clock/sample marker 测 gate、尾帧 padding、短 prompt 不发 ordinary AUDIO_STATE、普通 TTS 不屏蔽 wake、缺资产确认无声、无法确认 drain 5s watchdog fail；真实测试提示音首声/尾巴、听完立刻说、短命令、500ms endpoint、尾部传输/AudioStop，3s 起始窗口（4s 由 b7 授权）。不把自播负样本数字日志当声学。
-- [ ] 验证：HA prompt/audio_session/assist_satellite 测试、T03/T04/T05 回归和 S3 build；报告/提交。
+- [x] T06-A（软件 PASS）：校验 b0.4 四源 SHA、确定性 FFmpeg 32k mono s16le、输出总179160B、app image 余量、ready 相邻不重复、beep 独立、缺失不跨池/不请求 HTTP；构建 Flash 只读短 PCM。记录实际 hash/版本。
+- [ ] T06-B（软件 PASS；实物 GAP）：先用 fake clock/sample marker 测 gate、尾帧 padding、短 prompt 不发 ordinary AUDIO_STATE、普通 TTS 不屏蔽 wake、缺资产确认无声、无法确认 drain 5s watchdog fail；真实测试提示音首声/尾巴、听完立刻说、短命令、500ms endpoint、尾部传输/AudioStop，3s 起始窗口（4s 由 b7 授权）。不把自播负样本数字日志当声学。
+- [x] 验证（软件）：HA prompt/audio_session/assist_satellite 测试、T03/T04/T05 回归和 S3 build；报告/提交。
+
+软件验收报告：[b6 local prompt acceptance](../reports/2026-11-18-p6-8-b6-local-prompt-acceptance.md)。最终 ESP32 90 passed、HA 指定回归 97 passed、S3 build PASS；未标定 production gate 禁用，S3/第二颗麦克风到位后测量，实物未验收、未部署/刷写。b7 未实施。
 
 ## b7 — 打断、续聊、所有权
 
