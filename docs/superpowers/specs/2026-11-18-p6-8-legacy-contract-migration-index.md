@@ -170,8 +170,8 @@
 | P65-A01 | 常驻采集 | 迁移 | b0.3 / b3,b4,b10 | AFE 常驻、双麦和播放/桥并发，不以数字链证明声学 |
 | P65-A02 | 首次 VAD 上传 | 替代 | b0.4 / b5,b9,b10 | 本地 wake 替代首 VAD 上传和远程候选 3/15s；待机零上行且可重唤醒 |
 | P65-A03 | wakeword miss | 替代 | b0.4 / b5,b9,b10 | 本地 wake 替代首 VAD 上传和远程候选 3/15s；待机零上行且可重唤醒 |
-| P65-A04 | wakeword hit 后命令等待 | 替代 | b0.4 / b5,b6,b10 | 先提示音再命令；5s 从有效命令 gate/准备边界确定，取消连说要求 |
-| P65-A05 | STT endpoint | 迁移 | b0.4 / b6,b10 | S3 断句与尾帧，HA/Wyoming AudioStop 真实接口核验，不盲关 HA VAD |
+| P65-A04 | wakeword hit 后命令等待 | 替代 | b0.4 / b5,b6,b10 | 先提示音再命令；5s 从物理命令 gate 计时，准备并行且有界缓存，VOICE-C04/C07；取消连说要求 |
+| P65-A05 | STT endpoint | 迁移 | b0.4 / b6,b10 | S3 断句与尾帧→iterator EOF→AudioStop；VOICE-C03/C05/C06，已验证同版源码路径，完整 Pipeline 待 b5/b6 |
 | P65-A06 | 跨 Pipeline session | 迁移 | b0.4,b0.5 / b5,b7,b10 | 跨轮 PCM/有界/无旧帧串轮; 物理 MIC session 语义允许依新合同调整 |
 | P65-A07 | partial SSE 取消 | 迁移 | b0.5 / b7,b10 | 显式取消与资源 owner、普通 VAD 无打断权、WakeNet 全阶段打断、授权 follow-up/代次隔离 |
 | P65-A08 | 活动 TTS 取消 | 迁移 | b0.5 / b7,b10 | 显式取消与资源 owner、普通 VAD 无打断权、WakeNet 全阶段打断、授权 follow-up/代次隔离 |
@@ -266,3 +266,5 @@
 
 
 **b0.3 音频分域追踪：** [AFE-C01–C12 与原合同映射](2026-11-18-p6-8-b0-3-audio-afe-design.md#6-合同矩阵设计出口所有行待实施验收) 已定义；模型包证据不改变旧验收状态，b0.4/b0.5 仍需补 HA/生命周期归属，b0.6 全量审计。
+
+**b0.4 HA/STT/提示音分域追踪：** [VOICE-C01–C10 与原合同映射](2026-11-18-p6-8-b0-4-ha-stt-prompt-design.md#6-合同矩阵设计出口实施验收均未执行) 已定义；P7A-C22 的设备端点方案及最小验证、PR/P65 的新 gate、H17 生产配置在该文记录；b0.5 补生命周期，b0.6 全量审计，未核销历史 GAP。
