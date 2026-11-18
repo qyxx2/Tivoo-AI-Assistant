@@ -2,6 +2,8 @@
 
 This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; Home Assistant owns the Tivoo display codec. The firmware runs the P6.5b8 microphone frontend and the P6.5b10 streaming MP3 playback path.
 
+> **P6.8 target hardware (planned, not implemented):** Waveshare ESP32-S3-DEV-KIT-N16R8-M (WROOM-1-N16R8, 16 MB Quad SPI flash / 8 MB Octal SPI PSRAM), two identical INMP441 modules (one existing and one new), existing PCM5102, and the existing Waveshare WROVER-E-M as a UART/Classic SPP bridge. See the [P6.8 hardware baseline and vendor references](../../docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md#11-p68-已确定的目标硬件基线). Do not apply the classic ESP32 build target or GPIO defaults below to the S3. Final wiring/configuration belongs to b0.2/b0.3; the current production firmware is unchanged.
+
 ## Local build
 
 From this directory on the ARM64 Ubuntu development machine:

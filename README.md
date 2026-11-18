@@ -196,7 +196,9 @@ MCP 是工具调用协议，不是 HA 向 AstrBot 推送用户文本的消息通
 
 ## 5. ESP32 自定义固件
 
-目标硬件：ESP32-WROVER-E-N16R8（16MB Flash、8MB PSRAM、Bluetooth Classic；本项目使用 Classic SPP，不要求启用 BLE GATT）。
+**P6.8 目标硬件（型号已确定，尚未实施）：** 新增微雪 ESP32-S3-DEV-KIT-N16R8-M（ESP32-S3-WROOM-1-N16R8，16 MB Quad SPI Flash、8 MB Octal SPI PSRAM，预焊排针）作为语音主控；新增一颗与原麦克风同品牌同型号的 INMP441，总计两颗；原微雪 ESP32-DEV-KIT-WROVER-E-M 改为 UART/SPP 蓝牙桥，PCM5102 与 Tivoo 继续复用。完整硬件基线、官方资料及限制见 [P6.8 总体路线 §1.1](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md#11-p68-已确定的目标硬件基线)。GPIO 与接线由 b0.2/b0.3 确定。
+
+**当前生产硬件（迁移前）：** ESP32-WROVER-E-N16R8（16MB Flash、8MB PSRAM、Bluetooth Classic；本项目使用 Classic SPP，不要求启用 BLE GATT）。本节以下固件接线和单板行为仍为已部署基线，不是 S3 接线说明。
 
 固件基于 ESP-IDF / C/C++，不把 HA、AstrBot、MCP 或 AI 模型部署到 ESP32。
 

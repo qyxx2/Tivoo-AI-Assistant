@@ -6,12 +6,38 @@
 
 ## 1. 目标与边界
 
-- S3（拟 N16R8）作为主控制器：Wi-Fi、TCP 7777/7778、双 INMP441、AFE（AEC/BSS/VADNet/WakeNet）、本地提示音、PCM5102 DAC、TTS 拉流/解码/输出；待机常驻收音但不向 HA 上传环境 PCM。
+- 微雪 ESP32-S3-DEV-KIT-N16R8-M（型号已由用户确定）作为主控制器：Wi-Fi、TCP 7777/7778、双 INMP441、AFE（AEC/BSS/VADNet/WakeNet）、本地提示音、PCM5102 DAC、TTS 拉流/解码/输出；待机常驻收音但不向 HA 上传环境 PCM。
 - 经典 ESP32 只承担 Classic Bluetooth SPP（含配对、持久化、重连及双向状态），关闭其 Wi-Fi/音频运行时；与 S3 通过独立硬件 UART（TX/RX/GND）交换指令和状态。HA 仍只访问 S3；保持原 TVIO、SPP、MCP 及控制接口，必要的新事件由 b0.4/b0.5 定义。UART 波特率、引脚和帧边界待确认，不透传无界数据阻塞音频任务。
 - 使用 ESP-SR 原生 WakeNet9 系列及实际组件内自带官方唤醒词；不使用 microWakeWord，不训练任意文本唤醒词，不引入 MultiNet。具体官方模型与词语由 b0.3/b4 核验和用户选定。当前锁定 esp-sr 2.6.1，优先复用其 S3 实现。
 - HA 保持 Assist Satellite / 本地 Intent 优先 / AstrBot fallback / TTS / 取消所有权以及唯一 ExpressionCoordinator 和 ScreenPowerGate。Sherpa Paraformer STT（整句解码）及 Matcha TTS 保留，不为缩短延迟盲目换模型。
 - 目标链：待机 WakeNet → 本地确认唤醒 → 本地 ready 提示音 + 通知 HA 并行准备 STT → 提示音结束开放命令 → 增强 PCM 上行 → 本地断句 → HA 从 STT 到 Intent/TTS → S3 播放。用户明确要求听完提示音才发命令；无需支持旧计划的唤醒词与指令不间断连说。
 - 任意正常处理/普通 TTS 阶段 WakeNet 确认可打断；VAD 单独不得取消普通 TTS/LLM。连续对话仅由当前 HA 对话结果 continue_conversation（保留既有问号规则）和真实回复完成共同授权，独立嘟声后免唤醒收音；取消、错误、普通回答不得误开 follow-up。
+
+## 1.1 P6.8 已确定的目标硬件基线
+
+型号由用户确认；以下规格为厂商资料值，不代表已经到货、完成接线或上板验收。硬件规格集中在本节，其他文档引用本节。
+
+| 设备 | 数量 / 来源 | P6.8 目标角色与规格 |
+|---|---|---|
+| 微雪 ESP32-S3-DEV-KIT-N16R8-M（SKU 28836） | 1 块新增；用户指定型号，预焊排针版 | 主控；ESP32-S3-WROOM-1-N16R8，Xtensa LX7 双核最高 240 MHz、512 KB SRAM、384 KB ROM；16 MB Quad SPI Flash（DIO/QIO），8 MB Octal SPI PSRAM（OPI）；2.4 GHz Wi-Fi、Bluetooth LE（不支持 Classic SPP）；单 USB-C，CH334 USB Hub + CH343 USB-UART，另一路为 S3 原生 USB |
+| 微雪 ESP32-DEV-KIT-WROVER-E-M | 1 块现有；保留原硬件 | 经典 ESP32-WROVER-E-N16R8（16 MB Flash / 8 MB PSRAM），作为 Bluetooth Classic SPP 蓝牙桥；不再承担主控的 Wi-Fi 与音频任务 |
+| INMP441 数字麦克风模块 | 共 2 颗＝现有 1 颗 + 新购 1 颗；用户确认相同品牌、型号及模块，具体品牌名未记录 | 同型号全向 MEMS 数字麦克风；3.3 V 供电，24-bit I²S，L/R 选择；目标为同步双麦输入，L/R 分开、可共享 SCK/WS/SD；按模块板实物核对 L/R 及 SD 三态/下拉，不能只根据芯片型号假设模块外围电路完全相同 |
+| PCM5102 DAC 模块 | 1 块现有，复用 | S3 I²S TX → DAC 模拟音频 → Tivoo AUX |
+| Divoom Tivoo | 1 台现有，复用 | AUX 扬声器输出、16×16 屏幕，经典 ESP32 SPP 控制 |
+
+板型约束（供 b0.2/b0.3，而非最终接线表）：
+
+- N16R8-M 的 M 后缀表示预焊排针，不是另一种 Flash/PSRAM 容量或外接天线版本；不要误选 N8R8、N32R16V 或 N16R8-U/UM。
+- GPIO35/36/37 按微雪现行型号对照表为 NC；结合乐鑫 Octal PSRAM 资源约束，禁止分配给 UART/I²S 等外设。旧版微雪 Wiki 的 N16R8 引脚说明与现行资料有差异，按具体 R8 模组存储占用及实际板版次核对，不沿用旧版“可用”的说法。IO47/48 在该 N16R8 型号为 3.3 V 逻辑域；是否被板载功能占用仍需核对原理图。
+- 一个 USB-C 连接电脑后，原生 USB 与 CH343 USB-UART 可分别枚举；实际串口设备名、刷写路径、板载 RGB、启动绑带脚、供电及最终 UART/I²S GPIO 分配在 b0.2 确定。不得照搬 WROVER-E 当前 GPIO26/25/32/33 接线或 GPIO27 RGB 约束。
+- 双 INMP441 默认设计方向为同一 I²S RX 的左右 Slot，同型号并不代表增益/相位已标定；b0.3 确定时钟、有效位、参考通道、麦距和标定方法，b3/b4 实测验收。保留原 PCM5102；不新增 DAC 或其他麦克风型号。
+
+官方资料（b0.2/b0.3 以实际锁定版本核对）：
+
+- [用户指定微雪 N16R8-M 官方文档](https://docs.waveshare.net/ESP32-S3-DEV-KIT-N8R8/?variant=ESP32-S3-DEV-KIT-N16R8-M)；[同产品官方英文概览及型号对照](https://docs.waveshare.com/ESP32-S3-DEV-KIT-N8R8)；[官方资源/原理图入口](https://docs.waveshare.com/ESP32-S3-DEV-KIT-N8R8/Resources-And-Documents)；[USB 串口 FAQ](https://docs.waveshare.com/ESP32-S3-DEV-KIT-N8R8/FAQ)；[官方商品版本说明（预焊排针）](https://www.waveshare.com/catalog/product/view/id/5541/s/esp32-s3-dev-kit-n8r8/category/628/)
+- [乐鑫 WROOM-1 N16R8 Flash/PSRAM 模式对照](https://docs.espressif.com/projects/arduino-esp32/en/latest/troubleshooting.html)；[乐鑫 ESP32-S3 硬件设计指南](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/schematic-checklist.html)
+- [原经典 ESP32 微雪硬件文档](https://docs.waveshare.net/ESP32-DEV-KIT-XX/?variant=ESP32-DEV-KIT-WROVER-E-M)
+- [INMP441 芯片数据手册（沿用原项目引用）](https://invensense.tdk.com/wp-content/uploads/2015/02/INMP441.pdf)
 
 ## 2. 分阶段路线
 
@@ -41,8 +67,8 @@
 | 设计批次 | 核对与确定的内容 | 交付物及退出条件 |
 |---|---|---|
 | b0.1 | 核对当前真实代码、部署版本和已有验收报告；明确保留/迁移/替代/删除/延后边界；逐条清点 P3/P4/P5/P6/P6.5/P6.6/P6.7/P7A 合同、P7/P8/P9/P10 遗留项和后续修复要求；尽可能记录旧链路 KWS、提示音、命令末尾、VAD/AudioStop、STT_END、实际执行及回答首声 | 总体设计与统一历史合同迁移索引初版；基线证据及缺测原因；所有旧合同和明确用户需求均有归属，不因旧 PASS 就跳过受迁移影响的回归 |
-| b0.2 | 实际板型原理图、供电、引脚限制、USB/串口、独立构建及完整烧录、Flash/PSRAM/模型分区；UART 帧边界/必要流量控制、TVIO 兼容、SPP/Bond、双向返回和真实状态、任一板重启/断开后的恢复；大 GIF 对音频的影响 | 硬件/构建/UART/SPP 规格与矩阵；核对锁定 ESP-IDF 和真实上游协议；明确引脚、资源边界以及待实测项，供 b1–b2 |
-| b0.3 | 两麦 L/R 布局与采样、DAC 时钟及 SRC、AFE 实际通道布局、最终 TX 参考对齐、AEC/BSS/VADNet/WakeNet 模型与资源、音频缓冲和欠载、重触发与负样本；官方词和可用模型以实际版本为准 | 音频/AFE 规格与矩阵，供 b3–b4；接口与格式核实，麦距、AEC 延迟、VAD 阈值等仅规定初始候选与实测方法，不照搬旧值 |
+| b0.2 | 以 §1.1 已确定的微雪 N16R8-M 和现有 WROVER-E-M 为基线，核对实际板型原理图、供电、引脚限制、USB/串口、独立构建及完整烧录、Flash/PSRAM/模型分区；UART 帧边界/必要流量控制、TVIO 兼容、SPP/Bond、双向返回和真实状态、任一板重启/断开后的恢复；大 GIF 对音频的影响 | 硬件/构建/UART/SPP 规格与矩阵；核对锁定 ESP-IDF 和真实上游协议；明确引脚、资源边界以及待实测项，供 b1–b2 |
+| b0.3 | 以 §1.1 两颗同品牌同型号 INMP441 为基线，两麦 L/R 布局与采样、DAC 时钟及 SRC、AFE 实际通道布局、最终 TX 参考对齐、AEC/BSS/VADNet/WakeNet 模型与资源、音频缓冲和欠载、重触发与负样本；官方词和可用模型以实际版本为准 | 音频/AFE 规格与矩阵，供 b3–b4；接口与格式核实，麦距、AEC 延迟、VAD 阈值等仅规定初始候选与实测方法，不照搬旧值 |
 | b0.4 | 核对实际 HA Core、Assist Satellite/Pipeline 和 Wyoming 源码；本地唤醒事件、session/轮次关联、STT 提前准备、命令 PCM 边界、speech_end→尾帧→AudioStop、失败/超时；现有 ready 素材与独立 follow-up beep、本地提示音出口和输入 gate | HA 语音会话/提示音规格与矩阵，供 b5–b6；确认设备断句所需 HA 接口或记录最小验证/可行替代，禁止凭猜测锁定接口 |
 | b0.5 | 跨阶段 WakeNet 打断、旧 owner 释放、迟到 TTS/AUDIO_STATE、连续对话授权/窗口、提示音误触发、generation 对齐；表情 wake_confirmed/active_listening/thinking/tooluse/speaking/followup_wait、mood、息屏门控、SPP 状态及重连 | 生命周期/表情事件规格与矩阵，供 b7–b8；以正常与异常时序逐项核对，不创建第二套显示仲裁或播放所有权 |
 | b0.6 | 交叉审查前五批规格、接口双方、需求/历史合同覆盖、测试责任、清理条件及最终声学/性能回归 | 正式迁移追踪索引、分批执行计划及测试/验收映射；修订发现的冲突，不新增无来源功能；通过设计出口后才开始 b1 |
