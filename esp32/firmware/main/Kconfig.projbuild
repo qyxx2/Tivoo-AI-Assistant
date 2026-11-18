@@ -41,10 +41,10 @@ config TIVOO_I2S_DOUT_GPIO
 config TIVOO_AEC_REFERENCE_DELAY_SAMPLES
     int "Fixed TX to microphone reference delay in 16 kHz samples"
     range 0 800
-    default 760
+    default 0
     help
-        Compensates for digital clock startup skew and the DAC, microphone
-        and acoustic path delay. Tune with a measured loopback.
+        Uncalibrated S3 initial value only; measure the physical TX/RX
+        alignment and acoustic path before enabling AFE.
 
 config TIVOO_AUDIO_PROBE
     bool "Log one-second audio measurements to UART"

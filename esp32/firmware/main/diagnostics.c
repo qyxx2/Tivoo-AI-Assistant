@@ -1,3 +1,6 @@
+#ifdef TIVOO_P68_B3_AUDIO
+#include "audio_capture.h"
+#endif
 #include "diagnostics.h"
 
 #include <errno.h>
@@ -524,7 +527,12 @@ static char *build_hello_payload(size_t *payload_size)
         capabilities, cJSON_CreateString("remote_diagnostics"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("device_status"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("device_events"));
-#ifndef TIVOO_P68_B1_SCAFFOLD
+#ifdef TIVOO_P68_B3_AUDIO
+    if (tivoo_audio_capture_running()) {
+        cJSON_AddItemToArray(capabilities, cJSON_CreateString("audio_resource_http"));
+        cJSON_AddItemToArray(capabilities, cJSON_CreateString("audio_control"));
+    }
+#elif !defined(TIVOO_P68_B1_SCAFFOLD)
     cJSON_AddItemToArray(
         capabilities, cJSON_CreateString("audio_resource_http"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("audio_control"));

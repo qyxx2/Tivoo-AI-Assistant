@@ -1,4 +1,5 @@
 #include "audio_output_manager.h"
+#include <string.h>
 
 #ifdef ESP_PLATFORM
 #include "esp_attr.h"
@@ -86,7 +87,8 @@ bool tivoo_output_stop(tivoo_output_queue_t *queue, uint32_t generation)
 bool tivoo_output_drained(const tivoo_output_queue_t *queue, uint32_t generation,
     uint32_t completed)
 {
-    return generation != 0 && queue->generation == generation && queue->count == 0 &&
+    return generation != 0 && queue->generation == generation &&
+        (queue->input_finished || queue->stopped) && queue->count == 0 &&
         (!queue->in_dma || (int32_t)(completed - queue->last_due) > 0);
 }
 
@@ -98,6 +100,39 @@ void tivoo_output_end(tivoo_output_queue_t *queue, uint32_t generation)
     }
 }
 
+/* Store only the descriptor that actually reached EOF, before refilling it.
+ * Keep the original 32k mono samples: the capture task applies the same
+ * 31-tap low-pass as both microphones, never inside the ISR. */
+void TX_ISR_CODE tivoo_tx_reference_record(tivoo_tx_reference_t *reference,
+    uint64_t block, const uint32_t *slots)
+{
+    tivoo_tx_reference_block_t *entry = &reference->blocks[block % TIVOO_REFERENCE_BLOCKS];
+    entry->block = block;
+    for (size_t i = 0; i < TIVOO_REFERENCE_SAMPLES; ++i) {
+        entry->pcm[i] = (int16_t)(slots[2*i] >> 16);
+    }
+    entry->valid = true;
+}
+
+bool tivoo_tx_reference_read(const tivoo_tx_reference_t *reference, uint64_t first_sample,
+    int16_t *pcm, size_t samples)
+{
+    bool valid = true;
+    for (size_t i = 0; i < samples;) {
+        const uint64_t sample = first_sample+i;
+        const uint64_t block = sample/TIVOO_REFERENCE_SAMPLES;
+        const size_t offset = sample%TIVOO_REFERENCE_SAMPLES;
+        const size_t left = TIVOO_REFERENCE_SAMPLES-offset;
+        const size_t count = left < samples-i ? left : samples-i;
+        const tivoo_tx_reference_block_t *entry = &reference->blocks[block%TIVOO_REFERENCE_BLOCKS];
+        const bool found = entry->valid && entry->block == block;
+        valid &= found;
+        for (size_t j=0; j<count; ++j) pcm[i+j] = found ? entry->pcm[offset+j] : 0;
+        i += count;
+    }
+    return valid;
+}
+
 #ifdef ESP_PLATFORM
 #include "audio_capture.h"
 #include "esp_log.h"
@@ -106,31 +141,27 @@ void tivoo_output_end(tivoo_output_queue_t *queue, uint32_t generation)
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
-#define REFERENCE_SAMPLES (TIVOO_OUTPUT_BLOCK / 2U)
-#define REFERENCE_BLOCKS 32U
-
-typedef struct {
-    uint32_t block;
-    int16_t pcm[REFERENCE_SAMPLES];
-    bool valid;
-    bool has_pcm;
-} reference_block_t;
-
-static uint32_t *s_dma[TIVOO_OUTPUT_DMA_BLOCKS];
-static size_t s_dma_count;
-static size_t s_dma_index;
-static bool s_mute_pending;
+static void *s_dma[TIVOO_OUTPUT_DMA_BLOCKS];
+static tivoo_dma_eof_tracker_t s_tracker;
 static unsigned s_missed_eofs;
 static unsigned s_reference_peak;
-
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static tivoo_output_queue_t s_queue;
-static reference_block_t s_reference[REFERENCE_BLOCKS];
-static uint32_t s_completed;
-static uint32_t s_last_pcm;
-static bool s_has_pcm;
+static tivoo_tx_reference_t s_reference;
+static uint64_t s_completed;
 static unsigned s_underruns;
 static unsigned s_high_water;
+
+void tivoo_audio_output_reset(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    memset(&s_queue, 0, sizeof(s_queue));
+    memset(&s_reference, 0, sizeof(s_reference));
+    s_completed = 0;
+    s_missed_eofs = 0;
+    tivoo_dma_eof_tracker_reset(&s_tracker, s_dma, TIVOO_OUTPUT_DMA_BLOCKS);
+    portEXIT_CRITICAL(&s_lock);
+}
 
 bool tivoo_audio_output_begin(uint32_t generation)
 {
@@ -180,9 +211,9 @@ esp_err_t tivoo_audio_output_write(uint32_t generation, const int16_t *pcm, size
 void tivoo_audio_output_stop(uint32_t generation)
 {
     portENTER_CRITICAL(&s_lock);
-    if (tivoo_output_stop(&s_queue, generation)) {
-        s_mute_pending = s_queue.in_dma;
-    }
+    /* Never alter a descriptor that may already have been fetched by GDMA.
+     * Drain the already submitted (<=60ms) tail; completed reference stays real. */
+    tivoo_output_stop(&s_queue, generation);
     portEXIT_CRITICAL(&s_lock);
 }
 
@@ -218,106 +249,51 @@ void tivoo_audio_output_end(uint32_t generation)
 void IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
 {
     portENTER_CRITICAL_ISR(&s_lock);
-    size_t index = 0;
-    while (index < s_dma_count && s_dma[index] != slots) {
-        ++index;
-    }
-    if (index == s_dma_count && s_dma_count < TIVOO_OUTPUT_DMA_BLOCKS) {
-        s_dma[s_dma_count++] = slots;
-    } else if (s_dma_count == TIVOO_OUTPUT_DMA_BLOCKS) {
-        size_t distance = (index + TIVOO_OUTPUT_DMA_BLOCKS - s_dma_index) %
-            TIVOO_OUTPUT_DMA_BLOCKS;
-        if (distance == 0) {
-            distance = TIVOO_OUTPUT_DMA_BLOCKS;
-        }
-        s_completed += distance - 1;
-        s_missed_eofs += distance - 1;
-    }
-    s_dma_index = index;
-    const uint32_t due = ++s_completed + TIVOO_OUTPUT_DMA_BLOCKS;
-    if (s_mute_pending && s_dma_count == TIVOO_OUTPUT_DMA_BLOCKS) {
-        // At EOF the next descriptor may already be in the FIFO. Zero the
-        // remaining future descriptors, leaving the clocks and RX running.
-        for (size_t ahead = 2; ahead < TIVOO_OUTPUT_DMA_BLOCKS; ++ahead) {
-            const uint32_t block = s_completed + ahead - 1;
-            volatile uint32_t *buffer = s_dma[(index + ahead) % TIVOO_OUTPUT_DMA_BLOCKS];
-            for (size_t slot = 0; slot < 2 * TIVOO_OUTPUT_BLOCK; ++slot) {
-                buffer[slot] = 0;
-            }
-            reference_block_t *entry = &s_reference[block % REFERENCE_BLOCKS];
-            entry->has_pcm = false;
-        }
-        if ((int32_t)(s_queue.last_due - s_completed) > 1) {
-            s_queue.last_due = s_completed + 1;
-        }
-        s_mute_pending = false;
-    }
+    const size_t missed = tivoo_dma_eof_tracker_observe(&s_tracker, slots);
+    s_completed += missed;
+    s_missed_eofs += missed;
+    tivoo_tx_reference_record(&s_reference, s_completed, slots);
+    /* GDMA EOF can precede actual FIFO output. Preserve one more descriptor
+     * interval for drain, as in the previous output manager. */
+    const uint32_t due = (uint32_t)(++s_completed + TIVOO_OUTPUT_DMA_BLOCKS);
     const size_t count = tivoo_output_refill(&s_queue, slots, due);
-    if (count == 0 && s_queue.in_dma && !s_queue.input_finished && !s_queue.stopped) {
+    if (!count && s_queue.in_dma && !s_queue.input_finished && !s_queue.stopped)
         ++s_underruns;
-    }
-    reference_block_t *reference = &s_reference[(due - 1) % REFERENCE_BLOCKS];
-    reference->block = due - 1;
-    reference->valid = true;
-    reference->has_pcm = count != 0;
-    if (count != 0) {
-        s_last_pcm = due - 1;
-        s_has_pcm = true;
-        for (size_t i = 0; i < REFERENCE_SAMPLES; ++i) {
-            const int32_t a = (int16_t)(slots[4 * i] >> 16);
-            const int32_t b = (int16_t)(slots[4 * i + 2] >> 16);
-            reference->pcm[i] = (a + b) / 2;
-        }
-    }
     portEXIT_CRITICAL_ISR(&s_lock);
 }
 
+bool tivoo_audio_output_reference_raw(uint64_t first_sample, int16_t *pcm, size_t samples)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool valid = tivoo_tx_reference_read(&s_reference, first_sample, pcm, samples) &&
+        !s_tracker.order_uncertain;
+    for (size_t i=0;i<samples;i++) {
+        const unsigned amplitude = pcm[i] < 0 ? -(int)pcm[i] : pcm[i];
+        if (amplitude > s_reference_peak) s_reference_peak = amplitude;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return valid;
+}
+
+/* Preserve the old source-only MR reader; not part of the S3 target. */
 tivoo_audio_reference_status_t tivoo_audio_output_reference(
     uint64_t first_sample, int16_t *reference, size_t samples)
 {
-    tivoo_audio_reference_status_t result = TIVOO_AUDIO_REFERENCE_SILENT;
-    for (size_t i = 0; i < samples;) {
-        const uint64_t rx_sample = first_sample + i;
-        if (rx_sample < CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES) {
-            reference[2 * i++] = 0;
+    bool valid = true, signal = false;
+    for (size_t i=0;i<samples;i++) {
+        int16_t pair[2];
+#if CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES > 0
+        if (first_sample+i < CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES) {
+            reference[2*i] = 0;
             continue;
         }
-        const uint64_t sample = rx_sample - CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES;
-        const uint32_t block = sample / REFERENCE_SAMPLES;
-        const size_t offset = sample % REFERENCE_SAMPLES;
-        const size_t left = REFERENCE_SAMPLES - offset;
-        const size_t count = left < samples - i ? left : samples - i;
-
-        portENTER_CRITICAL(&s_lock);
-        const reference_block_t *entry = &s_reference[block % REFERENCE_BLOCKS];
-        const bool available = entry->valid && entry->block == block;
-        if (available && entry->has_pcm) {
-            for (size_t j = 0; j < count; ++j) {
-                const int16_t pcm = entry->pcm[offset + j];
-                reference[2 * (i + j)] = pcm;
-                const unsigned amplitude = pcm < 0 ? -(int)pcm : pcm;
-                if (amplitude > s_reference_peak) {
-                    s_reference_peak = amplitude;
-                }
-            }
-            if (result == TIVOO_AUDIO_REFERENCE_SILENT) {
-                result = TIVOO_AUDIO_REFERENCE_READY;
-            }
-        } else {
-            for (size_t j = 0; j < count; ++j) {
-                reference[2 * (i + j)] = 0;
-            }
-            if (!available && s_has_pcm && block >= TIVOO_OUTPUT_DMA_BLOCKS) {
-                if ((int32_t)(s_last_pcm - block) >= 0) {
-                    result = TIVOO_AUDIO_REFERENCE_MISALIGNED;
-                } else if (s_queue.count != 0 && result != TIVOO_AUDIO_REFERENCE_MISALIGNED) {
-                    result = TIVOO_AUDIO_REFERENCE_UNDERRUN;
-                }
-            }
-        }
-        portEXIT_CRITICAL(&s_lock);
-        i += count;
+#endif
+        valid &= tivoo_audio_output_reference_raw(
+            2*(first_sample+i-CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES),pair,2);
+        reference[2*i] = ((int32_t)pair[0]+pair[1])/2;
+        signal |= reference[2*i] != 0;
     }
-    return result;
+    return !valid ? TIVOO_AUDIO_REFERENCE_MISALIGNED :
+        signal ? TIVOO_AUDIO_REFERENCE_READY : TIVOO_AUDIO_REFERENCE_SILENT;
 }
 #endif

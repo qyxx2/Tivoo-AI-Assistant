@@ -403,10 +403,14 @@ static const char *read_audio(
             error = "audio_http_failed";
             break;
         }
+#ifndef TIVOO_P68_B3_AUDIO
         if (bytes > 0 && request->suppress_vad && !*vad_suppressed) {
             tivoo_audio_frontend_set_vad_suppressed(true);
             *vad_suppressed = true;
         }
+#else
+        (void)vad_suppressed; /* b6 adds local prompt gate, b3 has no VAD. */
+#endif
         request->bytes_received += bytes;
         if (tivoo_audio_playback_feed(playback, buffer, (size_t)bytes, eof) != ESP_OK) {
             error = format_error;
@@ -499,6 +503,7 @@ static audio_request_t *run_request(audio_request_t *request)
         }
         tivoo_audio_output_end(request->generation);
     }
+#ifndef TIVOO_P68_B3_AUDIO
     if (vad_suppressed) {
         /* output_end() is digital completion. Keep the prompt-only gate until
          * the final acoustic copy reaches INMP441, using the measured TX->mic
@@ -510,6 +515,7 @@ static audio_request_t *run_request(audio_request_t *request)
         }
         tivoo_audio_frontend_set_vad_suppressed(false);
     }
+#endif
     (void)tivoo_device_status_set_audio_resource(false, NULL);
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     const bool stopped = atomic_load(&request->stop_requested);

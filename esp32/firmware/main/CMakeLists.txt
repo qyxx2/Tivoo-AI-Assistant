@@ -1,6 +1,10 @@
 idf_component_register(
     SRCS
         "s3_main.c"
+        "audio_capture.c"
+        "audio_output_manager.c"
+        "audio_playback.c"
+        "audio_resource.c"
         "uart_wire.c"
         "uart_link.c"
         "uart_transport.c"
@@ -19,7 +23,7 @@ idf_component_register(
         espressif__cjson esp_psram heap spi_flash lwip nvs_flash
         esp-sr esp_audio_codec esp_audio_effects
 )
-target_compile_definitions(${COMPONENT_LIB} PRIVATE TIVOO_P68_B1_SCAFFOLD=1 TIVOO_P68_B2_UART=1)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE TIVOO_P68_B1_SCAFFOLD=1 TIVOO_P68_B2_UART=1 TIVOO_P68_B3_AUDIO=1)
 
 execute_process(
     COMMAND git rev-parse --short=7 HEAD
