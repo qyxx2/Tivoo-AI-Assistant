@@ -52,9 +52,9 @@
 
 **Consumes:** T03 sample timeline；T01 model。**Produces:** AFE-C06–12，confirmed wake、VAD start/end 和按索引 cache。
 **Files:** `esp32/firmware/main/audio_frontend.{c,h}`、audio_capture、sdkconfig/model build；新增 AFE host 流程测试并复用 T03 标记。
-- [ ] T04-A：锁定实际模型/有效配置/动态 chunk，MMNR/FD HIGH_PERF、BSS 优先、无强开 NS、VADNet1 medium，真实 feed/fetch；测试重复 candidate/verified、丢帧、重触发、短 gate、VAD history/cache 重叠去重、500ms endpoint；输出单次确认及16k增强流，不接 NAS KWS。b4 前用户选最终官方词；未选时仅 smoke，不宣称最终声学通过。
-- [ ] T04-B：5cm 初值，1m/3m/实际位置，多条件真人、电视普通/同词、正常TTS含/不含词、双讲及长播放，记录每组 count/误漏/延迟P50/P95/ERLE/负载和 drop；NSNet2/3 不自动叠加；若失败按 AFE 规格复测布局/阈值/模型。S3 网络/TTS/UART并发无新增欠载、AFE gap、watchdog。
-- [ ] 验证：T04 host 与 T03 回归、build、实际模型 list/print_pipeline/内存/声学记录；报告/提交。
+- [ ] T04-A（软件实现/主机测试与构建 PASS；实际模型初始化、最终词及声学 GAP，见 [b4 软件验收报告](../reports/2026-11-18-p6-8-b4-afe-acceptance.md)）：锁定实际模型/有效配置/动态 chunk，MMNR/FD HIGH_PERF、BSS 优先、无强开 NS、VADNet1 medium，真实 feed/fetch；测试重复 candidate/verified、丢帧、重触发、短 gate、VAD history/cache 重叠去重、500ms endpoint；输出单次确认及16k增强流，不接 NAS KWS。b4 前用户选最终官方词；未选时仅 smoke，不宣称最终声学通过。
+- [ ] T04-B（实物 GAP：S3 与第二颗 INMP441 未到货，禁止刷写）：5cm 初值，1m/3m/实际位置，多条件真人、电视普通/同词、正常TTS含/不含词、双讲及长播放，记录每组 count/误漏/延迟P50/P95/ERLE/负载和 drop；NSNet2/3 不自动叠加；若失败按 AFE 规格复测布局/阈值/模型。S3 网络/TTS/UART并发无新增欠载、AFE gap、watchdog。
+- [x] 软件验证：T04 host、T03 回归及 ESP32 standalone 全量 85 passed；S3 IDF v6.1 build/size 通过，见 b4 报告。实际模型 list/print_pipeline、内存/声学记录及 T04-A/B 实物门禁保持 GAP。
 
 ## b5 — HA STT 入口与有界会话
 
