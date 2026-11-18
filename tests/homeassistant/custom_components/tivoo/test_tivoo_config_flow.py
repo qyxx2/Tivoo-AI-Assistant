@@ -353,3 +353,9 @@ async def test_reconfigure_adds_explicit_host_and_preserves_existing_media(
     assert entry.data["media_directory"] == "media/tivoo"
     assert entry.data["esp32_host"] == "127.0.0.1"
     assert entry.data["tivoo_bluetooth_mac"] == "11:75:58:97:49:98"
+
+    # Reconfigure schedules an actual reload. Join it and unload the resulting
+    # runtime instead of racing HA fixture shutdown against setup/transport tasks.
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert await hass.config_entries.async_unload(entry.entry_id)

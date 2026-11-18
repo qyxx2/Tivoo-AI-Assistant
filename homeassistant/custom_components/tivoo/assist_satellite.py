@@ -82,6 +82,7 @@ class _Turn:
     local_phrase: str | None = None
     local_mode: bool = False
     valid_stt: bool = False
+    intent_finished: bool = False
     run_end: bool = False
     run_returned: bool = False
     tts_attempted: bool = False
@@ -202,6 +203,10 @@ class AudioSessionCoordinator:
         if session_id == self._session_id and self._turn and self._turn.local_mode:
             self._cancel_timer("local_gate_timeout")
             self._arm(6 if self._turn.local_phrase is None else 5, "command_timeout")
+            if self._turn.local_phrase is None:
+                self.display.update_voice(
+                    self._turn.context.id, state=DisplayState.FOLLOWUP_WAIT, preset="standby"
+                )
 
     @callback
     def on_activity(self, session_id: str, state: str) -> None:
@@ -221,16 +226,16 @@ class AudioSessionCoordinator:
                 turn.command_started = True
                 self._cancel_timer("command_timeout")
                 self._arm(17, "local_speech_timeout")
-                self._show(
-                    self.display.async_set_intent(
-                        DisplayState.ACTIVE_LISTENING,
-                        build_expression_command("standby"),
-                        generation=turn.context.id,
-                    ),
-                    "local listening",
+                self.display.update_voice(
+                    turn.context.id,
+                    clear=(DisplayState.WAKE_CONFIRMED, DisplayState.FOLLOWUP_WAIT),
+                    state=DisplayState.ACTIVE_LISTENING, preset="standby",
                 )
             else:
                 self._cancel_timer("local_speech_timeout")
+                self.display.update_voice(
+                    turn.context.id, clear=(DisplayState.ACTIVE_LISTENING,)
+                )
             return
         if self._followup and state == "speech_start":
             self._cancel_prompt()
@@ -281,8 +286,10 @@ class AudioSessionCoordinator:
         )
         previous = self._turn
         self._turn = turn
-        self.display.begin_generation(turn.context.id)
-        if confirmed:
+        self.display.begin_generation(
+            turn.context.id, reply_active=not local_mode, wake=local_mode and confirmed
+        )
+        if confirmed and not local_mode:
             self._show(
                 self.display.async_set_intent(
                     DisplayState.WAKE_CONFIRMED,
@@ -420,6 +427,7 @@ class AudioSessionCoordinator:
             if turn.tts.playback_id is not None and not turn.playback_completed:
                 return
             turn.response_finished = True
+            self.display.end_generation(turn.context.id)
             self.entity.tts_response_finished()
             if (turn.continue_conversation and turn.valid_stt and turn.run_end and
                 not turn.error and not turn.tts.send_failed and
@@ -635,6 +643,10 @@ class AudioSessionCoordinator:
                     and intent_output.get("continue_conversation") is True
                 )
                 if turn.local_mode:
+                    turn.intent_finished = True
+                    self.display.update_voice(
+                        turn.context.id, clear=(DisplayState.TOOLUSE,)
+                    )
                     response = intent_output.get("response") if isinstance(intent_output, dict) else None
                     turn.continue_conversation = bool(
                         turn.continue_conversation and turn.valid_stt and not turn.error
@@ -665,10 +677,20 @@ class AudioSessionCoordinator:
                         and text.strip()
                     ):
                         turn.valid_stt = True
-                        self._show(
-                            self.display.async_enter_thinking(turn.context.id),
-                            "thinking",
-                        )
+                        if turn.local_mode:
+                            self.display.update_voice(
+                                turn.context.id,
+                                clear=(DisplayState.WAKE_CONFIRMED, DisplayState.ACTIVE_LISTENING,
+                                       DisplayState.FOLLOWUP_WAIT),
+                                state=DisplayState.THINKING, preset="thinking", reply_active=True,
+                            )
+                        else:
+                            self._show(
+                                self.display.async_enter_thinking(turn.context.id),
+                                "thinking",
+                            )
+                    elif turn.local_mode:
+                        self.display.end_generation(turn.context.id)
                     else:
                         self.display.end_candidate(turn.context.id)
                         self._show(
@@ -685,7 +707,10 @@ class AudioSessionCoordinator:
                     data.get("code"),
                     data.get("message"),
                 )
-                self._show(self.display.async_end_generation(turn.context.id), "error")
+                if turn.local_mode:
+                    self.display.end_generation(turn.context.id)
+                else:
+                    self._show(self.display.async_end_generation(turn.context.id), "error")
 
     @callback
     def on_playback(self, playback_id: str, state: str) -> None:
@@ -700,7 +725,20 @@ class AudioSessionCoordinator:
             return
         if turn.local_mode and state in {"completed", "stopped", "interrupted", "failed"}:
             turn.playback_terminal = True
-        if state == "playing":
+            if state == "completed":
+                self.display.update_voice(
+                    turn.context.id,
+                    clear=(DisplayState.SPEAKING, DisplayState.TOOLUSE),
+                    reply_active=False,
+                )
+            else:
+                self.display.end_generation(turn.context.id)
+        if state == "playing" and turn.local_mode:
+            if turn.valid_stt and not turn.error and not turn.response_finished:
+                self.display.update_voice(
+                    turn.context.id, state=DisplayState.SPEAKING, preset="music"
+                )
+        elif state == "playing":
             self._show(
                 self.display.async_set_intent(
                     DisplayState.SPEAKING,
@@ -760,7 +798,7 @@ class AudioSessionCoordinator:
             )
         if turn is not None and turn.local_mode:
             turn.tts.stop_dispatch()
-            self._show(self.display.async_end_generation(turn.context.id), "local session end")
+            self.display.end_generation(turn.context.id)
             task = turn.task
             cancel_task = task is not None and task is not asyncio.current_task()
             prior = self._closing
@@ -877,10 +915,24 @@ class TivooAssistSatellite(AssistSatelliteEntity):
             or self.coordinator._session_id is None
             or self.coordinator._followup
             or turn.error
+            or (
+                turn.local_mode and (
+                    not turn.valid_stt or turn.intent_finished
+                    or turn.response_finished or turn.playback_terminal
+                )
+            )
             or data.get("satellite_id") != self.entity_id
             or data.get("context_id") != turn.context.id
             or self.display.active_generation != turn.context.id
         ):
+            return
+        if turn.local_mode:
+            if data.get("phase") == "tool_call":
+                self.display.update_voice(
+                    turn.context.id, state=DisplayState.TOOLUSE, preset="tooluse"
+                )
+            elif data.get("phase") == "tool_call_result":
+                self.display.update_voice(turn.context.id, clear=(DisplayState.TOOLUSE,))
             return
         if data.get("phase") == "tool_call":
             self.coordinator._show(

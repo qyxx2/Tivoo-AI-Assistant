@@ -140,7 +140,7 @@ class ScreenPowerGate:
 class ExpressionCoordinator:
     """Choose the highest valid intent and emit only necessary device commands."""
 
-    def __init__(self, command_adapter: CommandAdapter) -> None:
+    def __init__(self, command_adapter: CommandAdapter, *, spp_connected: bool = True) -> None:
         self._adapter = command_adapter
         self._gate = ScreenPowerGate(self._async_power_changed)
         self._intents: dict[DisplayState, _Intent] = {}
@@ -151,10 +151,13 @@ class ExpressionCoordinator:
         self._candidate_cooldown_until = 0.0
         self._lock = asyncio.Lock()
         self._power_dirty = False
-        self._spp_connected = True
+        self._spp_connected = spp_connected
+        self._spp_revision = 0
         self._started = False
         self._shutdown = False
         self._active_generation: str | None = None
+        self._voice_contexts: set[str] = set()
+        self._reply_active = False
         self._desired_state: DisplayState = DisplayState.IDLE
         self._desired_command: TivooCommand | None = None
         self._last_sent: TivooCommand | None = None
@@ -192,29 +195,72 @@ class ExpressionCoordinator:
         self._active_generation = None
         await self._gate.async_shutdown()
 
-    def begin_generation(self, generation: str) -> None:
+    def begin_generation(
+        self, generation: str, *, reply_active: bool = True, wake: bool = False
+    ) -> None:
         """Set a new turn as authoritative; a late event from an old turn is inert."""
         if self._shutdown or generation == self._active_generation:
             return
         self._cancel_candidate()
         self._active_generation = generation
+        self._voice_contexts.add(generation)
+        self._reply_active = reply_active
         self._clear_session_intents()
-        if self._started:
+        if wake:
+            self._intents[DisplayState.WAKE_CONFIRMED] = _Intent(
+                build_expression_command("question"), generation
+            )
+        self._schedule_recompute()
+
+    def _schedule_recompute(self) -> None:
+        if self._started and not self._shutdown:
             task = asyncio.create_task(self._async_recompute())
             task.add_done_callback(self._log_background_failure)
+
+    def update_voice(
+        self,
+        generation: str,
+        *,
+        clear: tuple[DisplayState, ...] = (),
+        state: DisplayState | None = None,
+        preset: str | None = None,
+        reply_active: bool | None = None,
+    ) -> None:
+        """Apply one physical voice transition before any asynchronous display I/O."""
+        if self._shutdown or generation != self._active_generation:
+            return
+        for old in clear:
+            self._remove_intent(old)
+        if reply_active is not None:
+            self._reply_active = reply_active
+        if state is not None:
+            assert state in SESSION_STATES and preset is not None
+            self._remove_intent(state)
+            self._intents[state] = _Intent(build_expression_command(preset), generation)
+        self._schedule_recompute()
+
+    def end_generation(self, generation: str) -> None:
+        """Invalidate local voice identity synchronously at the ingress boundary."""
+        if self._invalidate_generation(generation):
+            self._schedule_recompute()
 
     @staticmethod
     def _log_background_failure(task: asyncio.Task) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
             _LOGGER.warning("Tivoo background display recompute failed: %s", error)
 
-    async def async_end_generation(self, generation: str) -> None:
+    def _invalidate_generation(self, generation: str) -> bool:
         if generation != self._active_generation or self._shutdown:
-            return
+            return False
         self._cancel_candidate()
         self._active_generation = None
+        self._reply_active = False
         self._clear_session_intents()
-        await self._async_recompute()
+        return True
+
+    async def async_end_generation(self, generation: str) -> None:
+        if self._invalidate_generation(generation):
+            await self._async_recompute()
 
     def _cancel_candidate(self) -> None:
         if self._candidate_timer is not None:
@@ -385,13 +431,18 @@ class ExpressionCoordinator:
             self._power_dirty = True
             await self._async_recompute(force_display=True)
 
-    async def async_set_mood(self, name: str) -> None:
-        """Set a short-lived mood for the current Tivoo voice generation."""
+    async def async_set_mood(
+        self, name: str, *, context_id: str | None = None, parent_id: str | None = None
+    ) -> None:
+        """Known voice contexts must match; unassociated calls use the live reply."""
         if name not in MOOD_PRESETS:
             raise HomeAssistantError(f"Unsupported Tivoo mood preset: {name}")
         generation = self._active_generation
-        if generation is None:
-            raise HomeAssistantError("Tivoo mood requires an active voice generation")
+        if generation is None or not self._reply_active:
+            raise HomeAssistantError("Tivoo mood requires an active voice generation with a reply")
+        for context in (context_id, parent_id):
+            if context in self._voice_contexts and context != generation:
+                raise HomeAssistantError("Tivoo mood belongs to an expired voice generation")
         await self.async_set_intent(
             DisplayState.AI_MOOD,
             build_expression_command(name),
@@ -423,6 +474,7 @@ class ExpressionCoordinator:
         """React only to validated diagnostic DEVICE_EVENT connection changes."""
         if self._shutdown:
             return
+        self._spp_revision += 1
         if state == "spp_disconnected":
             self._spp_connected = False
             self._last_sent = None
@@ -444,16 +496,9 @@ class ExpressionCoordinator:
         if not self._started or self._shutdown:
             return
         async with self._lock:
-            winner = next(
-                (state for state in DisplayState if state in self._intents),
-                DisplayState.IDLE,
-            )
-            command = (
-                self._idle_command
-                if winner is DisplayState.IDLE
-                else self._intents[winner].command
-            )
-            self._desired_state, self._desired_command = winner, command
+            if self._shutdown:
+                return
+            self._update_desired()
 
             if not self._spp_connected:
                 self._cancel_idle_timer()
@@ -461,19 +506,29 @@ class ExpressionCoordinator:
 
             if self._power_dirty or (force_display and not self._gate.is_on):
                 power = self._gate.is_on
+                revision = self._spp_revision
                 await self._adapter.async_execute(
                     TivooCommand(name="set_screen_power", data={"value": power})
                 )
+                if self._shutdown or revision != self._spp_revision:
+                    return
+                if power != self._gate.is_on:
+                    return  # A newer gate transition owns the next power write.
                 self._power_dirty = False
                 if power:
                     force_display = True
+                self._update_desired()
 
+            command = self._desired_command
             if (
                 self._gate.is_on
                 and command is not None
                 and (force_display or command != self._last_sent)
             ):
+                revision = self._spp_revision
                 await self._adapter.async_execute(command)
+                if self._shutdown or revision != self._spp_revision:
+                    return
                 self._last_sent = command
 
             if (
@@ -483,6 +538,16 @@ class ExpressionCoordinator:
                 self._ensure_idle_timer()
             else:
                 self._cancel_idle_timer()
+
+    def _update_desired(self) -> None:
+        winner = next(
+            (state for state in DisplayState if state in self._intents),
+            DisplayState.IDLE,
+        )
+        self._desired_state = winner
+        self._desired_command = (
+            self._idle_command if winner is DisplayState.IDLE else self._intents[winner].command
+        )
 
     def _ensure_idle_timer(self) -> None:
         if self._idle_timer is None:

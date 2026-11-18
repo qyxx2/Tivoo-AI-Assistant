@@ -155,6 +155,7 @@ class Esp32ConnectionAdapter:
         ] = {}
         self._spp_reverse_handler: Callable[[bytes], Awaitable[None]] | None = None
         self._spp_state_handler: Callable[[str], Awaitable[None]] | None = None
+        self._spp_state_tasks: set[asyncio.Task] = set()
         self.spp_hint = "unavailable"
         self._stopping = False
 
@@ -181,6 +182,11 @@ class Esp32ConnectionAdapter:
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
+        for task in self._spp_state_tasks:
+            task.cancel()
+        if self._spp_state_tasks:
+            await asyncio.gather(*self._spp_state_tasks, return_exceptions=True)
+        self._spp_state_tasks.clear()
 
         for writer in self._writers.values():
             writer.close()
@@ -253,14 +259,22 @@ class Esp32ConnectionAdapter:
     async def _notify_spp_state(self, state: str, mac: str | None = None) -> None:
         if state == "spp_connected" and (
             self.states["control"] != "connected" or not self._matches_spp_mac(mac)
+            or ((writer := self._writers.get("control")) is not None and writer.is_closing())
         ):
             return
         if self._spp_state_handler is None:
             return
-        try:
-            await self._spp_state_handler(state)
-        except Exception:
-            _LOGGER.warning("Tivoo SPP state consumer failed", exc_info=True)
+        handler = self._spp_state_handler
+
+        async def notify() -> None:
+            try:
+                await handler(state)
+            except Exception:
+                _LOGGER.warning("Tivoo SPP state consumer failed", exc_info=True)
+
+        task = asyncio.create_task(notify(), name="Tivoo SPP display state")
+        self._spp_state_tasks.add(task)
+        task.add_done_callback(self._spp_state_tasks.discard)
 
     async def _handle_control_data(self, data: bytes) -> None:
         """Handle a single-byte upstream hint or forward opaque SPP bytes."""
@@ -497,6 +511,8 @@ class Esp32ConnectionAdapter:
                         self.last_device_event = None
                     else:
                         self.spp_hint = "unavailable"
+                        if not self._stopping:
+                            await self._notify_spp_state("spp_disconnected")
                     writer.close()
                     try:
                         await writer.wait_closed()

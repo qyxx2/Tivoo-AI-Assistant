@@ -65,7 +65,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             CONF_TIVOO_BLUETOOTH_MAC, DEFAULT_TIVOO_BLUETOOTH_MAC
         ),
     }
-    display = ExpressionCoordinator(_RuntimeDisplayAdapter(runtime))
+    display = ExpressionCoordinator(
+        _RuntimeDisplayAdapter(runtime), spp_connected=not bool(adapter.host)
+    )
     runtime["display_coordinator"] = display
     adapter.register_spp_state_handler(display.async_on_spp_state)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime

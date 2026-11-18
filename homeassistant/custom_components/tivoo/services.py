@@ -225,7 +225,9 @@ def register_services(hass: HomeAssistant, runtime: dict) -> None:
     """Register Tivoo services for the lifetime of a loaded config entry."""
 
     async def async_set_mood(call: ServiceCall) -> None:
-        await runtime["display_coordinator"].async_set_mood(call.data[ATTR_NAME])
+        await runtime["display_coordinator"].async_set_mood(
+            call.data[ATTR_NAME], context_id=call.context.id, parent_id=call.context.parent_id
+        )
 
     async def async_set_expression(call: ServiceCall) -> None:
         name = call.data[ATTR_NAME]
