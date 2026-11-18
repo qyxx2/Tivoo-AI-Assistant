@@ -35,10 +35,10 @@
 
 **Consumes:** T01 两目标。**Produces:** HB05–15 的私有 UART frame、真实 status、原 7777 raw 双向、独立 7778；无 voice 业务。
 **Files:** S3 `esp32/firmware/main/{control_bridge,network_listeners,device_status,diagnostics}.c`；桥复用 `tivoo_spp*,bt_security_policy,tivoo_frame_stream`；两目标各 UART transport adapter；HA `homeassistant/custom_components/tivoo/{protocol,transport,diagnostics}.py`。
-- [ ] T02-A：C host golden（COBS、CRC32、字段 endian、4608 payload、任意切片、坏 CRC/长度/seq/旧 token）；双向 stop-and-wait 一未确认、control priority、ACK 仅入队。先失败后实现 UART1 见 HB05/06，1s heartbeat/3s invalidation/20s ACK 限，不重传非幂等。
-- [ ] T02-B：测试 raw 7B、最大帧、拆/粘包、0x69 payload、reverse bytes 与 hint、32项队列满、8192B reverse 溢出、双向拥塞/ACK timeout、client epoch、切 MAC、旧 status、独立端口/重启；按 HB07/10–13 迁移 parser、状态和错误。命令级不发 ACK；真实 MAC 匹配才触发重连同步。
-- [ ] T02-C：保留 Classic auth/Bond/SDP fallback、330B/15ms、WRITE_EVT、MCP 全部注册/权限/参数/错误和服务；正常/断线/显式 disconnect/改 MAC/最多256 GIF chunks/长滚动实机验证，后续音频并发留 b3/b10。禁止擅自清 Bond 或切别人设备。
-- [ ] 验证：`bash scripts/test-ha.sh tests/esp32/test_p5b3_control_bridge.py tests/esp32/test_p5b3_security.py tests/esp32/test_p5b3_session.py tests/esp32/test_p6_reverse_channel.py tests/esp32/test_p6_device_status.py tests/homeassistant/custom_components/tivoo`，再两 target build；报告/提交。
+- [x] T02-A（软件 PASS；双板实机 GAP）：C host golden（COBS、CRC32、字段 endian、4608 payload、任意切片、坏 CRC/长度/seq/旧 token）；双向 stop-and-wait 一未确认、control priority、ACK 仅入队。先失败后实现 UART1 见 HB05/06，1s heartbeat/3s invalidation/20s ACK 限，不重传非幂等。
+- [x] T02-B（软件 PASS；双板实机 GAP）：测试 raw 7B、最大帧、拆/粘包、0x69 payload、reverse bytes 与 hint、32项队列满、8192B reverse 溢出、双向拥塞/ACK timeout、client epoch、切 MAC、旧 status、独立端口/重启；按 HB07/10–13 迁移 parser、状态和错误。命令级不发 ACK；真实 MAC 匹配才触发重连同步。
+- [ ] T02-C（软件回归 PASS；实际 SPP/GIF/Bond 等硬件验收 GAP）：保留 Classic auth/Bond/SDP fallback、330B/15ms、WRITE_EVT、MCP 全部注册/权限/参数/错误和服务；正常/断线/显式 disconnect/改 MAC/最多256 GIF chunks/长滚动实机验证，后续音频并发留 b3/b10。禁止擅自清 Bond 或切别人设备。
+- [x] 软件验证（416 passed；两 target build exit 0）：`bash scripts/test-ha.sh tests/esp32/test_p5b3_control_bridge.py tests/esp32/test_p5b3_security.py tests/esp32/test_p5b3_session.py tests/esp32/test_p6_reverse_channel.py tests/esp32/test_p6_device_status.py tests/homeassistant/custom_components/tivoo`，再两 target build；报告/提交。 见 [b2 报告](../reports/2026-11-18-p6-8-b2-uart-spp-acceptance.md)。实机 GAP 不核销。
 
 ## b3 — 音频物理通路与真实参考
 
