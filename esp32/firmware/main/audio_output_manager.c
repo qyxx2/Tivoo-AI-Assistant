@@ -17,6 +17,14 @@ bool tivoo_output_begin(tivoo_output_queue_t *queue, uint32_t generation)
     queue->stopped = false;
     queue->in_dma = false;
     queue->input_finished = false;
+    queue->eager = false;
+    return true;
+}
+
+bool tivoo_output_begin_prompt(tivoo_output_queue_t *queue, uint32_t generation)
+{
+    if (!tivoo_output_begin(queue,generation)) return false;
+    queue->eager=true;
     return true;
 }
 
@@ -43,7 +51,7 @@ size_t TX_ISR_CODE tivoo_output_refill(tivoo_output_queue_t *queue, uint32_t *sl
 {
     volatile uint32_t *dma = slots;
     size_t count = 0;
-    if (queue->in_dma || queue->input_finished || queue->count >= TIVOO_OUTPUT_PREFILL) {
+    if (queue->eager || queue->in_dma || queue->input_finished || queue->count >= TIVOO_OUTPUT_PREFILL) {
         count = queue->count < TIVOO_OUTPUT_BLOCK ? queue->count : TIVOO_OUTPUT_BLOCK;
     }
     for (size_t i = 0; i < count; ++i) {
@@ -177,6 +185,50 @@ bool tivoo_audio_output_begin(uint32_t generation)
     }
     portEXIT_CRITICAL(&s_lock);
     return started;
+}
+
+bool tivoo_audio_output_begin_prompt(uint32_t generation)
+{
+    if (CONFIG_TIVOO_I2S_DOUT_GPIO < 0 || !tivoo_audio_capture_running()) return false;
+    portENTER_CRITICAL(&s_lock);
+    const bool started=tivoo_output_begin_prompt(&s_queue,generation);
+    if (started) s_underruns=s_high_water=s_reference_peak=0;
+    portEXIT_CRITICAL(&s_lock);
+    return started;
+}
+
+size_t tivoo_audio_output_try_write(uint32_t generation, const int16_t *pcm, size_t samples)
+{
+    /* Short critical sections keep RX/TX ISR latency bounded; no waits. */
+    size_t total=0;
+    for (unsigned i=0;i<TIVOO_OUTPUT_QUEUE_SAMPLES/TIVOO_OUTPUT_BLOCK && total<samples;++i) {
+        size_t n=samples-total;
+        if (n>TIVOO_OUTPUT_BLOCK) n=TIVOO_OUTPUT_BLOCK;
+        portENTER_CRITICAL(&s_lock);
+        size_t pushed=tivoo_output_push(&s_queue,generation,pcm+total,n);
+        if (s_queue.count>s_high_water) s_high_water=s_queue.count;
+        portEXIT_CRITICAL(&s_lock);
+        total+=pushed;
+        if (pushed<n) break;
+    }
+    return total;
+}
+
+bool tivoo_audio_output_prompt_drain(uint32_t generation, uint64_t *end, uint64_t *clock)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool drained=tivoo_output_drained(&s_queue,generation,s_completed);
+    *clock=s_completed*(TIVOO_OUTPUT_BLOCK/2);
+    if (drained) {
+        /* Reconstruct the exact wrap-safe completion index from the due block.
+         * The queue already includes one more descriptor for FIFO drain. */
+        uint64_t block=s_completed;
+        if (s_queue.in_dma)
+            block-=(uint32_t)s_completed-(s_queue.last_due+1U);
+        *end=block*(TIVOO_OUTPUT_BLOCK/2);
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return drained;
 }
 
 esp_err_t tivoo_audio_output_write(uint32_t generation, const int16_t *pcm, size_t samples)

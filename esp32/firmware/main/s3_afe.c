@@ -74,6 +74,20 @@ void tivoo_s3_afe_close_local_gate(void)
     if(flow) tivoo_afe_flow_close(flow);
 }
 
+void tivoo_s3_afe_begin_prompt(void)
+{
+    if (flow) tivoo_afe_flow_prompt(flow,true,0);
+}
+bool tivoo_s3_afe_finish_prompt(uint64_t boundary, bool open)
+{
+    if (!flow) return false;
+    const bool valid=atomic_load(&streaming) && !atomic_load(&reset_requested) &&
+        !atomic_load(&fatal) && (!flow->have_next || boundary>=flow->next);
+    const uint64_t wake_after=flow->have_next && boundary<flow->next ? flow->next : boundary;
+    tivoo_afe_flow_prompt(flow,false,wake_after);
+    return open && valid && tivoo_afe_flow_open(flow,boundary);
+}
+
 static void request_reset(void)
 {
     atomic_store(&reset_requested,true);
@@ -200,6 +214,7 @@ static void fetch_task(void *arg)
             continue;
         }
         ++fetch_calls;
+        tivoo_s3_local_turn_tick();
         apply_controls();
         size_t count=(size_t)r->data_size/sizeof(int16_t);
         if (r->wakeup_state!=last_state || r->wakeup_state!=WAKENET_NO_DETECT) {

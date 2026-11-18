@@ -26,7 +26,7 @@ void app_main(void)
     tivoo_s3_api_smoke(); /* volatile-disabled compile/link probe */
     tivoo_board_memory_report();
     /* GPIO38 RGB is enabled only after actual carrier revision is confirmed. */
-    ESP_LOGI("tivoo_boot", "P6.8 b5 S3 control and local STT; RGB GPIO38 pending board check");
+    ESP_LOGI("tivoo_boot", "P6.8 b6 S3 local prompt and STT; RGB GPIO38 pending board check");
     esp_err_t err = tivoo_wifi_station_init_nvs();
     if (err != ESP_OK) {
         ESP_LOGE("tivoo_boot", "NVS initialization failed: %s", esp_err_to_name(err));
@@ -38,11 +38,18 @@ void app_main(void)
         tivoo_audio_capture_close();
         ESP_LOGE("tivoo_boot", "Physical audio unavailable: %s", esp_err_to_name(err));
     } else {
-        bool test_gate=false;
+        bool test_gate=false, calibrated=false;
+        unsigned prompt_tail=0;
+        int prompt_offset=0;
 #ifdef CONFIG_TIVOO_P68_TEST_GATE
         test_gate=true;
 #endif
-        err=tivoo_s3_local_turn_init(test_gate);
+#ifdef CONFIG_TIVOO_P68_PROMPT_CALIBRATED
+        calibrated=true;
+        prompt_tail=CONFIG_TIVOO_P68_PROMPT_TAIL_SAMPLES;
+        prompt_offset=CONFIG_TIVOO_P68_PROMPT_AFE_OFFSET_SAMPLES;
+#endif
+        err=tivoo_s3_local_turn_init(test_gate,calibrated,prompt_tail,prompt_offset);
         if(err==ESP_OK) err = tivoo_s3_afe_start(tivoo_s3_local_turn_event,NULL);
         if(err==ESP_OK) {
             tivoo_diagnostics_enable_local_wake();

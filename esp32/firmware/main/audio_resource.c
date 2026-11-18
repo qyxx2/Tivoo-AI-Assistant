@@ -304,6 +304,37 @@ static esp_err_t stop_request(const char *request_id, const char *expected_audio
 static audio_request_t *s_active_request;
 static audio_request_t *s_pending_request;
 static uint32_t s_generation;
+#ifdef TIVOO_P68_B5_LOCAL
+static uint32_t s_prompt_generation;
+
+uint32_t tivoo_audio_resource_prompt_begin(void)
+{
+    if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return 0;
+    uint32_t generation=0;
+    if (!s_active_request && !s_pending_request && !s_prompt_generation) {
+        if (++s_generation==0) ++s_generation;
+        if (tivoo_audio_output_begin_prompt(s_generation)) {
+            generation=s_prompt_generation=s_generation;
+            atomic_store(&s_output_claimed,true);
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return generation;
+}
+
+bool tivoo_audio_resource_prompt_end(uint32_t generation)
+{
+    if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return false;
+    const bool valid=generation && generation==s_prompt_generation &&
+        tivoo_audio_output_drained(generation);
+    if (valid) {
+        tivoo_audio_output_end(generation);
+        s_prompt_generation=0;
+    }
+    xSemaphoreGive(s_mutex);
+    return valid;
+}
+#endif
 static char s_recent_playbacks[ID_HISTORY][37];
 static size_t s_next_playback;
 static char s_recent_stops[ID_HISTORY][37];
@@ -582,7 +613,7 @@ static esp_err_t start_request(audio_request_t *request)
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     request->peer_generation = tivoo_diagnostics_mic_generation();
 #ifdef TIVOO_P68_B5_LOCAL
-    if (!tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
+    if (s_prompt_generation || !tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
         (void)xSemaphoreGive(s_mutex);
         free(request);
         return ESP_ERR_INVALID_STATE;

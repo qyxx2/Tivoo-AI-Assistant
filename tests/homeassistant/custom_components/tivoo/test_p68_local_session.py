@@ -13,8 +13,8 @@ def local_start(session_id=SESSION_1):
                           wake_word_phrase="嗨，乐鑫", uptime_ms=100)
 
 
-def gate(session_id=SESSION_1):
-    return dict(session_id=session_id, uptime_ms=1000, prompt_result="skipped")
+def gate(session_id=SESSION_1, prompt_result="skipped"):
+    return dict(session_id=session_id, uptime_ms=1000, prompt_result=prompt_result)
 
 
 def activity(state, session_id=SESSION_1, **kw):
@@ -22,7 +22,8 @@ def activity(state, session_id=SESSION_1, **kw):
 
 
 @pytest.mark.parametrize("gate_first", [True, False])
-async def test_local_ready_and_gate_then_ordered_tail_eof(gate_first):
+@pytest.mark.parametrize("prompt_result", ["completed", "skipped", "failed"])
+async def test_local_ready_and_gate_then_ordered_tail_eof(gate_first, prompt_result):
     stop, ready, started, gated, ended = AsyncMock(), AsyncMock(), Mock(), Mock(), Mock()
     manager = AudioSessionManager(stop)
     manager.on_local_start, manager.on_gate, manager.on_end = started, gated, ended
@@ -31,14 +32,14 @@ async def test_local_ready_and_gate_then_ordered_tail_eof(gate_first):
     await manager.async_start_session(local_start(), persistent=True, local_mode=True)
     started.assert_called_once()
     if gate_first:
-        await manager.async_handle_gate(gate())
+        await manager.async_handle_gate(gate(prompt_result=prompt_result))
     async with manager.audio_subscription(SESSION_1, start=0, on_pull=ready) as audio:
         first = asyncio.create_task(anext(audio))
         await asyncio.sleep(0)
         ready.assert_awaited_once()
         if not gate_first:
-            await manager.async_handle_gate(gate())
-        await manager.async_handle_gate(gate())
+            await manager.async_handle_gate(gate(prompt_result=prompt_result))
+        await manager.async_handle_gate(gate(prompt_result=prompt_result))
         gated.assert_called_once_with(SESSION_1)
         await manager.async_handle_activity(activity("speech_start"))
         frames = [bytes([i])*640 for i in range(3)]

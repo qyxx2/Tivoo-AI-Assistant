@@ -1,8 +1,8 @@
-# Tivoo ESP32-S3 firmware (P6.8 b1)
+# Tivoo ESP32-S3 firmware (P6.8 b6)
 
-**Do not flash these development images onto the current production ESP32.** The active project here now targets ESP32-S3 N16R8-M. The independent Classic ESP32 SPP project is [../bridge_firmware](../bridge_firmware/README.md). P6.8 b1 is a build/partition/network scaffold, not a production voice assistant: UART bridge, live I2S/AFE and local wake are later batches. The packaged `wn9_hilexin` is only a smoke model. Physical acceptance is pending.
+**Do not flash these development images onto the current production ESP32.** The active project here now targets ESP32-S3 N16R8-M. The independent Classic ESP32 SPP project is [../bridge_firmware](../bridge_firmware/README.md). P6.8 b1–b6 implement the build scaffold, UART bridge, I2S/AFE, local wake/STT protocol and local prompt software. This is not yet a production voice assistant: physical calibration, interruption/follow-up and integrated acceptance remain pending. The packaged `wn9_hilexin` is only a smoke model. Physical acceptance is pending.
 
-Build on the ARM64 development host with ESP-IDF v6.1, one project at a time and bounded build parallelism:
+Build on the ARM64 development host with ESP-IDF v6.1 and FFmpeg (b6 converts the four frozen MP3 sources to aligned read-only PCM at CMake configure time), one project at a time and bounded build parallelism:
 
 ```bash
 . ~/.espressif/tools/activate_idf_v6.1.sh
@@ -14,6 +14,8 @@ idf.py merge-bin --format raw --flash-offset 0x0 --pad-to-size 16MB
 ```
 
 The S3 defaults are 16 MiB DIO flash at 80 MHz, Octal PSRAM at 80 MHz, 240 MHz CPU, 8 MiB factory app and 4 MiB model partition. Set Wi-Fi credentials locally via menuconfig only if needed for later hardware acceptance. Keep the generated sdkconfig private. Use this project's own generated flash_args; the S3 offset differs from the Classic ESP32. Never use a padded full image to preserve existing NVS.
+
+**B6 physical gate is fail-closed until calibrated.** In the S3 I2S audio menu, leave `TIVOO_P68_PROMPT_CALIBRATED` disabled until physical TX/RX correlation and enhanced-stream marker measurements establish the acoustic tail (`TIVOO_P68_PROMPT_TAIL_SAMPLES`, 16 kHz samples after conservative digital drain) and signed TX-clock→AFE-index offset (`TIVOO_P68_PROMPT_AFE_OFFSET_SAMPLES`). The zero defaults are placeholders, not measured values. Without calibration the ordinary local-wake turn ends explicitly with `prompt_calibration_required`; `TIVOO_P68_TEST_GATE` remains a software-only, pre-output bypass and must not be enabled for production. Do not copy the legacy 47.5 ms delay. The separate follow-up beep is embedded, but authorization/playback of follow-up belongs to b7.
 
 See the [frozen hardware contract](../../docs/superpowers/specs/2026-11-18-p6-8-b0-2-hardware-uart-spp-design.md) and [b1 plan](../../docs/superpowers/plans/2026-11-18-p6-8-b1-b10-execution-plan.md).
 

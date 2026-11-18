@@ -1,5 +1,7 @@
 #include "s3_local_turn.h"
 #include "p68_local_turn.h"
+#include "p68_prompt.h"
+#include "audio_output_manager.h"
 #include "s3_afe.h"
 #include "diagnostics.h"
 #include "audio_resource.h"
@@ -16,7 +18,29 @@ static const char *TAG="local_turn";
 /* All PCM/state transitions run on the AFE fetch task. RX shares only a
  * small mailbox/authorization snapshot, never the PCM storage. */
 static tivoo_local_turn_t *turn;
-static bool test_gate_enabled;
+static bool test_gate_enabled, prompt_calibrated;
+static unsigned prompt_tail;
+static int prompt_offset;
+static uint32_t prompt_generation;
+static tivoo_prompt_t prompt;
+static int last_ready=-1;
+static const char *gate_result;
+extern const int16_t ready_01_start[], ready_01_end[], ready_02_start[], ready_02_end[];
+extern const int16_t ready_03_start[], ready_03_end[], followup_01_start[], followup_01_end[];
+
+static size_t prompt_push(void *ctx,const int16_t *pcm,size_t count)
+{
+    (void)ctx;
+    return tivoo_audio_output_try_write(prompt_generation,pcm,count);
+}
+static void prompt_finish(void *ctx) { (void)ctx; tivoo_audio_output_finish_input(prompt_generation); }
+static void prompt_stop(void *ctx) { (void)ctx; tivoo_audio_output_stop(prompt_generation); }
+static bool prompt_drain(void *ctx,uint64_t *end,uint64_t *clock)
+{
+    (void)ctx;
+    return tivoo_audio_output_prompt_drain(prompt_generation,end,clock);
+}
+static const tivoo_prompt_io_t prompt_io={prompt_push,prompt_finish,prompt_stop,prompt_drain};
 static uint32_t epoch;
 static char uuid[37];
 static const char *phrase;
@@ -46,6 +70,7 @@ static void invalidate(void)
 }
 static void abort_turn(const char *reason)
 {
+    if (prompt_generation) tivoo_prompt_cancel(&prompt);
     tivoo_turn_abort(turn,reason);
     tivoo_s3_afe_close_local_gate();
     portENTER_CRITICAL(&lock);
@@ -75,7 +100,7 @@ static bool send_event(void *ctx, tivoo_turn_event_t type, const int16_t *pcm, s
         break;
     case TIVOO_TURN_GATE:
         wire=TVIO_TYPE_COMMAND_GATE;
-        cJSON_AddStringToObject(root,"prompt_result","skipped"); /* b5 test gate only */
+        cJSON_AddStringToObject(root,"prompt_result",gate_result);
         break;
     case TIVOO_TURN_SPEECH_START:
     case TIVOO_TURN_SPEECH_END:
@@ -103,21 +128,76 @@ static bool send_event(void *ctx, tivoo_turn_event_t type, const int16_t *pcm, s
     return ok;
 }
 
-esp_err_t tivoo_s3_local_turn_init(bool test_gate)
+esp_err_t tivoo_s3_local_turn_init(bool test_gate, bool calibrated, unsigned tail, int offset)
 {
     turn=heap_caps_calloc(1,sizeof(*turn),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!turn) return ESP_ERR_NO_MEM;
     test_gate_enabled=test_gate;
+    prompt_calibrated=calibrated;
+    prompt_tail=tail;
+    prompt_offset=offset;
     return ESP_OK;
 }
+static void poll_prompt(void)
+{
+    if (!prompt_generation) return;
+    const tivoo_prompt_status_t status=tivoo_prompt_poll(&prompt,&prompt_io,NULL,now_ms());
+    if (status==TIVOO_PROMPT_UNSAFE) {
+        if (turn->active && !turn->abort_reason) abort_turn("prompt_drain_timeout");
+        return; /* keep the owner/mask until hardware confirms safe drain */
+    }
+    if (status!=TIVOO_PROMPT_SAFE ||
+        !tivoo_audio_resource_prompt_end(prompt_generation)) return;
+    prompt_generation=0;
+    if (prompt.cancelled && turn->active && !turn->abort_reason) abort_turn("prompt_drain_timeout");
+    const bool open=turn->active && !turn->abort_reason && !prompt.cancelled;
+    const bool opened=tivoo_s3_afe_finish_prompt(prompt.gate_sample,open);
+    if (opened) {
+        gate_result=prompt.skipped ? "skipped" : "completed";
+        tivoo_turn_gate(turn,prompt.gate_ms);
+        ESP_LOGI(TAG,"prompt gate result=%s sample=%llu time=%llu",gate_result,
+            (unsigned long long)prompt.gate_sample,(unsigned long long)prompt.gate_ms);
+    } else if (open) {
+        abort_turn("prompt_gate_stale");
+    }
+}
+
+static void start_prompt(uint64_t now)
+{
+    if (!prompt_calibrated) {
+        abort_turn("prompt_calibration_required");
+        return;
+    }
+    const tivoo_prompt_asset_t pool[]={
+        {ready_01_start,((uintptr_t)ready_01_end-(uintptr_t)ready_01_start)/sizeof(int16_t)},
+        {ready_02_start,((uintptr_t)ready_02_end-(uintptr_t)ready_02_start)/sizeof(int16_t)},
+        {ready_03_start,((uintptr_t)ready_03_end-(uintptr_t)ready_03_start)/sizeof(int16_t)},
+        {followup_01_start,((uintptr_t)followup_01_end-(uintptr_t)followup_01_start)/sizeof(int16_t)}
+    };
+    const int pick=tivoo_prompt_select(pool,false,last_ready,esp_random());
+    prompt_generation=tivoo_audio_resource_prompt_begin();
+    if (!prompt_generation) {
+        /* b7 owns active-reply handoff; never stop an unrelated owner here. */
+        abort_turn("prompt_owner_unavailable");
+        return;
+    }
+    tivoo_s3_afe_begin_prompt();
+    tivoo_prompt_begin(&prompt,pick<0 ? (tivoo_prompt_asset_t){0} : pool[pick],
+        now,prompt_tail,prompt_offset);
+    if (pick>=0) last_ready=pick;
+}
+
 void tivoo_s3_local_turn_tick(void)
 {
-    if(!turn || !turn->active) return;
+    if(!turn) return;
+    if(!turn->active) { poll_prompt(); return; }
     uint32_t current=tivoo_diagnostics_local_wake_generation();
     if(current!=epoch) {
         turn->active=false;
+        if (prompt_generation) tivoo_prompt_cancel(&prompt);
         tivoo_s3_afe_close_local_gate();
         invalidate();
+        poll_prompt();
         return;
     }
     bool ready,stop;
@@ -127,8 +207,10 @@ void tivoo_s3_local_turn_tick(void)
     portEXIT_CRITICAL(&lock);
     if(stop) abort_turn("ha_stop");
     if(ready) tivoo_turn_ready(turn,ready_ms);
+    poll_prompt();
     tivoo_turn_tick(turn,now_ms(),send_event,NULL);
     if(turn->abort_reason) {
+        if (prompt_generation) tivoo_prompt_cancel(&prompt);
         tivoo_s3_afe_close_local_gate();
         portENTER_CRITICAL(&lock);
         shared.reply_allowed=false;
@@ -142,6 +224,7 @@ void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
     if(!turn) return;
     const uint64_t now=now_ms();
     if(event->type==TIVOO_AFE_WAKE) {
+        if(prompt_generation) return;
         if(turn->active) {
             /* Full active-reply interruption and restart belong to b7. Do not
              * splice audio from this newly confirmed wake into the old turn. */
@@ -158,10 +241,12 @@ void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
         shared.epoch=epoch;
         memcpy(shared.uuid,uuid,sizeof(uuid));
         portEXIT_CRITICAL(&lock);
-        /* A physical gate must be supplied by b6. The test-only gate is
-         * deliberately available only before the first output since boot. */
-        if(test_gate_enabled && tivoo_audio_resource_test_silent() && tivoo_s3_afe_open_test_gate())
+        if(test_gate_enabled && tivoo_audio_resource_test_silent() && tivoo_s3_afe_open_test_gate()) {
+            gate_result="skipped";
             tivoo_turn_gate(turn,now);
+        } else {
+            start_prompt(now);
+        }
         tivoo_s3_local_turn_tick();
         return;
     }

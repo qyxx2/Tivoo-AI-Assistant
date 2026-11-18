@@ -52,6 +52,7 @@ int main(void) {
     tivoo_afe_flow_prompt(&flow,false,cursor+80);
     frame(160,false,1,2,1,1,0);
     frame(160,false,-1,2,1,1,0); assert(wakes==2);
+    frame(160,false,0,2,0,0,0);
     frame(160,false,1,2,1,1,0);
     frame(160,false,-1,2,1,1,0); assert(wakes==3);
     assert(starts==0 && n==0);

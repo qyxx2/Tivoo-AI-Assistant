@@ -24,7 +24,7 @@ typedef struct {
     tivoo_afe_sink_t sink;
     void *ctx;
     uint64_t next, gate, wake_after;
-    bool have_next, gate_open, speaking, prompt, latched;
+    bool have_next, gate_open, speaking, prompt, latched, prompt_rearm;
     int candidate, words;
     size_t write, history_count;
     uint64_t cache_ignored;

@@ -148,7 +148,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         # is outside b5); the actual public run automatically stops at STT.
         entity._ask_question_future = hass.loop.create_future()
         await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
-        await manager.async_handle_gate(gate(SESSION_2))
+        await manager.async_handle_gate(gate(SESSION_2, "completed"))
         await asyncio.wait_for(ready.wait(), 2)
         assert adapter.async_send_message.call_args.args[0] == TYPE_STT_READY
         assert events[0].data["pipeline"] == pipeline.id

@@ -54,6 +54,7 @@ void tivoo_afe_flow_prompt(tivoo_afe_flow_t *f, bool suppress, uint64_t wake_aft
     f->candidate=0;
     f->latched=false;
     f->prompt=suppress;
+    f->prompt_rearm=true;
     f->wake_after=wake_after;
 }
 
@@ -75,10 +76,11 @@ static int detect(tivoo_afe_flow_t *f, uint64_t first, int state,
         return 0;
     }
     if (state==0) {
+        f->prompt_rearm=false;
         f->latched=false;
         return 0;
     }
-    if (f->latched) return 0;
+    if (f->latched || f->prompt_rearm) return 0;
     const bool valid=model==1 && word>0 && word<=f->words;
     if (state==1) {
         f->candidate=raw>1 && valid ? word : 0;

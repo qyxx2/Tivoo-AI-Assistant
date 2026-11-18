@@ -18,9 +18,11 @@ typedef struct {
     bool in_dma;
     bool stopped;
     bool input_finished;
+    bool eager;
 } tivoo_output_queue_t;
 
 bool tivoo_output_begin(tivoo_output_queue_t *queue, uint32_t generation);
+bool tivoo_output_begin_prompt(tivoo_output_queue_t *queue, uint32_t generation);
 size_t tivoo_output_push(tivoo_output_queue_t *queue, uint32_t generation,
     const int16_t *pcm, size_t samples);
 size_t tivoo_output_refill(tivoo_output_queue_t *queue, uint32_t *slots, uint32_t due);
@@ -50,6 +52,9 @@ void tivoo_audio_output_reset(void);
 bool tivoo_audio_output_reference_raw(uint64_t first_sample, int16_t *pcm, size_t samples);
 
 bool tivoo_audio_output_begin(uint32_t generation);
+bool tivoo_audio_output_begin_prompt(uint32_t generation);
+size_t tivoo_audio_output_try_write(uint32_t generation, const int16_t *pcm, size_t samples);
+bool tivoo_audio_output_prompt_drain(uint32_t generation, uint64_t *end, uint64_t *clock);
 esp_err_t tivoo_audio_output_write(uint32_t generation, const int16_t *pcm, size_t samples);
 void tivoo_audio_output_stop(uint32_t generation);
 void tivoo_audio_output_finish_input(uint32_t generation);

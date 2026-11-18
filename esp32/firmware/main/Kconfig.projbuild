@@ -18,7 +18,7 @@ config TIVOO_P68_TEST_GATE
     help
         Enables an uncalibrated logical sample boundary solely for b5 test
         builds before any TTS output. Do not enable on deployed hardware.
-        b6 supplies the actual physical prompt/drain/tail gate.
+        This remains a software-only bypass, never a physical gate.
 
 endmenu
 
@@ -53,6 +53,26 @@ config TIVOO_AEC_REFERENCE_DELAY_SAMPLES
     help
         Uncalibrated S3 initial value only; measure the physical TX/RX
         alignment and acoustic path before enabling AFE.
+
+config TIVOO_P68_PROMPT_CALIBRATED
+    bool "Measured S3 prompt TX/RX/AFE gate calibration available"
+    default n
+    help
+        Do not enable until b3/b6 physical measurements on the assembled
+        S3, DAC, Tivoo and both microphones establish the two values below.
+        Uncalibrated production turns fail closed rather than guessing.
+
+config TIVOO_P68_PROMPT_TAIL_SAMPLES
+    int "Measured acoustic safety tail after digital drain (16 kHz samples)"
+    depends on TIVOO_P68_PROMPT_CALIBRATED
+    range 0 80000
+    default 0
+
+config TIVOO_P68_PROMPT_AFE_OFFSET_SAMPLES
+    int "Measured physical TX-clock to enhanced AFE sample offset"
+    depends on TIVOO_P68_PROMPT_CALIBRATED
+    range -80000 80000
+    default 0
 
 config TIVOO_AUDIO_PROBE
     bool "Log one-second audio measurements to UART"

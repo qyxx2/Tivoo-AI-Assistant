@@ -4,6 +4,7 @@ idf_component_register(
         "audio_capture.c"
         "p68_afe_flow.c"
         "p68_local_turn.c"
+        "p68_prompt.c"
         "s3_local_turn.c"
         "s3_afe.c"
         "audio_output_manager.c"
@@ -58,3 +59,18 @@ target_compile_definitions(
     ${COMPONENT_LIB}
     PRIVATE TIVOO_FIRMWARE_VERSION="0.1.0+${TIVOO_GIT_SHORT_SHA}"
 )
+
+# Frozen source MP3 -> aligned, read-only PCM in app flash. The build host
+# needs FFmpeg; neither firmware nor HA fetches a prompt at runtime.
+idf_build_get_property(_prompt_python PYTHON)
+set(_prompt_src "${CMAKE_CURRENT_LIST_DIR}/../../../homeassistant/prompt_assets")
+set(_prompt_out "${CMAKE_CURRENT_BINARY_DIR}/local_prompts")
+file(GLOB _prompt_inputs CONFIGURE_DEPENDS "${_prompt_src}/*.mp3")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${_prompt_inputs} "${CMAKE_CURRENT_LIST_DIR}/generate_prompts.py")
+execute_process(COMMAND "${_prompt_python}" "${CMAKE_CURRENT_LIST_DIR}/generate_prompts.py"
+    "${_prompt_src}" "${_prompt_out}" COMMAND_ERROR_IS_FATAL ANY)
+set(_prompt_asm "${_prompt_out}/p68_prompt_assets.S")
+set_property(SOURCE "${_prompt_asm}" PROPERTY OBJECT_DEPENDS
+    "${_prompt_out}/ready_01.pcm;${_prompt_out}/ready_02.pcm;${_prompt_out}/ready_03.pcm;${_prompt_out}/followup_01.pcm")
+target_sources(${COMPONENT_LIB} PRIVATE "${_prompt_asm}")
