@@ -1,5 +1,7 @@
 # P6.7 预制语音等待提示音分批实施计划
 
+> **P6.8 迁移说明（2026-11-18）：** 历史实施计划；不再按旧 HA/HTTP MP3 提示音、连说和无条件 follow-up 路线执行未勾选项。已有证据保留，本地提示音与声学 GAP 归 P6.8b6/b7/b10。 参见 [当前总体路线](2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 首次唤醒、确认打断后的新命令等待、每轮回答后的 follow-up 等待，各播放一次预制短提示音；立即并行收音，提示音不进入实时 TTS/LLM。

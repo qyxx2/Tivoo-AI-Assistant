@@ -1,5 +1,7 @@
 # P7A Sherpa Wyoming 语音服务合同矩阵
 
+> **P6.8 迁移说明（2026-11-18）：** C01–C39 原有证据保留；C40 转为设备本地 WakeNet 声学目标，C41–C43 归 P6.8 验收，不将旧 DEFERRED 自动改为 PASS；有其他 KWS 消费者时保留服务。 参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+
 > 状态：**P7A 已在 NAS 部署并完成验收；C01–C39 MUST 全部 PASS，P7A 阶段门通过并允许进入 P5/P6；C40–C43 继续 DEFERRED，C44 N/A/禁止新增。**
 > 日期：2026-11-10
 > 基线：Tivoo-AI-Assistant main，commit f9aedf1a2ac0ad2541fc1f47cae8b229e9d0a18b

@@ -1,5 +1,7 @@
 # P6.5 常驻音频会话与 KWS 确认打断分批执行计划（b6 起）
 
+> **P6.8 迁移说明（2026-11-18）：** 历史实施计划；停止按旧 NAS KWS 候选/打断和单板拓扑继续开发。现有取消/音频证据保留，现场 GAP 转入 P6.8b3–b7/b10。 参见 [当前总体路线](2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** 在 P6.5 完成 ESP32 常驻 I2S/AEC/VAD、跨 Pipeline 的持续 MIC 上传、由 NAS KWS 命中确认的打断，以及全双工 PCM5102 播放闭环。

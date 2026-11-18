@@ -1,5 +1,7 @@
 # Tivoo 表情状态机合同矩阵
 
+> **P6.8 迁移说明（2026-11-18）：** 原合同及证据保留；远程 KWS/候选监听相关事件条款由 P6.8b0/b8 重新追踪，未完成真人语音 GAP 归 b8/b10。 参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+
 > 日期：2026-11-14
 > 分支：`feature/p6-6-tivoo-expression-state-machine`
 > 状态：P6.6b0–b5 已执行并完成 C19 post-b5 修复；自动化合同及 ESP32 单独 reset 后 7777/SPP 恢复已通过，生产验收仍存在真人语音链 GAP

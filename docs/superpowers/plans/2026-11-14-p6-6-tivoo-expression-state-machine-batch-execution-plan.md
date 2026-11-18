@@ -1,5 +1,7 @@
 # P6.6 Tivoo 表情状态机与屏幕门控分批实施计划
 
+> **P6.8 迁移说明（2026-11-18）：** 历史实施计划；已实现的 Coordinator、门控、C19 证据不重做。新唤醒/监听/播放事件映射和剩余真人语音验收转入 P6.8b8/b10。 参见 [当前总体路线](2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不改变 P6.5 音频/KWS/STT/TTS/打断合同和既有 Tivoo SPP 协议的前提下，让 HA 成为 Tivoo 16×16 屏幕的自动表情所有者，完成 idle/listening/thinking/tooluse/speaking/mood 的统一仲裁、可靠恢复和多来源息屏门控。

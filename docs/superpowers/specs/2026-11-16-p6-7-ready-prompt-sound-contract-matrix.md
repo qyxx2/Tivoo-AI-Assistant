@@ -1,5 +1,7 @@
 # P6.7 语音等待提示音合同矩阵
 
+> **P6.8 迁移说明（2026-11-18）：** 保留原合同和历史证据；远程 MP3、提示音时命令收音及 follow-up 相关冲突按 P6.8b0 明确替代，剩余适用验收归 b6/b7/b10。 参见 [当前总体路线](../plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。
+
 > 日期：2026-11-16
 > 基线：`main@e48c66a`（P6.6 已合入）；工作分支 `feature/p6-7-audio-prompts`
 > 状态：b0–b3 已执行；b3 的提示音自触发缺陷已通过 prompt-only VAD suppression 修复并实机复测关闭。按后续产品决策，提示音 gate 内不再要求同时识别人声；普通 TTS 的 VAD/KWS 打断能力必须保持。详见 [b3 验收报告](../reports/2026-11-16-p6-7b3-device-acceptance.md) 与 [VAD suppression 修复报告](../reports/2026-11-16-p6-7-prompt-vad-suppression-fix.md)

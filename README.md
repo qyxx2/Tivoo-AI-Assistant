@@ -2,7 +2,9 @@
 
 > 基于 Divoom Tivoo、ESP32、Home Assistant 和 AstrBot 的个人 AI 语音终端。
 >
-> 当前阶段：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署；P5 ESP32 最小固件已实现，16MB Flash / 8MB PSRAM 与全 himem bank 实测通过，隔夜完全断电后 Wi-Fi 自动恢复，HA 后续 SPP 命令执行成功，P5 final 16MiB 镜像与 manifest 已生成。用户已实测 HA 语音助手成功调用 Tivoo 工具并执行命令。JTAG `esp_restart()`、第二台 Tivoo 正向替换和最终长滚动专项观察仍留有记录，但不阻止进入 P6；P6 继续实现双向状态/事件及 HTTP 音频资源通道，真实音频链路继续按 P7/P8 验收。**
+> 当前执行阶段：**P6.8 双板 ESP32-S3 + 经典 ESP32、原生 WakeNet 改造（仅总体路线，尚未实施）**。见 [P6.8 总体路线](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。下一步仅展开 P6.8b0；旧 P7/P8 不再单独实施，P10 并发验收并入 P6.8b10，P9 剩余主动对话后置。旧文档的远程 KWS、单板拓扑和 HA 下发提示音均为迁移前基线；新目标与旧合同的冲突及 GAP 归属按路线处理，现有部署尚未改变。
+>
+> 历史阶段基线：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署；P5 ESP32 最小固件已实现，16MB Flash / 8MB PSRAM 与全 himem bank 实测通过，隔夜完全断电后 Wi-Fi 自动恢复，HA 后续 SPP 命令执行成功，P5 final 16MiB 镜像与 manifest 已生成。用户已实测 HA 语音助手成功调用 Tivoo 工具并执行命令。JTAG `esp_restart()`、第二台 Tivoo 正向替换和最终长滚动专项观察仍留有记录，但不阻止进入 P6；P6 继续实现双向状态/事件及 HTTP 音频资源通道，真实音频链路继续按 P7/P8 验收。**
 
 ESP32 与 HA 双向通信契约：[通信层规格书](docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md)（待审阅）。
 
@@ -480,10 +482,11 @@ python3 -m venv .venv
 | P6.5 | [常驻音频会话与 KWS 确认打断合同矩阵](docs/superpowers/specs/2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md)；[b6 起分批执行计划](docs/superpowers/plans/2026-11-13-p6-5-batch-execution-plan-from-b6.md)；[b0–b5 前置验证 patch](docs/superpowers/patches/2026-11-11-p6-5-ha-cancellation-preflight.patch.md)；[AstrBot HTTP/SSE 推理取消与终止规格](docs/superpowers/specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)（AstrBot 4.29.4 真实 Stop/终止事件已验收，覆盖首个可见文本输出前后；[b0 环境基线与任务所有权清点](docs/superpowers/reports/2026-11-13-p6-5b0-cancellation-task-ownership-inventory.md)；[b1 正常完成控制组 PASS](docs/superpowers/reports/2026-11-13-p6-5b1-normal-completion-control-group.md)；[b2 TTS 开始前取消 PASS](docs/superpowers/reports/2026-11-13-p6-5b2-pre-tts-cancellation.md)；[b3 活动 TTS 取消 GAP](docs/superpowers/reports/2026-11-13-p6-5b3-tts-proxy-active-cancellation.md)；[b4 HTTP consumer 对照 PASS / GAP 证据](docs/superpowers/reports/2026-11-13-p6-5b4-http-consumer-disconnect.md)；[b5 汇总与模块边界决策](docs/superpowers/reports/2026-11-11-ha-cancellation-preflight-report.md)） | [b6 取消链路验收](docs/superpowers/reports/2026-11-13-p6-5b6-cancellation-owner-closeout.md)已验证单轮 TTS 取消与真实 FFmpeg 转码清理。真实 AstrBot partial-output Stop 已验收，B6 通过。[B7 持久 MIC ingress](docs/superpowers/reports/2026-11-13-p6-5b7-persistent-mic-ingress.md)通过模拟设备验收。播放期间 VAD 不拥有停止权，只有 NAS KWS Detection 才触发 `AUDIO_STOP`/旧轮取消；新矩阵与计划是 P6.5 后续实施的当前权威合同。b1/b2 正常结束和 TTS 前取消路径通过；b3/b4 复现 Pipeline 取消和 HTTP GET 断开不会自动终止已脱离 owner 的 TTSCache producer 等 GAP。[B11 自动化验收与现场补测](docs/superpowers/reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md)列出 P65-A01–A16 证据。P6.5 整体声学验收待现场补测 |
 | P6.6 | **已实现并合入 main**：Tivoo 表情状态协调、AI mood 和息屏门控；[规格](docs/superpowers/specs/2026-11-14-tivoo-expression-state-machine-design.md)、[合同矩阵](docs/superpowers/specs/2026-11-14-tivoo-expression-state-machine-contract-matrix.md)、[验收](docs/superpowers/reports/2026-11-14-p6-6-expression-state-machine-acceptance.md) | 自动化、部署及 7777/SPP 复连已验收；真人语音仍有现场 GAP |
 | P6.7 | **b0–b3 已实施；提示音自触发 workaround 已验证并部署**：固定 AEC reference delay 已标定为 760 samples（47.5 ms）；仅提示音通过可选 `suppress_vad` 在播放窗口与 48 ms 声学尾部暂停 VAD/MIC_ACTIVITY/MIC_PCM，普通 TTS 不受影响；[规格](docs/superpowers/specs/2026-11-16-p6-7-ready-prompt-sound-design.md)、[合同矩阵](docs/superpowers/specs/2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)、[b3 验收](docs/superpowers/reports/2026-11-16-p6-7b3-device-acceptance.md)、[gate 修复验收](docs/superpowers/reports/2026-11-16-p6-7-prompt-vad-suppression-fix.md) | 保持 P6.5 的 5/8 秒窗口、普通 TTS KWS 打断和 P6.6 显示优先级；提示音 gate 内真人语音可能被忽略，属于当前明确取舍 |
-| P7（旧阶段） | I2S 麦克风、AFE AEC/VAD、HA Assist Satellite 与 KWS/STT 联调 | 必要的常驻采集和音频会话范围已前移到 P6.5b7–b9；后续按 b11 验收结果核销，不重复实现 |
-| P8（旧阶段） | I2S TX + PCM5102 → AUX 输出、全局音频输出管理器 | 必要的解码/DAC/停止能力已前移到 P6.5b10；按 b11 真实硬件验收结果更新剩余阶段范围 |
-| P9 | AstrBot 表情工具与主动对话 | AI 能根据情绪显示表情，并主动播报 |
-| P10 | I2S RX、I2S TX/DAC、SPP 与 Wi-Fi 并发测试；另测备用 A2DP | 连续运行稳定、无明显音频断流，SPP 控制及时响应 |
+| P6.8 | **当前规划阶段**：[ESP32-S3 双板与原生 WakeNet 总体路线](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)；b0–b10，下一步 b0 详细规格及合同矩阵 | S3 本地唤醒、双麦、断句、提示音、打断、表情事件迁移；经典 ESP32 UART/SPP 桥；新拓扑综合验收 |
+| P7（旧阶段） | 不再独立实施；真实麦克风、AFE、STT、KWS 与剩余声学 GAP 归 P6.8 | P6.5 既有证据保留，旧 NAS KWS 目标由 WakeNet 替代；按 P6.8b3–b7/b10 核销 |
+| P8（旧阶段） | 不再独立实施；DAC/音频播放迁移及剩余声学 GAP 归 P6.8 | P6.5b10 既有证据保留；按 P6.8b3/b6/b7/b10 重新验收 |
+| P9 | 现有表情及 mood/MCP 不重复实现；剩余主动对话/主动播报在 P6.8 后推进 | 复用同一 HA 表情和播放所有权，主动任务入口可用 |
+| P10（旧阶段） | 单板并发专项停止独立实施，双板并发/长期稳定验收归 P6.8b10；A2DP 保留备用，非本次前置 | 双麦、DAC、Wi-Fi、UART/SPP 并发稳定，不影响长音频与表情控制 |
 
 ## 11. STT / TTS 实测结果
 
@@ -613,7 +616,7 @@ NAS 的 AISHELL3、Kokoro、ZipVoice 和 Vocos 24 kHz 权重已完整归档。NA
 
 ## 13. 当前边界与未确认事项
 
-以下内容不能仅凭 API 文档认定已经实现，必须实机测试：
+以下为迁移前的历史硬件与验收边界；P6.8 新拓扑的适用项及替代项见总体路线 §4–§5，不再按旧 P7/P8/P10 独立执行。未验收事项仍须依据真实证据核销。
 
 - ESP32 单 I²S Controller 以 32 kHz Stereo / 32-bit Slot 同时运行 RX/TX 全双工，并与 ESP-SR AFE AEC/VAD、全局音频输出管理器、NAS KWS watcher、SPP、Wi-Fi 并发时的资源与稳定性。AEC 回声抑制和 NAS KWS 确认后的最终输出层播放停止均为首期必要能力；WROVER-E 是首期硬件基线。BLE GATT 不属于本项目运行要求。
 - Tivoo AUX 播放期间的设备端 SPP 控制并发：已于 2026-11-08 实测通过（AUX 播放外部音频、保持 `Tivoo-light` BLE 连接，并通过 SPP 正常发送指令显示图形）；该 BLE 连接不是固件必需控制通道。尚未验证的是 ESP32 固件在 Wi-Fi/I²S/SPP 同时工作时的稳定性。
