@@ -93,10 +93,12 @@
 
 **Consumes:** T02 可信 SPP status、T07 generation/Context/gate。**Produces:** VIEW-C01–04，不另起仲裁。
 **Files:** HA `display_state.py,assist_satellite.py,transport.py,services.py,llm.py`，对应 display/assist/transport/services/llm 测试。
-- [ ] T08-A：idle 30–90s、wake100%、真实 start/end、有效 STT_END 才 thinking、空/失败/旧轮退出；优先级/显式恢复、无待机候选显示；原 fake-clock 断言先加 RED 再迁移。
-- [ ] T08-B：同 Context/satellite/UUID/playback 绑定 tooluse/speaking/followup gate，迟到 terminal/TTL/旧 cancellation、prompt 不 speaking、atomic transition，旧 generation 不回写。
-- [ ] T08-C：原 schema、mood 白名单/5s/known context/无 context 边界，显式内容、多 inhibit/temporary wake、OFF 唤醒/打断/重连、stale 7777、HA reload 初始同步（不声称 RAM gate 持久）。慢 SPP 不阻塞 RX；真实画面 OFF/ON/赢家。
-- [ ] 验证：`bash scripts/test-ha.sh tests/homeassistant/custom_components/tivoo`，T02/T07 回归；报告/提交。
+- [x] T08-A（软件 PASS；实机显示 GAP）：idle 30–90s、wake100%、真实 start/end、有效 STT_END 才 thinking、空/失败/旧轮退出；优先级/显式恢复、无待机候选显示；原 fake-clock 断言先加 RED 再迁移。
+- [x] T08-B（软件 PASS；实机时序 GAP）：同 Context/satellite/UUID/playback 绑定 tooluse/speaking/followup gate，迟到 terminal/TTL/旧 cancellation、prompt 不 speaking、atomic transition，旧 generation 不回写。
+- [ ] T08-C（软件实现/回归 PASS；真实 SPP/OFF/ON/赢家 GAP）：原 schema、mood 白名单/5s/known context/无 context 边界，显式内容、多 inhibit/temporary wake、OFF 唤醒/打断/重连、stale 7777、HA reload 初始同步（不声称 RAM gate 持久）。慢 SPP 不阻塞 RX；真实画面 OFF/ON/赢家。
+- [ ] 验证（软件全量 PASS，实机保留 GAP）：`bash scripts/test-ha.sh tests/homeassistant/custom_components/tivoo`，T02/T07 回归；报告/提交。
+
+软件验收报告：[b8 display acceptance](../reports/2026-11-18-p6-8-b8-display-acceptance.md)。HA 独立全量 545 passed（追加 reload 用例前，生产代码相同）；B8 最终专项 13 passed、T02/T07 ESP32 host 27 passed。未部署、未刷写；保留真实屏幕及两板验收。
 
 ## b9 — 条件清理和部署说明
 
