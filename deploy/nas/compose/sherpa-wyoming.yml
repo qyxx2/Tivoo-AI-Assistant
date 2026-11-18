@@ -5,6 +5,7 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: 10400
+      DEVICE_STT_PORT: 10401
       MODELS_DIR: /models
       WAKE_WORD_PHRASE: "${WAKE_WORD_PHRASE:?Set WAKE_WORD_PHRASE in the deployment environment}"
       KWS_NUM_THREADS: "${KWS_NUM_THREADS:-1}"
@@ -15,6 +16,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     expose:
       - "10400"
+      - "10401"
     volumes:
       - type: bind
         source: "${NAS_MODELS_DIR:?Set NAS_MODELS_DIR to a persistent NAS path}/kws"
@@ -37,6 +39,8 @@ services:
         - 127.0.0.1
         - --port
         - "10400"
+        - --device-stt-port
+        - "10401"
       interval: 30s
       timeout: 5s
       retries: 3

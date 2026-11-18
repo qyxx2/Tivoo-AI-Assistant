@@ -81,3 +81,12 @@ def test_load_config_returns_immutable_config() -> None:
 
     with pytest.raises(AttributeError):
         config.port = 9999  # type: ignore[misc]
+
+
+def test_device_stt_port_is_explicit_and_distinct():
+    env = {"WAKE_WORD_PHRASE": "test"}
+    assert load_config(env).device_stt_port is None
+    assert load_config({**env, "DEVICE_STT_PORT": "10401"}).device_stt_port == 10401
+    for port in ("10400", "-1", "65536", "bad"):
+        with pytest.raises(ValueError, match="DEVICE_STT_PORT"):
+            load_config({**env, "DEVICE_STT_PORT": port})

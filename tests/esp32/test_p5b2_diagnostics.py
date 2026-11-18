@@ -827,3 +827,31 @@ def test_p6_cross_language_golden_frames_match_python_codec(tmp_path):
         if client is not None:
             client.close()
         _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_p68_local_wake_ack_must_echo_capability_each_epoch(tmp_path):
+    process, _, port = _start_simulator(tmp_path)
+    client = None
+    try:
+        _command(process,"local_wake_on")
+        _command(process,"up")
+        for echo in (False, True, False):
+            client=_connect(port)
+            kind, seq, hello=_read_frame(client)
+            assert (kind,seq)==(1,0)
+            assert "local_wake_stt_v1" in hello["capabilities"]
+            ack={"accepted":True,"capabilities":["unknown","local_wake_stt_v1"] if echo else ["unknown"]}
+            _send_frame(client,2,0,json.dumps(ack).encode())
+            _send_frame(client,0x25,1,b'{"session_id":"11111111-1111-4111-8111-111111111111"}')
+            if echo:
+                assert _read_raw_frame(client)==(0x26,1,b'{"session_id":"11111111-1111-4111-8111-111111111111"}')
+            else:
+                _wait_closed(client)
+            client.close()
+            client=None
+            time.sleep(.1)
+    finally:
+        if client is not None:
+            client.close()
+        _stop(process)

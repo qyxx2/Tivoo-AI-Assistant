@@ -100,6 +100,7 @@ static atomic_bool s_ack_accepted = ATOMIC_VAR_INIT(false);
 static atomic_uint s_mic_generation;
 static uint32_t s_next_generation;
 static atomic_bool s_mic_activity_enabled;
+static atomic_bool s_local_wake_enabled, s_local_wake_accepted;
 static uint32_t s_tx_sequence;
 static uint32_t s_rx_sequence;
 static uint8_t s_rx_buffer[RX_BUFFER_SIZE];
@@ -540,6 +541,9 @@ static char *build_hello_payload(size_t *payload_size)
         cJSON_AddItemToArray(capabilities, cJSON_CreateString("mic_activity_events"));
     }
 #endif
+    if (atomic_load(&s_local_wake_enabled)) {
+        cJSON_AddItemToArray(capabilities, cJSON_CreateString(TVIO_LOCAL_WAKE_CAPABILITY));
+    }
     cJSON_AddItemToObject(root, "capabilities", capabilities);
     cJSON_AddStringToObject(root, "reset_reason", reset_reason);
 
@@ -616,6 +620,8 @@ static bool supported_message_type(uint8_t type)
     case TVIO_TYPE_MIC_PCM:
     case TVIO_TYPE_MIC_SESSION_END:
     case TVIO_TYPE_MIC_ACTIVITY:
+    case TVIO_TYPE_STT_READY:
+    case TVIO_TYPE_COMMAND_GATE:
     case TVIO_TYPE_MIC_CAPTURE_STOP:
     case TVIO_TYPE_TTS_PLAY:
     case TVIO_TYPE_AUDIO_STOP:
@@ -634,7 +640,7 @@ static bool inbound_message_type(uint8_t type)
 {
     return type == TVIO_TYPE_HELLO_ACK || type == TVIO_TYPE_PING ||
            type == TVIO_TYPE_GET_STATUS ||
-           type == TVIO_TYPE_MIC_CAPTURE_STOP || type == TVIO_TYPE_TTS_PLAY ||
+           type == TVIO_TYPE_MIC_CAPTURE_STOP || type == TVIO_TYPE_STT_READY || type == TVIO_TYPE_TTS_PLAY ||
            type == TVIO_TYPE_AUDIO_STOP || type == TVIO_TYPE_ERROR;
 }
 
@@ -662,11 +668,13 @@ static bool enqueue_message(
         type == TVIO_TYPE_PONG || type == TVIO_TYPE_DEVICE_STATUS ||
         type == TVIO_TYPE_MIC_SESSION_START || type == TVIO_TYPE_MIC_PCM ||
         type == TVIO_TYPE_MIC_SESSION_END || type == TVIO_TYPE_MIC_ACTIVITY ||
+        type == TVIO_TYPE_COMMAND_GATE ||
         type == TVIO_TYPE_AUDIO_STATE ||
         type == TVIO_TYPE_AUDIO_INTERRUPTED || type == TVIO_TYPE_DEVICE_EVENT ||
         type == TVIO_TYPE_ERROR;
     if (!atomic_load(&s_running) || !atomic_load(&s_ack_accepted) ||
         !outbound_type ||
+        (type == TVIO_TYPE_COMMAND_GATE && (!generation || generation != tivoo_diagnostics_local_wake_generation())) ||
         size > TVIO_MAX_JSON_PAYLOAD ||
         (type == TVIO_TYPE_MIC_PCM && size > TVIO_MAX_MIC_PCM_PAYLOAD) ||
         (size > 0U && payload == NULL)) {
@@ -714,6 +722,14 @@ void tivoo_diagnostics_enable_mic_activity(void)
     atomic_store(&s_mic_activity_enabled, true);
 }
 
+void tivoo_diagnostics_enable_local_wake(void)
+{
+    atomic_store(&s_local_wake_enabled,true);
+}
+uint32_t tivoo_diagnostics_local_wake_generation(void)
+{
+    return atomic_load(&s_local_wake_accepted) ? atomic_load(&s_mic_generation) : 0;
+}
 uint32_t tivoo_diagnostics_mic_generation(void)
 {
     return atomic_load(&s_mic_generation);
@@ -722,6 +738,8 @@ uint32_t tivoo_diagnostics_mic_generation(void)
 bool tivoo_diagnostics_send_mic(
     uint32_t generation, uint8_t type, const void *payload, size_t size)
 {
+    if (type == TVIO_TYPE_COMMAND_GATE && generation != tivoo_diagnostics_local_wake_generation())
+        return false;
     return generation && enqueue_message(generation, type, payload, size);
 }
 
@@ -817,6 +835,7 @@ static void disconnect_client_locked(int fd)
     s_hello_sent = false;
     atomic_store(&s_ack_accepted, false);
     atomic_store(&s_mic_generation, 0);
+        atomic_store(&s_local_wake_accepted, false);
     s_tx_sequence = 0U;
     s_rx_sequence = 0U;
     s_rx_size = 0U;
@@ -965,6 +984,7 @@ esp_err_t tivoo_diagnostics_start(void)
     s_hello_sent = false;
     atomic_store(&s_ack_accepted, false);
     atomic_store(&s_mic_generation, 0);
+        atomic_store(&s_local_wake_accepted, false);
     s_tx_sequence = 0U;
     s_rx_sequence = 0U;
     s_rx_size = 0U;
@@ -1030,6 +1050,7 @@ void tivoo_diagnostics_stop(void)
         }
         atomic_store(&s_ack_accepted, false);
         atomic_store(&s_mic_generation, 0);
+        atomic_store(&s_local_wake_accepted, false);
         clear_message_queue_locked();
         mutex_give();
     }
@@ -1063,6 +1084,7 @@ void tivoo_diagnostics_client_connected(int fd)
     }
     atomic_store(&s_ack_accepted, false);
     atomic_store(&s_mic_generation, 0);
+        atomic_store(&s_local_wake_accepted, false);
     clear_message_queue_locked();
     s_client_fd = fd;
     s_hello_sent = false;
@@ -1123,6 +1145,17 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
                                               payload, "accepted")
                                         : NULL;
             const bool valid = cJSON_IsBool(accepted) && cJSON_IsTrue(accepted);
+            bool local = false;
+            if (valid && atomic_load(&s_local_wake_enabled)) {
+                const cJSON *caps = cJSON_GetObjectItemCaseSensitive(payload, "capabilities");
+                const cJSON *cap = NULL;
+                if (cJSON_IsArray(caps)) {
+                    cJSON_ArrayForEach(cap, caps) {
+                        if (cJSON_IsString(cap) && strcmp(cJSON_GetStringValue(cap), TVIO_LOCAL_WAKE_CAPABILITY)==0)
+                            local = true;
+                    }
+                }
+            }
             cJSON_Delete(payload);
             if (!valid) {
                 mutex_give();
@@ -1133,7 +1166,9 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
                 ++s_next_generation;
             }
             atomic_store(&s_mic_generation, s_next_generation);
+            atomic_store(&s_local_wake_accepted, local);
         } else if (!atomic_load(&s_ack_accepted) ||
+                   (message_type == TVIO_TYPE_STT_READY && !atomic_load(&s_local_wake_accepted)) ||
                    (supported_message_type(message_type) &&
                     !inbound_message_type(message_type))) {
             mutex_give();
@@ -1215,6 +1250,7 @@ void tivoo_diagnostics_client_disconnected(int fd)
         s_hello_sent = false;
         atomic_store(&s_ack_accepted, false);
         atomic_store(&s_mic_generation, 0);
+        atomic_store(&s_local_wake_accepted, false);
         s_tx_sequence = 0U;
         s_rx_sequence = 0U;
         s_rx_size = 0U;

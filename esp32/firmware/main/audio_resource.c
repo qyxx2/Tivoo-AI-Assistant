@@ -20,6 +20,7 @@
 
 typedef struct {
     char playback_id[PLAYBACK_ID_MAX + 1U];
+    char session_id[37];
     char url[URL_MAX + 1U];
     char mime_type[MIME_MAX + 1U];
     bool suppress_vad;
@@ -36,6 +37,7 @@ typedef struct {
 
 typedef struct {
     char request_id[37];
+    char session_id[37];
     char expected_audio_id[37];
     char reason[REASON_MAX + 1U];
 } audio_stop_payload_t;
@@ -181,6 +183,18 @@ static bool parse_tts_play(
         ? cJSON_GetStringValue(mime_item)
         : NULL;
 
+    const cJSON *session_item = cJSON_GetObjectItemCaseSensitive(root,"session_id");
+    const char *session_id = cJSON_GetStringValue(session_item);
+#ifdef TIVOO_P68_B5_LOCAL
+    if (!is_uuid(session_id) || cJSON_IsTrue(suppress_vad_item)) {
+        cJSON_Delete(root);
+        return false;
+    }
+#endif
+    if (session_item && !is_uuid(session_id)) {
+        cJSON_Delete(root);
+        return false;
+    }
     const bool suppress_vad_present = suppress_vad_item != NULL;
     if (suppress_vad_present && !cJSON_IsBool(suppress_vad_item)) {
         cJSON_Delete(root);
@@ -191,6 +205,7 @@ static bool parse_tts_play(
     if (*request_out != NULL && suppress_vad_present) {
         (*request_out)->suppress_vad = cJSON_IsTrue(suppress_vad_item);
     }
+    if (*request_out && session_id) memcpy((*request_out)->session_id,session_id,37);
     cJSON_Delete(root);
     return *request_out != NULL;
 }
@@ -225,10 +240,17 @@ static bool parse_audio_stop(
         ? cJSON_GetStringValue(reason_item)
         : NULL;
 
+    const cJSON *session_item=cJSON_GetObjectItemCaseSensitive(root,"session_id");
+    const char *session_id=cJSON_GetStringValue(session_item);
     const bool valid = is_uuid(request_id) &&
+#ifdef TIVOO_P68_B5_LOCAL
+        is_uuid(session_id) && is_uuid(expected_id) &&
+#endif
+        (!session_item || is_uuid(session_id)) &&
         (expected_item == NULL || is_uuid(expected_id)) &&
         reason != NULL && reason[0] != '\0' && strlen(reason) <= REASON_MAX;
     if (valid) {
+        if(session_id) memcpy(stop->session_id,session_id,37);
         (void)snprintf(stop->request_id, sizeof(stop->request_id), "%s", request_id);
         if (expected_id != NULL) {
             (void)snprintf(
@@ -255,6 +277,9 @@ static bool parse_audio_stop(
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
+#ifdef TIVOO_P68_B5_LOCAL
+#include "s3_local_turn.h"
+#endif
 
 #define TAG "audio_resource"
 #define TYPE_TTS_PLAY 0x30U
@@ -268,6 +293,14 @@ static bool parse_audio_stop(
 #define DMA_DRAIN_TIMEOUT_US 350000
 
 static SemaphoreHandle_t s_mutex;
+static atomic_bool s_output_claimed;
+
+bool tivoo_audio_resource_test_silent(void)
+{
+    return s_mutex != NULL && !atomic_load(&s_output_claimed);
+}
+
+static esp_err_t stop_request(const char *request_id, const char *expected_audio_id, const char *reason, const char *session_id);
 static audio_request_t *s_active_request;
 static audio_request_t *s_pending_request;
 static uint32_t s_generation;
@@ -301,6 +334,7 @@ static void send_audio_state(
         return;
     }
     cJSON_AddStringToObject(root, "audio_id", request->playback_id);
+    if(request->session_id[0]) cJSON_AddStringToObject(root,"session_id",request->session_id);
     cJSON_AddStringToObject(root, "source", "tts_http");
     cJSON_AddStringToObject(root, "state", state);
     cJSON_AddNumberToObject(root, "bytes_received", (double)request->bytes_received);
@@ -547,6 +581,14 @@ static esp_err_t start_request(audio_request_t *request)
 {
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     request->peer_generation = tivoo_diagnostics_mic_generation();
+#ifdef TIVOO_P68_B5_LOCAL
+    if (!tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
+        (void)xSemaphoreGive(s_mutex);
+        free(request);
+        return ESP_ERR_INVALID_STATE;
+    }
+#endif
+    atomic_store(&s_output_claimed,true);
     audio_request_t *active = s_active_request;
     audio_request_t *pending = s_pending_request;
     if (seen_id(s_recent_playbacks, request->playback_id) ||
@@ -608,10 +650,10 @@ static void handle_audio_stop(const uint8_t *payload, size_t size)
             "protocol_invalid_payload", TAG, "Invalid AUDIO_STOP payload");
         return;
     }
-    (void)tivoo_audio_resource_stop(
+    (void)stop_request(
         stop.request_id,
         stop.expected_audio_id[0] == '\0' ? NULL : stop.expected_audio_id,
-        stop.reason);
+        stop.reason,stop.session_id[0] ? stop.session_id : NULL);
 }
 
 esp_err_t tivoo_audio_resource_init(void)
@@ -650,6 +692,12 @@ esp_err_t tivoo_audio_resource_start(
 esp_err_t tivoo_audio_resource_stop(
     const char *request_id, const char *expected_audio_id, const char *reason)
 {
+    return stop_request(request_id,expected_audio_id,reason,NULL);
+}
+
+static esp_err_t stop_request(
+    const char *request_id, const char *expected_audio_id, const char *reason, const char *session_id)
+{
     if (!is_uuid(request_id) ||
         (expected_audio_id != NULL && expected_audio_id[0] != '\0' &&
          !is_uuid(expected_audio_id)) ||
@@ -671,6 +719,9 @@ esp_err_t tivoo_audio_resource_stop(
                 request = NULL;
             }
         }
+        if(session_id && request &&
+            (strcmp(session_id,request->session_id)!=0 ||
+             request->peer_generation!=tivoo_diagnostics_mic_generation())) request=NULL;
         if (request != NULL && !request->terminal && !atomic_exchange(&request->stop_requested, true)) {
             tivoo_audio_output_stop(request->generation);
             if (request->socket_fd >= 0) {

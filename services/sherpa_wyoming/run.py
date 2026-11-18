@@ -9,6 +9,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from functools import partial
+from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,10 @@ _ATTRIBUTION = Attribution(
 )
 
 
-def build_wyoming_info(config: ServiceConfig) -> Info:
+def build_wyoming_info(config: ServiceConfig, *, device_endpoint: bool = False) -> Info:
     """Describe the three installed Providers exposed by this single process."""
 
-    return Info(
+    info = Info(
         wake=[
             WakeProgram(
                 name="Sherpa ONNX Wake Word",
@@ -114,6 +115,13 @@ def build_wyoming_info(config: ServiceConfig) -> Info:
         ],
     )
 
+    if device_endpoint:
+        return Info(asr=[replace(
+            info.asr[0], name="Sherpa ONNX Paraformer Device Endpoint",
+            requires_external_vad=False,
+        )])
+    return info
+
 
 class ModelExecutors:
     """Shared per-model execution limits across all TCP connections."""
@@ -175,6 +183,10 @@ class WyomingEventHandler(AsyncEventHandler):
             return True
 
         if self._provider is None:
+            # Advertised ASR-only endpoint must never accept other Providers.
+            if not self.info.wake and not self.info.tts and not Transcribe.is_type(event.type):
+                await self._send_error("device endpoint accepts only ASR", "invalid_event")
+                return True
             if Detect.is_type(event.type):
                 self._begin_request("kws")
                 self._wake_session = self.wake_provider.create_session()
@@ -584,6 +596,7 @@ async def run_server(
         executors=executors,
     )
     server = create_server(service_config.host, service_config.port)
+    device_server = None
 
     _LOGGER.info(
         "service_starting host=%s port=%d python=%s sherpa_onnx=%s wyoming=%s "
@@ -603,6 +616,14 @@ async def run_server(
         *_rss_metrics(),
     )
     try:
+        if service_config.device_stt_port is not None:
+            device_server = create_server(service_config.host, service_config.device_stt_port)
+            # The original partial owns exactly one provider of each kind and
+            # one shared bounded executor. Only the connection Info differs.
+            await device_server.start(partial(
+                handler_factory,
+                info=build_wyoming_info(service_config, device_endpoint=True),
+            ))
         await server.run(handler_factory)
     except Exception as exc:
         _LOGGER.error(
@@ -613,8 +634,12 @@ async def run_server(
         )
         raise
     finally:
-        await server.stop()
-        executors.shutdown()
+        try:
+            await asyncio.gather(
+                server.stop(), *([device_server.stop()] if device_server is not None else [])
+            )
+        finally:
+            executors.shutdown()
 
 
 def _provider_event(event: Event) -> Event:

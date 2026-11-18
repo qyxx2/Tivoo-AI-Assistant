@@ -20,7 +20,7 @@ RUN python -m pip install --no-cache-dir --requirement /tmp/requirements.txt \
 COPY *.py MODEL_SOURCES.md MODEL_SHA256SUMS custom_en.phone /app/sherpa_wyoming/
 COPY providers/ /app/sherpa_wyoming/providers/
 
-EXPOSE 10400/tcp
+EXPOSE 10400/tcp 10401/tcp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
     CMD ["python", "-m", "sherpa_wyoming.healthcheck", "--host", "127.0.0.1", "--port", "10400"]
 

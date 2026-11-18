@@ -1437,3 +1437,40 @@ async def test_wake_tail_cannot_start_command_before_ready_prompt_finishes(
     await manager.async_push_pcm(SESSION_1, b"next")
     await hass.async_block_till_done()
     assert received == [b"next"]
+
+
+async def test_p68_local_ready_only_on_pull_and_tail_eof(hass, satellite, monkeypatch):
+    from test_p68_local_session import local_start, gate, activity as local_activity
+    from custom_components.tivoo.diagnostics import TYPE_STT_READY
+    entity, manager, stop = satellite
+    await manager.async_end_session(SESSION_1, "test")
+    monkeypatch.setattr(entity, "validate_local_pipeline", lambda: ("select.test", "local"))
+    ready = asyncio.Event()
+    pulling = asyncio.Event()
+    entered = asyncio.Event()
+    frames = []
+    entity.adapter.async_send_message.side_effect = lambda *args: ready.set()
+    async def pipeline(audio, stage, *, context, wake_word_phrase):
+        assert stage is PipelineStage.STT
+        assert wake_word_phrase == "嗨，乐鑫"
+        entity.on_pipeline_event(PipelineEvent(Event.STT_START, {}))
+        entered.set()
+        await pulling.wait()
+        async for chunk in audio:
+            frames.append(chunk)
+        entity.on_pipeline_event(PipelineEvent(Event.STT_END, {"stt_output": {"text": "command"}}))
+    monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", pipeline)
+    await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
+    await asyncio.wait_for(entered.wait(), 1)
+    entity.adapter.async_send_message.assert_not_awaited()
+    await manager.async_handle_gate(gate(SESSION_2))
+    pulling.set()
+    await asyncio.wait_for(ready.wait(), 1)
+    assert entity.adapter.async_send_message.call_args.args[0] == TYPE_STT_READY
+    await manager.async_handle_activity(local_activity("speech_start", SESSION_2))
+    await manager.async_push_pcm(SESSION_2, b"a" * 640)
+    await manager.async_handle_activity(local_activity("speech_end", SESSION_2, pcm_samples=320))
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert frames == [b"a" * 640]
+    stop.assert_awaited_once_with(SESSION_2, "conversation_complete")
+    entity.adapter.async_send_tts_play.assert_not_awaited()

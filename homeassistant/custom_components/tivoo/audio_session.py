@@ -28,6 +28,13 @@ class _MicSession:
     history: deque[tuple[int, bytes]] = field(default_factory=deque)
     tail: int = 0
     cursors: dict[object, int] = field(default_factory=dict)
+    local_mode: bool = False
+    wake_uptime: int = 0
+    gate_uptime: int | None = None
+    speech_uptime: int | None = None
+    ready: bool = False
+    input_finished: bool = False
+    aborted: bool = False
 
 
 StopSender = Callable[[str, str], Awaitable[None]]
@@ -57,6 +64,9 @@ class AudioSessionManager:
         self._interrupted_handler: InterruptedHandler | None = None
         self._shutdown = False
         self.overflow_count = 0
+        self._local_seen: set[str] = set()
+        self.on_local_start: Callable[[str, str], None] | None = None
+        self.on_gate: Callable[[str], None] | None = None
         self.on_activity: Callable[[str, str], None] | None = None
         self.on_end: Callable[[str, str], None] | None = None
 
@@ -77,7 +87,7 @@ class AudioSessionManager:
         return self._active_session.queue.qsize()
 
     async def async_start_session(
-        self, payload: dict, *, persistent: bool = False
+        self, payload: dict, *, persistent: bool = False, local_mode: bool = False
     ) -> None:
         """Validate and create the only active network microphone session."""
         if self._shutdown:
@@ -109,6 +119,27 @@ class AudioSessionManager:
             raise ValueError("preroll_ms must be a non-negative integer")
 
         trigger_source = payload.get("trigger_source")
+        if local_mode:
+            phrase = payload.get("wake_word_phrase")
+            uptime = payload.get("uptime_ms")
+            if (
+                trigger_source != "local_wake" or not persistent or preroll_ms != 0
+                or not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 128
+                or type(uptime) is not int or uptime < 0
+            ):
+                raise ValueError("invalid local wake start")
+            if session_id in self._local_seen:
+                return
+            if self._active_session is not None:
+                await self._finish_session(self._active_session, "superseded",
+                                           notify_device=False, clear=True)
+            self._local_seen.add(session_id)
+            self._active_session = _MicSession(
+                session_id, persistent=True, local_mode=True, wake_uptime=uptime,
+            )
+            if self.on_local_start is not None:
+                self.on_local_start(session_id, phrase)
+            return
         if trigger_source not in {"idle_vad", "barge_in"}:
             raise ValueError("unsupported MIC session trigger_source")
         if trigger_source == "barge_in":
@@ -137,6 +168,12 @@ class AudioSessionManager:
         if session is None or session.session_id != session_id:
             return
 
+        if session.local_mode and (
+            len(data) != 640 or not session.ready or session.gate_uptime is None
+            or session.speech_uptime is None or session.input_finished
+        ):
+            await self.async_stop_session(session_id, "invalid_local_pcm")
+            return
         if session.persistent:
             await self._push_ingress(session, data)
             return
@@ -161,7 +198,7 @@ class AudioSessionManager:
         session = self._active_session
         if session is None or session.session_id != session_id:
             return
-        await self._finish_session(session, reason, notify_device=False, clear=False)
+        await self._finish_session(session, reason, notify_device=False, clear=session.local_mode)
 
     async def async_stop_session(self, session_id: str, reason: str) -> None:
         """Stop only the matching upload session and notify the ESP32."""
@@ -201,6 +238,32 @@ class AudioSessionManager:
         """Return the next PCM byte offset on the local ingress timeline."""
         return self._ingress(session_id).tail
 
+    def is_local_session(self, session_id: str) -> bool:
+        session = self._active_session
+        return bool(session and session.session_id == session_id and session.local_mode)
+
+    def local_input_finished(self, session_id: str) -> bool:
+        session = self._active_session
+        return bool(session and session.session_id == session_id and session.local_mode and session.input_finished)
+
+    async def async_handle_gate(self, payload: dict) -> None:
+        session_id = _require_uuid(payload, "session_id")
+        session = self._active_session
+        if session is None or session.session_id != session_id or not session.local_mode:
+            return
+        uptime = payload.get("uptime_ms")
+        if (
+            type(uptime) is not int or not session.wake_uptime <= uptime <= session.wake_uptime + 5000
+            or payload.get("prompt_result") not in ("completed", "skipped", "failed")
+        ):
+            await self.async_stop_session(session_id, "invalid_command_gate")
+            return
+        if session.gate_uptime is not None:
+            return
+        session.gate_uptime = uptime
+        if self.on_gate is not None:
+            self.on_gate(session_id)
+
     async def async_handle_activity(self, payload: dict) -> None:
         """Validate and route speech transitions on the matching ingress."""
         session_id = _require_uuid(payload, "session_id")
@@ -211,6 +274,30 @@ class AudioSessionManager:
         if type(uptime_ms) is not int or uptime_ms < 0:
             raise ValueError("MIC_ACTIVITY uptime_ms must be a non-negative integer")
         session = self._active_session
+        if session is not None and session.session_id == session_id and session.local_mode:
+            if state == "speech_start" and session.speech_uptime is not None:
+                return
+            if state == "speech_end" and session.input_finished:
+                return
+            if not session.ready or session.gate_uptime is None:
+                await self.async_stop_session(session_id, "invalid_local_activity")
+                return
+            if state == "speech_start":
+                if not session.gate_uptime <= uptime_ms <= session.gate_uptime + 3000:
+                    await self.async_stop_session(session_id, "invalid_local_start_time")
+                    return
+                session.speech_uptime = uptime_ms
+            else:
+                count = payload.get("pcm_samples")
+                if (
+                    session.speech_uptime is None
+                    or not session.speech_uptime <= uptime_ms <= session.speech_uptime + 15000
+                    or type(count) is not int or count <= 0 or count * 2 != session.tail
+                ):
+                    await self.async_stop_session(session_id, "invalid_local_endpoint")
+                    return
+                session.input_finished = True
+                session.data_ready.set()
         if (
             session is not None
             and session.persistent
@@ -221,6 +308,7 @@ class AudioSessionManager:
 
     async def async_disconnect(self) -> None:
         """Release the upload owned by the disconnected diagnostic socket."""
+        self._local_seen.clear()
         if (session := self._active_session) is not None:
             await self._finish_session(
                 session, "disconnected", notify_device=False, clear=True
@@ -229,7 +317,7 @@ class AudioSessionManager:
     async def _push_ingress(self, session: _MicSession, data: bytes) -> None:
         new_tail = session.tail + len(data)
         if (
-            new_tail - min(session.cursors.values(), default=session.tail)
+            new_tail - min(session.cursors.values(), default=0 if session.local_mode else session.tail)
             > HANDOFF_BYTES
         ):
             self.overflow_count += 1
@@ -281,6 +369,7 @@ class AudioSessionManager:
         *,
         start: int | None = None,
         consumer: object | None = None,
+        on_pull: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncIterator[AsyncIterator[bytes]]:
         """Open an independently closable PCM cursor."""
         session = self._ingress(session_id)
@@ -292,7 +381,7 @@ class AudioSessionManager:
             raise ValueError("MIC ingress offset outside the retained window")
         cursor = object() if consumer is None else consumer
         session.cursors[cursor] = offset
-        stream = self._iterate_ingress(session, cursor)
+        stream = self._iterate_ingress(session, cursor, on_pull)
         try:
             yield stream
         finally:
@@ -308,9 +397,17 @@ class AudioSessionManager:
 
     @staticmethod
     async def _iterate_ingress(
-        session: _MicSession, cursor: object
+        session: _MicSession, cursor: object,
+        on_pull: Callable[[], Awaitable[None]] | None,
     ) -> AsyncIterator[bytes]:
+        if session.local_mode:
+            if session.aborted or on_pull is None or session.ready:
+                raise RuntimeError("local microphone input aborted or duplicate consumer")
+            session.ready = True
+            await on_pull()
         while cursor in session.cursors:
+            if session.aborted:
+                raise RuntimeError("local microphone input aborted")
             offset = session.cursors[cursor]
             for start, data in session.history:
                 if start + len(data) > offset:
@@ -318,7 +415,7 @@ class AudioSessionManager:
                     yield data[offset - start :]
                     break
             else:
-                if session.ended.is_set():
+                if session.input_finished or session.ended.is_set():
                     return
                 session.data_ready.clear()
                 await session.data_ready.wait()
@@ -369,6 +466,8 @@ class AudioSessionManager:
     ) -> None:
         if self._active_session is session:
             self._active_session = None
+        if session.local_mode:
+            session.aborted = True
         if clear:
             session.history.clear()
             while not session.queue.empty():

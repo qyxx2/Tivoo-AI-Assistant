@@ -25,6 +25,7 @@ class ServiceConfig:
     tts_queue_bytes: int = 131_072
     tts_chunk_bytes: int = 4_096
     max_pending_per_model: int = 1
+    device_stt_port: int | None = None
 
 
 def _parse_int(environ: Mapping[str, str], key: str, default: int) -> int:
@@ -68,6 +69,12 @@ def load_config(
     if not 1 <= port <= 65535:
         raise ValueError("PORT must be between 1 and 65535")
 
+    device_stt_port = _parse_int(values, "DEVICE_STT_PORT", 0)
+    if "DEVICE_STT_PORT" in values and (
+        not 1 <= device_stt_port <= 65535 or device_stt_port == port
+    ):
+        raise ValueError("DEVICE_STT_PORT must be a distinct port between 1 and 65535")
+
     kws_num_threads = _parse_int(values, "KWS_NUM_THREADS", 1)
     kws_score = _parse_float(values, "KWS_SCORE", 1.0)
     kws_threshold = _parse_float(values, "KWS_THRESHOLD", 0.25)
@@ -109,6 +116,7 @@ def load_config(
     return ServiceConfig(
         host=host,
         port=port,
+        device_stt_port=device_stt_port or None,
         models_dir=Path(raw_models_dir),
         wake_word_phrase=phrase,
         kws_num_threads=kws_num_threads,

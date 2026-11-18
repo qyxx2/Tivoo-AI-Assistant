@@ -12,6 +12,23 @@ int main(void)
     static const char url[] = "http://192.168.3.94:8123/api/tts_proxy/opaque-token";
     char payload[512];
     audio_request_t *request = NULL;
+#ifdef TIVOO_P68_B5_LOCAL
+    snprintf(payload,sizeof(payload),"{\"playback_id\":\"%s\",\"url\":\"%s\",\"mime_type\":\"audio/mpeg\"}",playback_id,url);
+    assert(!parse_tts_play((const uint8_t *)payload,strlen(payload),&request));
+    snprintf(payload,sizeof(payload),"{\"session_id\":\"%s\",\"playback_id\":\"%s\",\"url\":\"%s\",\"mime_type\":\"audio/mpeg\"}",request_id,playback_id,url);
+    assert(parse_tts_play((const uint8_t *)payload,strlen(payload),&request));
+    assert(strcmp(request->session_id,request_id)==0);
+    free(request); request=NULL;
+    snprintf(payload,sizeof(payload),"{\"session_id\":\"%s\",\"playback_id\":\"%s\",\"url\":\"%s\",\"mime_type\":\"audio/mpeg\",\"suppress_vad\":true}",request_id,playback_id,url);
+    assert(!parse_tts_play((const uint8_t *)payload,strlen(payload),&request));
+    audio_stop_payload_t stop={0};
+    snprintf(payload,sizeof(payload),"{\"request_id\":\"%s\",\"expected_audio_id\":\"%s\",\"reason\":\"test\"}",request_id,playback_id);
+    assert(!parse_audio_stop((const uint8_t *)payload,strlen(payload),&stop));
+    snprintf(payload,sizeof(payload),"{\"session_id\":\"%s\",\"request_id\":\"%s\",\"expected_audio_id\":\"%s\",\"reason\":\"test\"}",request_id,request_id,playback_id);
+    assert(parse_audio_stop((const uint8_t *)payload,strlen(payload),&stop));
+    assert(strcmp(stop.session_id,request_id)==0);
+    assert(media_type_equal("audio/mpeg","audio/mpeg"));
+#else
 
     (void)snprintf(payload, sizeof(payload),
         "{\"playback_id\":\"%s\",\"url\":\"%s\",\"mime_type\":\"audio/mpeg\"}",
@@ -72,6 +89,7 @@ int main(void)
     assert(!media_type_equal("audio/wav", "audio/mpeg"));
     assert(!media_type_equal(NULL, "audio/mpeg"));
 
+#endif
     puts("P6 audio resource protocol tests passed");
     return 0;
 }

@@ -215,3 +215,16 @@ def test_check_health_rejects_tcp_connection_without_wyoming_info(
 
 def test_healthcheck_module_is_in_runtime_package() -> None:
     assert Path(healthcheck.__file__).is_file()
+
+
+def test_device_endpoint_health_requires_asr_only_and_device_vad():
+    from sherpa_wyoming.config import ServiceConfig
+    from sherpa_wyoming.run import build_wyoming_info
+    legacy = build_wyoming_info(ServiceConfig(wake_word_phrase="test"))
+    local = build_wyoming_info(ServiceConfig(wake_word_phrase="test"), device_endpoint=True)
+    healthcheck.validate_info(local, device_endpoint=True)
+    with pytest.raises(healthcheck.HealthcheckError):
+        healthcheck.validate_info(legacy, device_endpoint=True)
+    local.asr[0].requires_external_vad = True
+    with pytest.raises(healthcheck.HealthcheckError):
+        healthcheck.validate_info(local, device_endpoint=True)

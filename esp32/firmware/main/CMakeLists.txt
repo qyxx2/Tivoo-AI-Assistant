@@ -3,6 +3,8 @@ idf_component_register(
         "s3_main.c"
         "audio_capture.c"
         "p68_afe_flow.c"
+        "p68_local_turn.c"
+        "s3_local_turn.c"
         "s3_afe.c"
         "audio_output_manager.c"
         "audio_playback.c"
@@ -40,7 +42,7 @@ if(NOT _wake_count EQUAL 1)
     message(FATAL_ERROR "P6.8 requires exactly one WakeNet model, got: ${_wake_models}")
 endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE TIVOO_AFE_MODEL_ID="${_wake_models}")
-target_compile_definitions(${COMPONENT_LIB} PRIVATE TIVOO_P68_B1_SCAFFOLD=1 TIVOO_P68_B2_UART=1 TIVOO_P68_B3_AUDIO=1)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE TIVOO_P68_B1_SCAFFOLD=1 TIVOO_P68_B2_UART=1 TIVOO_P68_B3_AUDIO=1 TIVOO_P68_B5_LOCAL=1)
 
 execute_process(
     COMMAND git rev-parse --short=7 HEAD

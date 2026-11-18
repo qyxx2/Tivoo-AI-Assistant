@@ -70,7 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     adapter.register_spp_state_handler(display.async_on_spp_state)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
     await hass.config_entries.async_forward_entry_setups(
-        entry, [Platform.ASSIST_SATELLITE]
+        entry, [Platform.ASSIST_SATELLITE, Platform.SELECT]
     )
     await adapter.async_start()
     try:
@@ -86,7 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Stop TCP connections and remove services/runtime state."""
     if not await hass.config_entries.async_unload_platforms(
-        entry, [Platform.ASSIST_SATELLITE]
+        entry, [Platform.ASSIST_SATELLITE, Platform.SELECT]
     ):
         return False
     domain_data = hass.data.get(DOMAIN)

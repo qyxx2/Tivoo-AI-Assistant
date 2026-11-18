@@ -24,7 +24,7 @@ def test_compose_contains_one_private_ghcr_service_and_no_host_ports() -> None:
     )
     assert "build" not in service
     assert "ports" not in service
-    assert service["expose"] == ["10400"]
+    assert service["expose"] == ["10400", "10401"]
     assert "10500" not in COMPOSE_PATH.read_text(encoding="utf-8")
 
 
@@ -62,6 +62,8 @@ def test_compose_healthcheck_uses_wyoming_describe_module() -> None:
         "127.0.0.1",
         "--port",
         "10400",
+        "--device-stt-port",
+        "10401",
     ]
     assert service["healthcheck"]["start_period"] == "180s"
 
@@ -72,3 +74,4 @@ def test_compose_passes_only_the_runtime_settings_needed_by_service() -> None:
     assert service["environment"]["WAKE_WORD_PHRASE"].startswith("${WAKE_WORD_PHRASE")
     assert service["environment"]["MODELS_DIR"] == "/models"
     assert service["environment"]["PORT"] == 10400
+    assert service["environment"]["DEVICE_STT_PORT"] == 10401

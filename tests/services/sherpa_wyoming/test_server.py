@@ -489,3 +489,77 @@ def test_tcp_eof_cancels_active_tts_with_finished_or_backlogged_input(
             await _stop_server(task)
 
     asyncio.run(scenario())
+
+
+def test_device_endpoint_shares_models_and_rejects_other_providers():
+    async def scenario():
+        legacy, device = _free_port(), _free_port()
+        assert legacy != device
+        calls, handlers = [], []
+        bundle = ModelBundle(FakeKeywordSpotter(), FakeRecognizer(), FakeTts())
+
+        class RecordingServer(AsyncTcpServer):
+            def record(self, factory):
+                def create(*args):
+                    handler = factory(*args)
+                    handlers.append(handler)
+                    return handler
+                return create
+
+            async def start(self, factory):
+                await super().start(self.record(factory))
+
+            async def run(self, factory):
+                await super().run(self.record(factory))
+
+        def load(config):
+            calls.append(config)
+            return bundle
+
+        config = ServiceConfig(wake_word_phrase="test", host="127.0.0.1",
+                               port=legacy, device_stt_port=device)
+        task = asyncio.create_task(run_server(
+            config, keyword_generator=lambda *_: None, model_loader=load,
+            server_factory=RecordingServer,
+        ))
+        try:
+            await _wait_for_server(legacy)
+            await _wait_for_server(device)
+            readers_writers = [await _connect(p) for p in (legacy, device)]
+            for reader, writer in readers_writers:
+                await _send(writer, Describe())
+            old, new = [await _receive(reader, "info") for reader, _ in readers_writers]
+            assert old.data["asr"][0]["requires_external_vad"] is True
+            assert len(old.data["tts"]) == len(old.data["wake"]) == 1
+            assert new.data["asr"][0]["requires_external_vad"] is False
+            assert new.data["asr"][0]["name"] != old.data["asr"][0]["name"]
+            assert not new.data.get("tts") and not new.data.get("wake")
+            assert len(calls) == 1
+            assert handlers[-1].executors is handlers[-2].executors
+            assert handlers[-1].stt_provider is handlers[-2].stt_provider
+            reader, writer = readers_writers[1]
+            for event in (Detect(names=["tivoo-wake"]), Synthesize(text="test"), SynthesizeStart()):
+                await _send(writer, event)
+                await _receive(reader, "error")
+            for reader, writer in readers_writers:
+                await _send(writer, Transcribe(language="zh-CN"))
+                await _send(writer, AudioStart(rate=16000, width=2, channels=1))
+                await _send(writer, AudioChunk(rate=16000, width=2, channels=1, audio=b"\\0" * 640))
+                await _send(writer, AudioStop())
+                await _receive(reader, "transcript")
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            if task.done():
+                task.result()
+            else:
+                await _stop_server(task)
+        for p in (legacy, device):
+            try:
+                _, writer = await _connect(p)
+            except OSError:
+                continue
+            writer.close()
+            await writer.wait_closed()
+            raise AssertionError("listener not closed")
+    asyncio.run(scenario())

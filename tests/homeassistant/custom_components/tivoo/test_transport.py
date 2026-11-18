@@ -1784,3 +1784,93 @@ def test_p68_control_only_hello_requires_control_and_diagnostics():
     payload["capabilities"].remove("spp_reverse")
     with pytest.raises(ValueError):
         transport.Esp32ConnectionAdapter._validate_hello(payload)
+
+
+async def test_p68_local_capability_and_session_bound_tts(monkeypatch, socket_enabled):
+    import json
+    from custom_components.tivoo.audio_session import AudioSessionManager
+    from test_p68_local_session import local_start, gate, activity
+    from test_audio_session import SESSION_1, SESSION_2
+    manager = AudioSessionManager()
+    starts = []
+    manager.on_local_start = lambda *args: starts.append(args)
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98", retry_interval=5)
+    adapter.register_audio_session_manager(manager)
+    states = []
+    adapter.register_playback_handler(lambda *args: states.append(args))
+    done = asyncio.Event()
+    stopped = asyncio.Event()
+    session3 = "33333333-3333-4333-8333-333333333333"
+    async def control(reader, writer):
+        await reader.read()
+    async def peer(reader, writer):
+        hello = dict(device_id="tivoo-esp32", firmware_version="0.1.0+abcdef0", protocol_version=1,
+                     capabilities=[*transport._BASE_CAPABILITIES, "audio_resource_http", "audio_control", "local_wake_stt_v1"],
+                     reset_reason="ESP_RST_POWERON")
+        def frame(kind, seq, data):
+            return _tvio_message(kind, seq, json.dumps(data).encode())
+        writer.write(frame(1,0,hello))
+        await writer.drain()
+        ack = await _read_tvio_message(reader)
+        assert ack[2] == {"accepted":True,"capabilities":["local_wake_stt_v1"]}
+        await _read_tvio_message(reader)
+        writer.write(frame(0x20,1,local_start())+frame(0x26,2,gate()))
+        await writer.drain()
+        ready = await _read_tvio_message(reader)
+        assert ready[0] == 0x25 and ready[2] == {"session_id":SESSION_1}
+        writer.write(frame(0x24,3,activity("speech_start"))+_tvio_message(0x21,4,b"x"*640)+frame(0x24,5,activity("speech_end",pcm_samples=320)))
+        await writer.drain()
+        tts = await _read_tvio_message(reader)
+        assert tts[0] == 0x30 and tts[2]["session_id"] == SESSION_1
+        state = dict(audio_id="44444444-4444-4444-8444-444444444444",source="tts_http",state="completed")
+        writer.write(frame(0x32,6,dict(state,session_id=SESSION_2))+frame(0x32,7,dict(state,session_id=SESSION_1)))
+        await writer.drain()
+        done.set()
+        stop = await _read_tvio_message(reader)
+        assert stop[0] == 0x31 and stop[2]["session_id"] == SESSION_1
+        assert stop[2]["expected_audio_id"] == state["audio_id"]
+        stopped.set()
+        ready2 = await _read_tvio_message(reader)
+        assert ready2[0] == 0x25 and ready2[2]["session_id"] == SESSION_2
+        writer.write(frame(0x26,8,gate(SESSION_2))+frame(0x24,9,activity("speech_start",SESSION_2))
+                     +_tvio_message(0x21,10,b"y"*640)+frame(0x24,11,activity("speech_end",SESSION_2,pcm_samples=320))
+                     +frame(0x20,12,local_start(session3)))
+        await writer.drain()
+        await reader.read()
+    control_server = await asyncio.start_server(control,"127.0.0.1",0)
+    diagnostic_server = await asyncio.start_server(peer,"127.0.0.1",0)
+    monkeypatch.setattr(transport,"CONTROL_PORT",control_server.sockets[0].getsockname()[1])
+    monkeypatch.setattr(transport,"DIAGNOSTIC_PORT",diagnostic_server.sockets[0].getsockname()[1])
+    await adapter.async_start()
+    try:
+        async with asyncio.timeout(2):
+            while not starts:
+                await asyncio.sleep(.01)
+            async def ready():
+                await adapter.async_send_message(0x25,json.dumps({"session_id":SESSION_1}).encode())
+            async with manager.audio_subscription(SESSION_1,start=0,on_pull=ready) as it:
+                assert await _collect_audio(it) == [b"x"*640]
+            await adapter.async_send_tts_play("44444444-4444-4444-8444-444444444444","http://ha/a","audio/mpeg",session_id=SESSION_1)
+            await done.wait()
+            while not states:
+                await asyncio.sleep(.01)
+            await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
+            await adapter.async_send_message(0x31, json.dumps({
+                "session_id": SESSION_1,
+                "expected_audio_id": "44444444-4444-4444-8444-444444444444",
+                "reason": "superseded",
+            }).encode())
+            await stopped.wait()
+            async def ready2():
+                await adapter.async_send_message(0x25,json.dumps({"session_id":SESSION_2}).encode())
+            async with manager.audio_subscription(SESSION_2,start=0,on_pull=ready2) as it:
+                with pytest.raises(RuntimeError, match="aborted"):
+                    await _collect_audio(it)
+            assert manager.active_session_id == session3
+        assert len(states)==1
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()

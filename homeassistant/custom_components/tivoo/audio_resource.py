@@ -77,7 +77,9 @@ class TtsResourceManager:
         hass: HomeAssistant,
         adapter: Esp32ConnectionAdapter,
         prepare_playback: Callable[[str], Awaitable[None]] | None = None,
+        *, session_id: str | None = None,
     ) -> None:
+        self.session_id = session_id
         self.hass = hass
         self.adapter = adapter
         self._prepare_playback = prepare_playback
@@ -111,6 +113,7 @@ class TtsResourceManager:
             resource.playback_id,
             url,
             resource.mime_type,
+            **({"session_id": self.session_id} if self.session_id else {}),
         )
 
     async def async_handle_pipeline_event(self, event: PipelineEvent) -> None:
@@ -174,8 +177,9 @@ class PipelineTtsEvents:
         hass: HomeAssistant,
         adapter: Esp32ConnectionAdapter,
         prepare_playback: Callable[[str], Awaitable[None]] | None = None,
+        *, session_id: str | None = None,
     ) -> None:
-        self._manager = TtsResourceManager(hass, adapter, prepare_playback)
+        self._manager = TtsResourceManager(hass, adapter, prepare_playback, session_id=session_id)
         self._hass = hass
         self._owner: PipelineTtsOwner | None = None
         self._caller: asyncio.Task | None = None
@@ -204,6 +208,7 @@ class PipelineTtsEvents:
                     "request_id": str(uuid.uuid4()),
                     "expected_audio_id": self.playback_id,
                     "reason": "wake_word",
+                    **({"session_id": self._manager.session_id} if self._manager.session_id else {}),
                 },
                 separators=(",", ":"),
             ).encode("utf-8")

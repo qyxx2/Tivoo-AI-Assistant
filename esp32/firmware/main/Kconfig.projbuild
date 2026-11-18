@@ -12,6 +12,14 @@ config TIVOO_WIFI_PASSWORD
     help
         Local Wi-Fi password. Stored in the local sdkconfig and never logged.
 
+config TIVOO_P68_TEST_GATE
+    bool "P6.8 b5 software-only silent command gate"
+    default n
+    help
+        Enables an uncalibrated logical sample boundary solely for b5 test
+        builds before any TTS output. Do not enable on deployed hardware.
+        b6 supplies the actual physical prompt/drain/tail gate.
+
 endmenu
 
 menu "Tivoo I2S audio"

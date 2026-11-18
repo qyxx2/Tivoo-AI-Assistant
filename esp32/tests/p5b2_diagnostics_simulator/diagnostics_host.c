@@ -77,6 +77,8 @@ static bool echo_message_handler(
     case 0x10U:
         response_type = 0x11U;
         break;
+    case 0x25U:
+        return tivoo_diagnostics_send_mic(tivoo_diagnostics_local_wake_generation(),TVIO_TYPE_COMMAND_GATE,payload,size);
     case 0x23U:
     case 0x30U:
     case 0x31U:
@@ -141,7 +143,9 @@ int main(int argc, char **argv)
         if (command == NULL) {
             continue;
         }
-        if (strcmp(command, "up") == 0) {
+        if (strcmp(command, "local_wake_on") == 0) {
+            tivoo_diagnostics_enable_local_wake();
+        } else if (strcmp(command, "up") == 0) {
             network_listeners_set_ip_available(true);
         } else if (strcmp(command, "down") == 0) {
             network_listeners_set_ip_available(false);

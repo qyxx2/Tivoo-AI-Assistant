@@ -17,6 +17,9 @@ from .diagnostics import (
     HA_TO_ESP32_MESSAGE_TYPES,
     SUPPORTED_MESSAGE_TYPES,
     TYPE_AUDIO_INTERRUPTED,
+    TYPE_COMMAND_GATE,
+    TYPE_STT_READY,
+    TYPE_AUDIO_STOP,
     TYPE_AUDIO_STATE,
     TYPE_DEVICE_EVENT,
     TYPE_DEVICE_STATUS,
@@ -44,6 +47,7 @@ CONTROL_PORT = 7777
 DIAGNOSTIC_PORT = 7778
 
 MIC_ACTIVITY_CAPABILITY = "mic_activity_events"
+LOCAL_WAKE_CAPABILITY = "local_wake_stt_v1"
 _BASE_CAPABILITIES = {
     "spp_control",
     "spp_reverse",
@@ -272,6 +276,10 @@ class Esp32ConnectionAdapter:
             except Exception:  # noqa: BLE001 — isolate the registered consumer.
                 _LOGGER.warning("Tivoo SPP reverse consumer failed")
 
+    @property
+    def local_wake_capable(self) -> bool:
+        return LOCAL_WAKE_CAPABILITY in (self._diagnostic_capabilities or ())
+
     def register_audio_session_manager(self, manager: AudioSessionManager) -> None:
         """Connect P6 MIC and interruption messages to one session manager."""
 
@@ -280,16 +288,23 @@ class Esp32ConnectionAdapter:
         async def handle_session_start(message: DiagnosticMessage) -> None:
             payload = self._decode_json(message.payload)
             await manager.async_start_session(
-                payload, persistent=self._mic_activity_capable
+                payload, persistent=self._mic_activity_capable or self.local_wake_capable,
+                local_mode=self.local_wake_capable,
             )
-            if self._mic_activity_capable and manager.on_activity is None:
+            if (self.local_wake_capable and manager.on_local_start is None) or (
+                self._mic_activity_capable and not self.local_wake_capable and manager.on_activity is None
+            ):
                 await manager.async_stop_session(
                     payload["session_id"], "satellite_unavailable"
                 )
 
         async def handle_activity(message: DiagnosticMessage) -> None:
-            if self._mic_activity_capable:
+            if self._mic_activity_capable or self.local_wake_capable:
                 await manager.async_handle_activity(self._decode_json(message.payload))
+
+        async def handle_gate(message: DiagnosticMessage) -> None:
+            if self.local_wake_capable:
+                await manager.async_handle_gate(self._decode_json(message.payload))
 
         async def handle_pcm(message: DiagnosticMessage) -> None:
             session_id = manager.active_session_id
@@ -315,6 +330,7 @@ class Esp32ConnectionAdapter:
 
         self.register_message_handler(TYPE_MIC_SESSION_START, handle_session_start)
         self.register_message_handler(TYPE_MIC_PCM, handle_pcm)
+        self.register_message_handler(TYPE_COMMAND_GATE, handle_gate)
         self.register_message_handler(TYPE_MIC_ACTIVITY, handle_activity)
         self.register_message_handler(TYPE_MIC_SESSION_END, handle_session_end)
         self.register_message_handler(TYPE_AUDIO_INTERRUPTED, handle_audio_interrupted)
@@ -330,6 +346,14 @@ class Esp32ConnectionAdapter:
                 raise ValueError("invalid AUDIO_STATE audio_id")
             if not isinstance(state, str):
                 raise TypeError("invalid AUDIO_STATE state")
+            if self.local_wake_capable:
+                manager = self._audio_session_manager
+                if (
+                    not manager or not manager.active_session_id
+                    or payload.get("session_id") != manager.active_session_id
+                    or state not in {"buffering", "playing", "completed", "stopped", "interrupted", "failed"}
+                ):
+                    return
             if payload.get("source") == "tts_http":
                 if state in {"failed", "stopped", "interrupted"}:
                     _LOGGER.warning(
@@ -371,6 +395,24 @@ class Esp32ConnectionAdapter:
                     raise HomeAssistantError("ESP32 audio resource capability is unavailable")
                 if message_type not in {TYPE_GET_STATUS, TYPE_PING, TYPE_TTS_PLAY} and "audio_control" not in self._diagnostic_capabilities:
                     raise HomeAssistantError("ESP32 audio control capability is unavailable")
+            if message_type == TYPE_STT_READY and not self.local_wake_capable:
+                raise HomeAssistantError("ESP32 local wake capability is unavailable")
+            if self.local_wake_capable and message_type in {TYPE_TTS_PLAY, TYPE_STT_READY, TYPE_AUDIO_STOP}:
+                manager = self._audio_session_manager
+                descriptor = self._decode_json(payload)
+                if message_type == TYPE_AUDIO_STOP:
+                    # Cleanup of an old turn must still reach the device; S3
+                    # matches both session and playback owner before stopping.
+                    try:
+                        uuid.UUID(descriptor["session_id"])
+                        uuid.UUID(descriptor["expected_audio_id"])
+                    except (KeyError, TypeError, ValueError, AttributeError) as err:
+                        raise HomeAssistantError("ESP32 local stop requires session and playback UUIDs") from err
+                else:
+                    if not manager or not manager.active_session_id or descriptor.get("session_id") != manager.active_session_id:
+                        raise HomeAssistantError("ESP32 local turn session is not current")
+                    if message_type == TYPE_TTS_PLAY and not manager.local_input_finished(manager.active_session_id):
+                        raise HomeAssistantError("ESP32 local STT input has not finished")
             frame = encode_message(message_type, payload, self._diagnostic_tx_sequence)
             try:
                 writer.write(frame)
@@ -391,9 +433,12 @@ class Esp32ConnectionAdapter:
         mime_type: str,
         *,
         suppress_vad: bool = False,
+        session_id: str | None = None,
     ) -> None:
         """Send one TTS resource descriptor over the accepted diagnostic channel."""
         descriptor = {"playback_id": playback_id, "url": url, "mime_type": mime_type}
+        if session_id is not None:
+            descriptor["session_id"] = session_id
         if suppress_vad:
             descriptor["suppress_vad"] = True
         payload = json.dumps(descriptor, separators=(",", ":")).encode("utf-8")
@@ -510,6 +555,8 @@ class Esp32ConnectionAdapter:
                             }
                         else:
                             acknowledgement = {"accepted": True}
+                            if LOCAL_WAKE_CAPABILITY in payload["capabilities"]:
+                                acknowledgement["capabilities"] = [LOCAL_WAKE_CAPABILITY]
 
                         writer.write(
                             encode_message(
@@ -617,10 +664,17 @@ class Esp32ConnectionAdapter:
                                 "message type 0x%02x",
                                 message.message_type,
                             )
+                        if self.local_wake_capable and message.message_type == TYPE_STT_READY:
+                            raise ValueError("STT_READY has invalid direction")
                         if handler := self._message_handlers.get(message.message_type):
                             await handler(message)
                         # Supported messages without a registered handler are ignored.
                     except (ValueError, TypeError) as err:
+                        manager = self._audio_session_manager
+                        if self.local_wake_capable and manager and manager.active_session_id and message.message_type in {
+                            TYPE_MIC_PCM, TYPE_MIC_ACTIVITY, TYPE_COMMAND_GATE, TYPE_STT_READY,
+                        }:
+                            await manager.async_stop_session(manager.active_session_id, "invalid_local_message")
                         _LOGGER.warning(
                             "Ignoring invalid ESP32 diagnostic message: %s", err
                         )

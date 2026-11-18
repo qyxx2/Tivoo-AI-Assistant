@@ -11,7 +11,8 @@ HARNESS = ROOT / "tests/esp32/p6_audio_resource_protocol_host.c"
 FIRMWARE = ROOT / "esp32/firmware/main"
 
 
-def test_tts_and_stop_payload_validation(tmp_path):
+@pytest.mark.parametrize("local_mode",[False,True])
+def test_tts_and_stop_payload_validation(tmp_path,local_mode):
     binary = tmp_path / "p6-audio-resource-protocol"
     subprocess.run(
         [
@@ -20,6 +21,7 @@ def test_tts_and_stop_payload_validation(tmp_path):
             "-Wall",
             "-Wextra",
             "-Werror",
+            *(["-DTIVOO_P68_B5_LOCAL"] if local_mode else []),
             "-I",
             str(FIRMWARE),
             "-I",

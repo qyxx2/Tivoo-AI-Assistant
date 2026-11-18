@@ -18,3 +18,8 @@ typedef enum {
     TIVOO_AFE_PROMPT_BEGIN, TIVOO_AFE_PROMPT_END
 } tivoo_afe_control_t;
 bool tivoo_s3_afe_control(tivoo_afe_control_t control, uint64_t index);
+
+/* Software-only test gate; called exclusively from the fetch-task sink.
+ * b6 replaces this logical boundary with the calibrated physical one. */
+bool tivoo_s3_afe_open_test_gate(void);
+void tivoo_s3_afe_close_local_gate(void);

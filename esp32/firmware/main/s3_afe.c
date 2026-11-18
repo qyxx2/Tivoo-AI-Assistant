@@ -1,4 +1,5 @@
 #include "s3_afe.h"
+#include "s3_local_turn.h"
 #include "audio_capture.h"
 #include "esp_afe_config.h"
 #include "esp_afe_sr_iface.h"
@@ -62,6 +63,15 @@ static void apply_controls(void)
         case TIVOO_AFE_PROMPT_END: tivoo_afe_flow_prompt(flow,false,command.index); break;
         }
     }
+}
+
+bool tivoo_s3_afe_open_test_gate(void)
+{
+    return flow && tivoo_afe_flow_open(flow,flow->next);
+}
+void tivoo_s3_afe_close_local_gate(void)
+{
+    if(flow) tivoo_afe_flow_close(flow);
 }
 
 static void request_reset(void)
@@ -142,6 +152,7 @@ static void fetch_task(void *arg)
     int last_state=0;
     int64_t report=esp_timer_get_time();
     for (;;) {
+        tivoo_s3_local_turn_tick();
         if (atomic_load(&reset_requested)) {
             /* Both API users are quiescent before reset_buffer/reset_vad. */
             if (!atomic_load(&feed_paused)) {
