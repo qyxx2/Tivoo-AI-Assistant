@@ -1,5 +1,6 @@
 #include "board_boot.h"
 #include "tivoo_spp.h"
+#include "uart_transport.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 
@@ -14,5 +15,8 @@ void app_main(void)
         return;
     }
     err = tivoo_spp_start();
-    ESP_LOGI("tivoo_boot", "Classic SPP startup: %s; UART pending b2", esp_err_to_name(err));
+    ESP_LOGI("tivoo_boot", "Classic SPP startup: %s", esp_err_to_name(err));
+    tivoo_uart_bridge_set_available(err == ESP_OK);
+    err = tivoo_uart_transport_start();
+    ESP_LOGI("tivoo_boot", "UART bridge startup: %s", esp_err_to_name(err));
 }

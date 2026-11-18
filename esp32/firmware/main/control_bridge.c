@@ -28,6 +28,9 @@ static atomic_int s_client_fd = ATOMIC_VAR_INIT(-1);
 static uint8_t s_reverse_queue[TIVOO_CONTROL_REVERSE_QUEUE_CAPACITY];
 static size_t s_reverse_head;
 static size_t s_reverse_count;
+#ifdef TIVOO_P68_B2_UART
+static size_t s_reverse_peak;
+#endif
 static atomic_bool s_reverse_queue_full_pending = ATOMIC_VAR_INIT(false);
 #ifdef ESP_PLATFORM
 static portMUX_TYPE s_reverse_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -52,7 +55,7 @@ static void reverse_queue_clear_locked(void)
     s_reverse_count = 0U;
 }
 
-bool tivoo_control_spp_data(const uint8_t *data, size_t size)
+static bool reverse_push(const uint8_t *data, size_t size, bool report_full)
 {
     if (size == 0U) {
         return true;
@@ -67,7 +70,7 @@ bool tivoo_control_spp_data(const uint8_t *data, size_t size)
         return true;
     }
     if (size > TIVOO_CONTROL_REVERSE_QUEUE_CAPACITY - s_reverse_count) {
-        atomic_store(&s_reverse_queue_full_pending, true);
+        if (report_full) atomic_store(&s_reverse_queue_full_pending, true);
         reverse_unlock();
         return false;
     }
@@ -82,9 +85,31 @@ bool tivoo_control_spp_data(const uint8_t *data, size_t size)
         memcpy(s_reverse_queue, data + first, size - first);
     }
     s_reverse_count += size;
+#ifdef TIVOO_P68_B2_UART
+    if(s_reverse_count>s_reverse_peak) s_reverse_peak=s_reverse_count;
+#endif
     reverse_unlock();
     return true;
 }
+
+bool tivoo_control_spp_data(const uint8_t *data, size_t size)
+{
+    return reverse_push(data, size, true);
+}
+
+#ifdef TIVOO_P68_B2_UART
+size_t tivoo_control_reverse_peak(void)
+{
+    reverse_lock();
+    size_t n=s_reverse_peak;
+    reverse_unlock();
+    return n;
+}
+bool tivoo_control_try_reverse(const uint8_t *data, size_t size)
+{
+    return reverse_push(data, size, false);
+}
+#endif
 
 bool tivoo_control_client_has_pending(int client_fd)
 {

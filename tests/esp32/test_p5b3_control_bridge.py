@@ -91,8 +91,7 @@ class ControlSimulator:
         self.process.stderr.close()
 
 
-@pytest.fixture
-def simulator_binary(tmp_path):
+def _compile_simulator(tmp_path, *, b2=False):
     binary = tmp_path / "p5b3-control-host"
     subprocess.run(
         [
@@ -101,6 +100,7 @@ def simulator_binary(tmp_path):
             "-D_POSIX_C_SOURCE=200809L",
             "-DNETWORK_LISTENERS_HOST",
             "-DTIVOO_DIAGNOSTICS_HOST_TEST",
+            *(["-DTIVOO_P68_B2_UART"] if b2 else []),
             "-Wall",
             "-Wextra",
             "-Werror",
@@ -123,6 +123,16 @@ def simulator_binary(tmp_path):
         text=True,
     )
     return binary
+
+
+@pytest.fixture
+def simulator_binary(tmp_path):
+    return _compile_simulator(tmp_path)
+
+
+@pytest.fixture
+def b2_simulator_binary(tmp_path):
+    return _compile_simulator(tmp_path, b2=True)
 
 
 def test_split_control_commands_and_fragmented_frames_keep_stream_order(
@@ -223,4 +233,55 @@ def test_invalid_checksum_frame_is_not_forwarded(simulator_binary):
         assert not any(event.startswith("FRAME ") for event in simulator.output)
     finally:
         client.close()
+        simulator.stop()
+
+
+def test_p68_tcp_backpressure_does_not_block_7778(b2_simulator_binary):
+    simulator = ControlSimulator(b2_simulator_binary)
+    client = simulator.connect()
+    diag = None
+    frame = _tivoo_frame(b"\x69" + b"\0" * 4601)
+    assert len(frame) == 4608
+    try:
+        client.sendall(b"\x69" + MAC[:2])
+        client.sendall(MAC[2:] + frame + _tivoo_frame(b"\x96"))
+        simulator.expect_event("OPEN")
+        # Before OPEN ACK, no command is parsed or accepted.
+        assert not select.select([simulator.process.stdout], [], [], 0.15)[0]
+        diag = _wait_connected(simulator.diagnostic_port)
+        diag.settimeout(2)
+        assert diag.recv(4) == b"TVIO"
+        simulator.process.stdin.write(b"ack\n")
+        simulator.expect_event("CONNECT 11:75:58:97:49:98")
+        assert not select.select([simulator.process.stdout], [], [], 0.1)[0]
+        simulator.process.stdin.write(b"ack\n")
+        simulator.expect_event("FRAME " + frame.hex().upper())
+        assert not select.select([simulator.process.stdout], [], [], 0.1)[0]
+        simulator.process.stdin.write(b"ack\n")
+        simulator.expect_event("FRAME " + _tivoo_frame(b"\x96").hex().upper())
+        # While the final UART ACK is missing, closing 7777 invalidates it.
+        client.close()
+        simulator.expect_event("CLOSE")
+        second = simulator.connect()
+        try:
+            simulator.expect_event("OPEN")
+            simulator.process.stdin.write(b"ack\n")
+            second.sendall(b"\x69" + MAC)
+            simulator.expect_event("CONNECT 11:75:58:97:49:98")
+            simulator.process.stdin.write(b"fault\n")
+            simulator.expect_event("CLOSE")
+            second.settimeout(2)
+            assert second.recv(1) == b""
+            # Bridge failure is independent of the diagnostics TCP socket.
+            diag.settimeout(0.1)
+            try:
+                assert diag.recv(4096)
+            except TimeoutError:
+                pass
+        finally:
+            second.close()
+    finally:
+        client.close()
+        if diag is not None:
+            diag.close()
         simulator.stop()

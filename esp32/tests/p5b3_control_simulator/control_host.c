@@ -1,8 +1,34 @@
 #include "control_bridge.h"
 #include "network_listeners.h"
 #include "tivoo_spp.h"
-
 #include <stdio.h>
+#ifdef TIVOO_P68_B2_UART
+#include "diagnostics.h"
+#include <stdatomic.h>
+static atomic_bool s_valid, s_can_read;
+bool tivoo_uart_client_open(void)
+{
+    atomic_store(&s_valid,true);
+    atomic_store(&s_can_read,false); /* OPEN ACK is externally controlled. */
+    puts("OPEN"); fflush(stdout);
+    return true;
+}
+void tivoo_uart_client_close(void)
+{
+    atomic_store(&s_valid,false);
+    atomic_store(&s_can_read,false);
+    puts("CLOSE");fflush(stdout);
+}
+bool tivoo_uart_client_valid(void) {return atomic_load(&s_valid);}
+bool tivoo_uart_client_can_read(void)
+{
+    return atomic_load(&s_valid) && atomic_load(&s_can_read);
+}
+static void await_ack(void) {atomic_store(&s_can_read,false);}
+#else
+static void await_ack(void) {}
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,12 +43,14 @@ static void print_mac_event(const char *event, const uint8_t peer[6])
 
 bool tivoo_spp_queue_connect(const uint8_t peer[6])
 {
+    await_ack();
     print_mac_event("CONNECT", peer);
     return true;
 }
 
 bool tivoo_spp_queue_disconnect(const uint8_t peer[6])
 {
+    await_ack();
     print_mac_event("DISCONNECT", peer);
     return true;
 }
@@ -31,6 +59,7 @@ tivoo_spp_queue_result_t tivoo_spp_queue_frame(
     const uint8_t *frame, size_t size)
 {
     if (s_frame_result == TIVOO_SPP_QUEUE_QUEUED) {
+        await_ack();
         printf("FRAME ");
         for (size_t i = 0; i < size; i++) {
             printf("%02X", frame[i]);
@@ -70,6 +99,9 @@ int main(int argc, char **argv)
                                 (uint16_t)strtoul(argv[2], NULL, 10)) != ESP_OK) {
         return 3;
     }
+#ifdef TIVOO_P68_B2_UART
+    if (tivoo_diagnostics_start() != ESP_OK) return 4;
+#endif
     network_listeners_set_ip_available(true);
     char input[512];
     uint8_t data[240];
@@ -77,6 +109,16 @@ int main(int argc, char **argv)
         if (strncmp(input, "exit", 4) == 0) {
             break;
         }
+#ifdef TIVOO_P68_B2_UART
+        if (strncmp(input, "ack", 3) == 0) {
+            atomic_store(&s_can_read,true);
+            continue;
+        }
+        if (strncmp(input, "fault", 5) == 0) {
+            atomic_store(&s_valid,false);
+            continue;
+        }
+#endif
         if (strncmp(input, "data ", 5) == 0) {
             size_t size = 0U;
             input[strcspn(input, "\r\n")] = '\0';
@@ -101,5 +143,8 @@ int main(int argc, char **argv)
         }
     }
     network_listeners_stop();
+#ifdef TIVOO_P68_B2_UART
+    tivoo_diagnostics_stop();
+#endif
     return 0;
 }

@@ -2,6 +2,9 @@
 
 #include "diagnostics.h"
 #include "control_bridge.h"
+#ifdef TIVOO_P68_B2_UART
+#include "uart_transport.h"
+#endif
 
 #include <errno.h>
 #include <stdatomic.h>
@@ -44,6 +47,10 @@ typedef struct {
 
 static listener_endpoint_t s_endpoints[2];
 static uint8_t s_receive_buffer[TCP_RECV_BUFFER_SIZE];
+#ifdef TIVOO_P68_B2_UART
+static uint8_t s_control_receive_buffer[TCP_RECV_BUFFER_SIZE];
+static size_t s_control_offset, s_control_size;
+#endif
 static atomic_bool s_running = ATOMIC_VAR_INIT(false);
 static atomic_bool s_ip_available = ATOMIC_VAR_INIT(false);
 static atomic_bool s_control_client_connected = ATOMIC_VAR_INIT(false);
@@ -78,10 +85,14 @@ static void close_fd(int *fd)
     }
 }
 
-static void close_endpoint(listener_endpoint_t *endpoint)
+static void close_client(listener_endpoint_t *endpoint)
 {
     if (endpoint->client_fd >= 0) {
         if (endpoint == &s_endpoints[0]) {
+#ifdef TIVOO_P68_B2_UART
+            tivoo_uart_client_close();
+            s_control_offset = s_control_size = 0;
+#endif
             tivoo_control_client_disconnected(endpoint->client_fd);
         } else {
             atomic_store(&s_diagnostic_client_connected, false);
@@ -92,6 +103,11 @@ static void close_endpoint(listener_endpoint_t *endpoint)
         }
         close_fd(&endpoint->client_fd);
     }
+}
+
+static void close_endpoint(listener_endpoint_t *endpoint)
+{
+    close_client(endpoint);
     close_fd(&endpoint->listener_fd);
 }
 
@@ -143,12 +159,49 @@ static void accept_one_client(listener_endpoint_t *endpoint)
     endpoint->client_fd = client_fd;
     if (endpoint == &s_endpoints[0]) {
         tivoo_control_client_connected(client_fd);
+#ifdef TIVOO_P68_B2_UART
+        if (!tivoo_uart_client_open()) {
+            tivoo_control_client_disconnected(client_fd);
+            close_fd(&endpoint->client_fd);
+            return;
+        }
+#endif
         atomic_store(&s_control_client_connected, true);
     } else {
         tivoo_diagnostics_client_connected(client_fd);
         atomic_store(&s_diagnostic_client_connected, true);
     }
 }
+
+#ifdef TIVOO_P68_B2_UART
+/* Keep at most one TCP segment plus the original parser buffer. A pending
+ * reliable UART packet gates further parsing/recv, not the diagnostic port. */
+static void pump_control_input(listener_endpoint_t *endpoint)
+{
+    if (endpoint->client_fd < 0) return;
+    if (!tivoo_uart_client_valid()) {
+        close_client(endpoint);
+        return;
+    }
+    while (s_control_offset < s_control_size && tivoo_uart_client_can_read()) {
+        if (!tivoo_control_client_data(endpoint->client_fd,
+                s_control_receive_buffer + s_control_offset, 1)) {
+            close_client(endpoint);
+            return;
+        }
+        s_control_offset++;
+    }
+    if (s_control_offset == s_control_size) {
+        s_control_offset = s_control_size = 0;
+        if (!tivoo_uart_client_can_read()) {
+            uint8_t byte;
+            ssize_t n = recv(endpoint->client_fd, &byte, 1, MSG_PEEK);
+            if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+                close_client(endpoint);
+        }
+    }
+}
+#endif
 
 static void check_client(listener_endpoint_t *endpoint)
 {
@@ -159,30 +212,42 @@ static void check_client(listener_endpoint_t *endpoint)
         if (result > 0) {
             if (!tivoo_diagnostics_client_data(
                     endpoint->client_fd, s_receive_buffer, (size_t)result)) {
-                close_endpoint(endpoint);
+                close_client(endpoint);
             }
             return;
         }
         if (result == 0 ||
             (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
-            close_endpoint(endpoint);
+            close_client(endpoint);
         }
         return;
     }
 
+#ifdef TIVOO_P68_B2_UART
+    if (s_control_size || !tivoo_uart_client_can_read()) return;
+    const ssize_t result = recv(endpoint->client_fd, s_control_receive_buffer,
+                                sizeof(s_control_receive_buffer), 0);
+    if (result > 0) {
+        s_control_size = (size_t)result;
+        s_control_offset = 0;
+        pump_control_input(endpoint);
+        return;
+    }
+#else
     const ssize_t result =
         recv(endpoint->client_fd, s_receive_buffer,
              sizeof(s_receive_buffer), 0);
     if (result > 0) {
         if (!tivoo_control_client_data(
                 endpoint->client_fd, s_receive_buffer, (size_t)result)) {
-            close_endpoint(endpoint);
+            close_client(endpoint);
         }
         return;
     }
+#endif
     if (result == 0 ||
         (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
-        close_endpoint(endpoint);
+        close_client(endpoint);
     }
 }
 
@@ -193,6 +258,9 @@ static void poll_listeners(void)
     FD_ZERO(&readable);
     FD_ZERO(&writable);
     int max_fd = -1;
+#ifdef TIVOO_P68_B2_UART
+    pump_control_input(&s_endpoints[0]);
+#endif
 
     for (size_t i = 0; i < 2; i++) {
         listener_endpoint_t *endpoint = &s_endpoints[i];
@@ -203,7 +271,10 @@ static void poll_listeners(void)
             }
         }
         if (endpoint->client_fd >= 0) {
-            FD_SET(endpoint->client_fd, &readable);
+#ifdef TIVOO_P68_B2_UART
+            if (i != 0 || (!s_control_size && tivoo_uart_client_can_read()))
+#endif
+                FD_SET(endpoint->client_fd, &readable);
             if (i == 0 &&
                 tivoo_control_client_has_pending(endpoint->client_fd)) {
                 FD_SET(endpoint->client_fd, &writable);
@@ -221,7 +292,11 @@ static void poll_listeners(void)
 
     struct timeval timeout = {
         .tv_sec = 0,
-        .tv_usec = SELECT_TIMEOUT_MS * 1000,
+        .tv_usec =
+#ifdef TIVOO_P68_B2_UART
+            s_endpoints[0].client_fd >= 0 ? 10000 :
+#endif
+            SELECT_TIMEOUT_MS * 1000,
     };
     tivoo_control_report_pending_errors();
     int ready = select(max_fd + 1, &readable, &writable, NULL, &timeout);
@@ -242,7 +317,7 @@ static void poll_listeners(void)
         if (i == 0 && endpoint->client_fd >= 0 &&
             FD_ISSET(endpoint->client_fd, &writable) &&
             !tivoo_control_client_send_pending(endpoint->client_fd)) {
-            close_endpoint(endpoint);
+            close_client(endpoint);
         }
     }
 }

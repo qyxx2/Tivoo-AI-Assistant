@@ -50,8 +50,6 @@ _BASE_CAPABILITIES = {
     "remote_diagnostics",
     "device_status",
     "device_events",
-    "audio_resource_http",
-    "audio_control",
 }
 
 _ERROR_CODES = {
@@ -134,6 +132,8 @@ class Esp32ConnectionAdapter:
         self._writers: dict[str, asyncio.StreamWriter] = {}
         self._diagnostic_tx_sequence = 0
         self._diagnostic_handshaken = False
+        self._diagnostic_capabilities: set[str] | None = None
+        self._status_control_writer: asyncio.StreamWriter | None = None
         self._mic_activity_capable = False
         self._audio_session_manager: AudioSessionManager | None = None
         self._diagnostic_last_pong_at = 0.0
@@ -185,6 +185,8 @@ class Esp32ConnectionAdapter:
                 return_exceptions=True,
             )
         self._writers.clear()
+        self._diagnostic_capabilities = None
+        self._status_control_writer = None
         self._diagnostic_handshaken = False
         self._diagnostic_tx_sequence = 0
 
@@ -235,7 +237,19 @@ class Esp32ConnectionAdapter:
             raise TypeError("handler must be callable")
         self._spp_state_handler = handler
 
-    async def _notify_spp_state(self, state: str) -> None:
+    def _matches_spp_mac(self, mac: str | None) -> bool:
+        return (
+            self._bluetooth_mac is not None
+            and isinstance(mac, str)
+            and bool(_MAC_PATTERN.fullmatch(mac))
+            and bytes.fromhex(mac.replace(":", "")) == self._bluetooth_mac
+        )
+
+    async def _notify_spp_state(self, state: str, mac: str | None = None) -> None:
+        if state == "spp_connected" and (
+            self.states["control"] != "connected" or not self._matches_spp_mac(mac)
+        ):
+            return
         if self._spp_state_handler is None:
             return
         try:
@@ -352,6 +366,11 @@ class Esp32ConnectionAdapter:
             writer = self._writers.get("diagnostic")
             if not self._diagnostic_handshaken or writer is None or writer.is_closing():
                 raise HomeAssistantError("ESP32 diagnostic handshake is not accepted")
+            if self._diagnostic_capabilities is not None:
+                if message_type == TYPE_TTS_PLAY and "audio_resource_http" not in self._diagnostic_capabilities:
+                    raise HomeAssistantError("ESP32 audio resource capability is unavailable")
+                if message_type not in {TYPE_GET_STATUS, TYPE_PING, TYPE_TTS_PLAY} and "audio_control" not in self._diagnostic_capabilities:
+                    raise HomeAssistantError("ESP32 audio control capability is unavailable")
             frame = encode_message(message_type, payload, self._diagnostic_tx_sequence)
             try:
                 writer.write(frame)
@@ -402,7 +421,7 @@ class Esp32ConnectionAdapter:
                         self.device_status is not None
                         and self.device_status["spp"]["state"] == "connected"
                     ):
-                        await self._notify_spp_state("spp_connected")
+                        await self._notify_spp_state("spp_connected", self.device_status["spp"].get("mac"))
                     while data := await reader.read(4096):
                         await self._handle_control_data(data)
                 else:
@@ -421,6 +440,8 @@ class Esp32ConnectionAdapter:
                     self._writers.pop(channel, None)
                     if channel == "diagnostic":
                         self._diagnostic_handshaken = False
+                        self._diagnostic_capabilities = None
+                        self._status_control_writer = None
                         self._mic_activity_capable = False
                         self._diagnostic_tx_sequence = 0
                         self._device_status_request_id = None
@@ -508,6 +529,7 @@ class Esp32ConnectionAdapter:
 
                         handshaken = True
                         self._diagnostic_handshaken = True
+                        self._diagnostic_capabilities = set(payload["capabilities"])
                         self._mic_activity_capable = (
                             MIC_ACTIVITY_CAPABILITY in payload["capabilities"]
                         )
@@ -519,6 +541,7 @@ class Esp32ConnectionAdapter:
                             payload["reset_reason"],
                         )
                         self._device_status_request_id = str(uuid.uuid4())
+                        self._status_control_writer = self._writers.get("control")
                         self.last_device_event = None
                         try:
                             await self.async_send_message(
@@ -560,6 +583,7 @@ class Esp32ConnectionAdapter:
                                 and self.states["control"] == "connected"
                                 and (control_writer := self._writers.get("control"))
                                 is not None
+                                and control_writer is self._status_control_writer
                                 and not control_writer.is_closing()
                             ):
                                 _LOGGER.info(
@@ -570,7 +594,7 @@ class Esp32ConnectionAdapter:
                             # Bluetooth remains connected and emits no new event.
                             if payload["spp"]["state"] in {"connected", "disconnected"}:
                                 await self._notify_spp_state(
-                                    f"spp_{payload['spp']['state']}"
+                                    f"spp_{payload['spp']['state']}", payload["spp"].get("mac")
                                 )
                         elif message.message_type == TYPE_DEVICE_EVENT:
                             payload = self._validate_device_event(
@@ -582,7 +606,7 @@ class Esp32ConnectionAdapter:
                                 "spp_connected",
                                 "spp_disconnected",
                             }:
-                                await self._notify_spp_state(payload["event"])
+                                await self._notify_spp_state(payload["event"], payload["data"].get("mac"))
                         elif message.message_type == TYPE_DIAGNOSTIC_LOG:
                             self._log_diagnostic(self._decode_json(message.payload))
                         elif message.message_type == TYPE_ERROR:
@@ -741,9 +765,9 @@ class Esp32ConnectionAdapter:
         elif name.startswith("spp_"):
             spp = dict(self.device_status["spp"])
             spp["state"] = name.removeprefix("spp_")
-            if name == "spp_disconnected":
+            if name == "spp_disconnected" or "mac" not in event["data"]:
                 spp.pop("mac", None)
-            elif "mac" in event["data"]:
+            else:
                 spp["mac"] = event["data"]["mac"]
             self.device_status["spp"] = spp
 

@@ -13,3 +13,8 @@ bool tivoo_control_spp_data(const uint8_t *data, size_t size);
 bool tivoo_control_client_has_pending(int client_fd);
 bool tivoo_control_client_send_pending(int client_fd);
 void tivoo_control_report_pending_errors(void);
+
+#ifdef TIVOO_P68_B2_UART
+size_t tivoo_control_reverse_peak(void);
+bool tivoo_control_try_reverse(const uint8_t *data, size_t size);
+#endif

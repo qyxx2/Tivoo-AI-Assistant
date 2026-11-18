@@ -1369,7 +1369,17 @@ async def test_device_status_and_event_validation_updates_only_known_state(
             ),
             (
                 TYPE_DEVICE_EVENT,
-                {"event": "spp_disconnected", "uptime_ms": 12, "data": {}},
+                {"event": "spp_connected", "uptime_ms": 13,
+                 "data": {"mac": "00:11:22:33:44:55"}},
+            ),
+            (
+                TYPE_DEVICE_EVENT,
+                {"event": "spp_connected", "uptime_ms": 14,
+                 "data": {"mac": "11:75:58:97:49:98"}},
+            ),
+            (
+                TYPE_DEVICE_EVENT,
+                {"event": "spp_disconnected", "uptime_ms": 15, "data": {}},
             ),
         ]
         for sequence, (message_type, payload) in enumerate(messages, start=1):
@@ -1403,11 +1413,13 @@ async def test_device_status_and_event_validation_updates_only_known_state(
     await adapter.async_start()
     try:
         for _ in range(100):
-            if len(handled) == 3:
+            if len(handled) == 5:
                 break
             await asyncio.sleep(0.01)
         assert [message.message_type for message in handled] == [
             TYPE_DEVICE_STATUS,
+            TYPE_DEVICE_EVENT,
+            TYPE_DEVICE_EVENT,
             TYPE_DEVICE_EVENT,
             TYPE_DEVICE_EVENT,
         ]
@@ -1755,3 +1767,20 @@ async def test_persistent_upload_is_stopped_when_satellite_is_unavailable():
 
     assert manager.active_session_id is None
     stop.assert_awaited_once_with(session_id, "satellite_unavailable")
+
+
+def test_p68_control_only_hello_requires_control_and_diagnostics():
+    payload = {
+        "device_id": "tivoo-esp32",
+        "firmware_version": "0.1.0+abcdef0",
+        "protocol_version": 1,
+        "capabilities": [
+            "spp_control", "spp_reverse", "remote_diagnostics",
+            "device_status", "device_events",
+        ],
+        "reset_reason": "ESP_RST_POWERON",
+    }
+    transport.Esp32ConnectionAdapter._validate_hello(payload)
+    payload["capabilities"].remove("spp_reverse")
+    with pytest.raises(ValueError):
+        transport.Esp32ConnectionAdapter._validate_hello(payload)

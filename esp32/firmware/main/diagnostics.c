@@ -516,7 +516,7 @@ static char *build_hello_payload(size_t *payload_size)
     cJSON_AddStringToObject(root, "device_id", "tivoo-esp32");
     cJSON_AddStringToObject(root, "firmware_version", TIVOO_FIRMWARE_VERSION);
     cJSON_AddNumberToObject(root, "protocol_version", 1);
-#ifndef TIVOO_P68_B1_SCAFFOLD
+#if !defined(TIVOO_P68_B1_SCAFFOLD) || defined(TIVOO_P68_B2_UART)
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("spp_control"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("spp_reverse"));
 #endif

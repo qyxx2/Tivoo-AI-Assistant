@@ -28,3 +28,8 @@ bool tivoo_spp_queue_connect(const uint8_t peer[6]);
 bool tivoo_spp_queue_disconnect(const uint8_t peer[6]);
 tivoo_spp_queue_result_t tivoo_spp_queue_frame(
     const uint8_t *frame, size_t size);
+
+#ifdef TIVOO_P68_B2_BRIDGE
+unsigned tivoo_spp_queue_peak(void);
+void tivoo_spp_set_control_generation(uint32_t generation);
+#endif

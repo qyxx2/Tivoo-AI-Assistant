@@ -21,6 +21,20 @@
 #include "freertos/task.h"
 #include "tivoo_frame_stream.h"
 #include "tivoo_spp_session.h"
+#ifdef TIVOO_P68_B2_BRIDGE
+#include "uart_transport.h"
+#include "esp_heap_caps.h"
+static atomic_uint s_queue_peak;
+unsigned tivoo_spp_queue_peak(void) {return atomic_load(&s_queue_peak);}
+static atomic_uint s_control_generation;
+static uint8_t s_control_peer[6];
+static bool s_control_peer_valid;
+void tivoo_spp_set_control_generation(uint32_t generation)
+{
+    atomic_store(&s_control_generation, generation);
+    s_control_peer_valid = false;
+}
+#endif
 
 #define SPP_TX_QUEUE_SIZE 32
 #define SPP_QUEUE_WRITE_TIMEOUT_MS 1000
@@ -58,6 +72,9 @@ typedef struct {
     request_type_t type;
     uint8_t peer[6];
     size_t size;
+#ifdef TIVOO_P68_B2_BRIDGE
+    uint32_t generation;
+#endif
     uint8_t data[];
 } spp_request_t;
 
@@ -120,7 +137,9 @@ static void report_link_event(const char *event)
 
 static void set_link_state(spp_link_state_t state)
 {
+    portENTER_CRITICAL(&s_link_peer_mux);
     const int previous = atomic_exchange(&s_link_state, (int)state);
+    portEXIT_CRITICAL(&s_link_peer_mux);
     if (previous == (int)state) {
         return;
     }
@@ -134,10 +153,10 @@ static void set_link_state(spp_link_state_t state)
 void tivoo_spp_get_status(
     tivoo_spp_link_state_t *state, uint8_t peer[6], bool *peer_valid)
 {
+    portENTER_CRITICAL(&s_link_peer_mux);
     if (state != NULL) {
         *state = (tivoo_spp_link_state_t)atomic_load(&s_link_state);
     }
-    portENTER_CRITICAL(&s_link_peer_mux);
     if (peer_valid != NULL) {
         *peer_valid = s_link_peer_valid;
     }
@@ -724,8 +743,9 @@ static void process_request(spp_request_t *queued)
                 queued->peer[0], queued->peer[1], queued->peer[2],
                 queued->peer[3], queued->peer[4], queued->peer[5]);
         } else {
-            publish_link_peer(queued->peer);
+            /* Never export the new target MAC with the old connected state. */
             set_link_state(SPP_LINK_CONNECTING);
+            publish_link_peer(queued->peer);
         }
         xEventGroupSetBits(s_events, EVENT_AUTO_RECONNECT);
         s_reconnect_not_before = 0;
@@ -735,12 +755,21 @@ static void process_request(spp_request_t *queued)
         s_reconnect_not_before = 0;
     }
 
+#ifdef TIVOO_P68_B2_BRIDGE
+    if (queued->type == REQUEST_FRAME &&
+        (!s_session.peer_valid || !same_address(queued->peer, s_session.peer))) {
+        tivoo_uart_bridge_hint(queued->generation, 0x96);
+        report_spp_error("spp_not_connected", "frame target is not the authenticated peer");
+        return;
+    }
+#endif
     tivoo_spp_request_t request = {0};
     request.type = (tivoo_spp_request_type_t)queued->type;
     memcpy(request.peer, queued->peer, sizeof(request.peer));
     request.frame = queued->data;
     request.frame_size = queued->size;
 
+    const bool was_connected = s_session.connected;
     const tivoo_spp_session_result_t result = tivoo_spp_session_process(
         &s_session, &request, &s_session_backend);
     switch (result) {
@@ -766,14 +795,20 @@ static void process_request(spp_request_t *queued)
         break;
     case TIVOO_SPP_SESSION_DISCONNECT_FAILED:
         atomic_store(&s_disconnect_pending, false);
-        if (s_handle != 0U) {
-            atomic_store(&s_link_state, SPP_LINK_CONNECTED);
+        if (was_connected && s_handle != 0U && s_session.peer_valid) {
+            s_session.connected = true;
+            publish_link_peer(s_session.peer);
+            set_link_state(SPP_LINK_CONNECTED);
         } else {
             set_link_state(SPP_LINK_DISCONNECTED);
         }
         report_spp_error("spp_disconnect_failed", "spp_close_event_not_received");
         break;
     case TIVOO_SPP_SESSION_NOT_CONNECTED:
+#ifdef TIVOO_P68_B2_BRIDGE
+        tivoo_uart_bridge_hint(queued->generation,
+            atomic_load(&s_link_state) == SPP_LINK_CONNECTING ? 0x69 : 0x96);
+#endif
         set_link_state(SPP_LINK_DISCONNECTED);
         report_spp_error(
             "spp_not_connected", "tivoo_frame_received_without_authenticated_peer");
@@ -797,7 +832,11 @@ static void spp_worker(void *context)
         const BaseType_t received = xQueueReceive(
             s_request_queue, &request, pdMS_TO_TICKS(SPP_WORKER_POLL_MS));
         if (received == pdTRUE && request != NULL) {
-            process_request(request);
+#ifdef TIVOO_P68_B2_BRIDGE
+            if (request->type != REQUEST_FRAME ||
+                request->generation == atomic_load(&s_control_generation))
+#endif
+                process_request(request);
             free(request);
         }
         service_spp_reconnect();
@@ -814,12 +853,20 @@ static bool queue_request(
         return false;
     }
 
+#ifdef TIVOO_P68_B2_BRIDGE
+    spp_request_t *request = heap_caps_malloc(sizeof(*request) + size,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
     spp_request_t *request = malloc(sizeof(*request) + size);
+#endif
     if (request == NULL) {
         return false;
     }
     request->type = type;
     request->size = size;
+#ifdef TIVOO_P68_B2_BRIDGE
+    request->generation = atomic_load(&s_control_generation);
+#endif
     if (peer != NULL) {
         memcpy(request->peer, peer, sizeof(request->peer));
     } else {
@@ -831,10 +878,19 @@ static bool queue_request(
 
     if (xQueueSend(
             s_request_queue, &request,
-            pdMS_TO_TICKS(SPP_QUEUE_WRITE_TIMEOUT_MS)) != pdTRUE) {
+#ifdef TIVOO_P68_B2_BRIDGE
+            0
+#else
+            pdMS_TO_TICKS(SPP_QUEUE_WRITE_TIMEOUT_MS)
+#endif
+            ) != pdTRUE) {
         free(request);
         return false;
     }
+#ifdef TIVOO_P68_B2_BRIDGE
+    unsigned n=uxQueueMessagesWaiting(s_request_queue);
+    if(n>atomic_load(&s_queue_peak)) atomic_store(&s_queue_peak,n);
+#endif
     return true;
 }
 
@@ -849,7 +905,14 @@ bool tivoo_spp_queue_connect(const uint8_t peer[6])
     if (!already_connected) {
         atomic_store(&s_disconnect_pending, false);
     }
-    return queue_request(REQUEST_CONNECT, peer, NULL, 0);
+    const bool queued = queue_request(REQUEST_CONNECT, peer, NULL, 0);
+#ifdef TIVOO_P68_B2_BRIDGE
+    if (queued) {
+        memcpy(s_control_peer, peer, 6);
+        s_control_peer_valid = true;
+    }
+#endif
+    return queued;
 }
 
 bool tivoo_spp_queue_disconnect(const uint8_t peer[6])
@@ -868,6 +931,10 @@ bool tivoo_spp_queue_disconnect(const uint8_t peer[6])
         }
         return false;
     }
+#ifdef TIVOO_P68_B2_BRIDGE
+    if (s_control_peer_valid && same_address(s_control_peer, peer))
+        s_control_peer_valid = false;
+#endif
     return true;
 }
 
@@ -880,6 +947,11 @@ tivoo_spp_queue_result_t tivoo_spp_queue_frame(
         return TIVOO_SPP_QUEUE_FULL;
     }
 
+#ifdef TIVOO_P68_B2_BRIDGE
+    /* FIFO preserves selection before frame execution, including a pending MAC switch. */
+    return queue_request(REQUEST_FRAME, s_control_peer_valid ? s_control_peer : NULL, frame, size)
+        ? TIVOO_SPP_QUEUE_QUEUED : TIVOO_SPP_QUEUE_FULL;
+#else
     if (atomic_load(&s_disconnect_pending)) {
         return TIVOO_SPP_QUEUE_DISCONNECTED;
     }
@@ -892,6 +964,7 @@ tivoo_spp_queue_result_t tivoo_spp_queue_frame(
     }
     return queue_request(REQUEST_FRAME, NULL, frame, size)
         ? TIVOO_SPP_QUEUE_QUEUED : TIVOO_SPP_QUEUE_FULL;
+#endif
 }
 
 esp_err_t tivoo_spp_start(void)
