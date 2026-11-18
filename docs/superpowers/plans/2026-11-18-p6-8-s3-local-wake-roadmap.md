@@ -1,6 +1,6 @@
 # P6.8 — ESP32-S3 双板语音终端与原生 WakeNet 改造路线
 
-> 状态：总体路线，尚未实施；设计阶段拆为 b0.1–b0.6，随后为 b1–b10 实施阶段，共 16 批；b0.1 总体设计与历史合同索引、b0.2 硬件与桥接设计、b0.3 音频/AFE、b0.4 HA STT/提示音合同、b0.5 生命周期与表情合同已完成，下一步 b0.6。
+> 状态：总体路线，尚未实施；设计阶段拆为 b0.1–b0.6，随后为 b1–b10 实施阶段，共 16 批；b0.1 总体设计与历史合同索引、b0.2 硬件与桥接设计、b0.3 音频/AFE、b0.4 HA STT/提示音合同、b0.5 生命周期与表情合同及 b0.6 交叉审计已完成；下一步仅 b1，实施尚未开始。
 > 基线：main @ d79775f（2026-11-18）；分支 feature/p6-8-s3-local-wake。
 > 本文是 P6.8 的后续执行入口；旧规格保留已实现行为和证据，涉及旧硬件、远程 KWS、提示音和阶段归属的冲突按本文的目标方向在 b0.1–b0.6 分域修订并统一交叉审查。不得把规划当成当前生产行为。
 
@@ -72,6 +72,8 @@
 
 **b0.5 交付：** [打断、连续对话、音频所有权与表情协调规格及合同矩阵](../specs/2026-11-18-p6-8-b0-5-lifecycle-display-design.md)。每轮 UUID 绑定普通 TTS playback ID，S3 先本地定向停止、HA 序列化取消旧 caller，独立授权 0x27 与真实 gate 计时；保持唯一显示仲裁，b7–b8 实施及 b10 实机。
 
+**b0.6 交付：** [交叉审计报告](../reports/2026-11-18-p6-8-b0-6-cross-audit.md)、[正式旧合同追踪](../specs/2026-11-18-p6-8-legacy-contract-migration-index.md)、[b1–b10 分批执行与验收计划](2026-11-18-p6-8-b1-b10-execution-plan.md)。设计出口与实施 gate 分离；49 项新合同、192 个原 ID、19 个遗留项均映射测试责任。
+
 **执行顺序：** b0.1 → b0.2 → b0.3 → b0.4 → b0.5 → b0.6 → b1–b10。每一批仅完成其设计范围，产出可独立审阅的文档或报告，不提前修改生产实现。跨域发现应回写所属规格，避免同一规则在多个规格中重复定义。设计阶段不等于声学/生产验收。
 
 | 设计批次 | 核对与确定的内容 | 交付物及退出条件 |
@@ -134,4 +136,4 @@ SPP 连接状态来源为蓝牙桥的真实状态，经 S3 转发；UART 重连/
 - [ESP-IDF S3 UART](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/uart.html)
 - [HA Assist Satellite](https://developers.home-assistant.io/docs/core/entity/assist-satellite/)；[HA Assist Pipeline](https://developers.home-assistant.io/docs/voice/pipelines)
 
-本路线只设定总体步骤，不是详细规格、合同矩阵或可直接执行的实现清单；b0.1–b0.5 文档设计出口已记录，下一步仅展开 P6.8b0.6；b0.6 审查通过后进入 b1。
+详细规格、正式合同追踪及分批执行清单见 §2.1；b0.1–b0.6 文档设计出口已记录，下一步仅 P6.8b1。各实施/实物 gate 仍须按证据验收。
