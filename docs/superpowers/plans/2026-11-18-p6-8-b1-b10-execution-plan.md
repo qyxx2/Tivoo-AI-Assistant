@@ -60,10 +60,12 @@
 
 **Consumes:** 本地 confirmed wake/16k stream、TVIO v1；**Produces:** VOICE-C01–07 最小端到端、LIFE-C01/C04 的 UUID 字段与正常 owner 基础。
 **Files:** `services/sherpa_wyoming/{run,config,healthcheck}.py` 及 compose 实际配置；HA `homeassistant/custom_components/tivoo/{assist_satellite,audio_session,diagnostics,transport,audio_resource}.py`、标准 pipeline select 平台接入；S3 diagnostics/audio capture；对应现 test_server/stt/runtime/config、test_assist_satellite/audio_session/diagnostics/transport/audio_resource。
-- [ ] T05-A：实际 HA public Satellite API、专用 pipeline 和原 conversation/context，本地优先/模拟 AstrBot、手动新会话、P3 ChatLog/SSE 原断言、intercept/ask_question 例外；legacy 走旧 pipeline，local 模式错配拒绝，不能 preferred 回退。测试同名/失效 select、Provider 错配均 fail closed。
-- [ ] T05-B：先使用真实 HA+fake Wyoming 整个 STT pipeline，确认 STT_START≠ready、pull 前已 Transcribe/AudioStart、尾 PCM 逐字节一致、自然 EOF/一次 AudioStop/一次 decode、无 HA VAD 截断；再用共享模型/executor 增 ASR-only listener requires_external_vad=false，原10400 true、旧三 Provider 继续；核验实际端口/健康/其他消费者/资源不重复加载、非法请求拒绝。若公开 API 可行性失败先回规格，不继续部署。
-- [ ] T05-C：双端 0x20/21/22/23/24/25/26 codec/方向/能力（ACK 回显）、UUID/epoch、0x30/31/32 基础绑定；模拟 gate 先/ready 先、早 speech_end、tail+end+新start同包、错计数/overflow/timeout/取消 EOF；start gate 后且 ready 后、有界1s、3s假钟、15s命令，尾部完整才 EOF。正常 TTS 基础输出，使用测试 gate，不宣称 b6 提示音已交付；主动打断/续聊归 b7。
-- [ ] 验证：`bash scripts/test-ha.sh tests/homeassistant` 及 `bash scripts/test-sherpa-wyoming.sh`，S3 build、真实 HA fake endpoint 证据与需要的只读本地 intent；报告/提交。
+- [x] T05-A：实际 HA public Satellite API、专用 pipeline 和原 conversation/context，本地优先/模拟 AstrBot、手动新会话、P3 ChatLog/SSE 原断言、intercept/ask_question 例外；legacy 走旧 pipeline，local 模式错配拒绝，不能 preferred 回退。测试同名/失效 select、Provider 错配均 fail closed。
+- [x] T05-B：先使用真实 HA+fake Wyoming 整个 STT pipeline，确认 STT_START≠ready、pull 前已 Transcribe/AudioStart、尾 PCM 逐字节一致、自然 EOF/一次 AudioStop/一次 decode、无 HA VAD 截断；再用共享模型/executor 增 ASR-only listener requires_external_vad=false，原10400 true、旧三 Provider 继续；核验实际端口/健康/其他消费者/资源不重复加载、非法请求拒绝。若公开 API 可行性失败先回规格，不继续部署。
+- [x] T05-C：双端 0x20/21/22/23/24/25/26 codec/方向/能力（ACK 回显）、UUID/epoch、0x30/31/32 基础绑定；模拟 gate 先/ready 先、早 speech_end、tail+end+新start同包、错计数/overflow/timeout/取消 EOF；start gate 后且 ready 后、有界1s、3s假钟、15s命令，尾部完整才 EOF。正常 TTS 基础输出，使用测试 gate，不宣称 b6 提示音已交付；主动打断/续聊归 b7。
+- [x] 验证（软件执行完毕；第二次 HA 全量 506 passed + 1 teardown error，config flow 定向复验14通过；非全绿与实物 GAP 见报告）：`bash scripts/test-ha.sh tests/homeassistant` 及 `bash scripts/test-sherpa-wyoming.sh`，S3 build、真实 HA fake endpoint 证据与需要的只读本地 intent；报告/提交。
+
+软件验收报告：[b5 local STT acceptance](../reports/2026-11-18-p6-8-b5-local-stt-acceptance.md)。生产部署/实物验证暂缓，不代表 b6/b7 验收。
 
 ## b6 — 本地提示音与 endpoint
 
