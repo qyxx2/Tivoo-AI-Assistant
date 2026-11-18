@@ -81,11 +81,13 @@
 
 **Consumes:** T05 UUID/EOF/T06 gate/短 PCM；**Produces:** LIFE-C01–08 完整、0x27、真实普通播放终态。
 **Files:** HA `assist_satellite.py,audio_session.py,audio_resource.py,tts_lifecycle.py,transport.py,diagnostics.py`，AstrBot `conversation.py,api.py`；S3 `audio_resource.c,audio_output_manager.c,diagnostics.c,audio_frontend.c`；对应 tests。
-- [ ] T07-A：用 fake owner/clock 先测未ready/STT/intent/合成/播放/等待续聊重新 wake、连续3次、旧 caller finally、FIFO旧 PCM、断线/reload、慢 cleanup 超限；本地同步失效旧输出，旧清理只捕获其资源，HA reader 不阻塞，串行 public caller，最后一轮独占。普通 VAD 无权，短 gate 例外。
-- [ ] T07-B：按 epoch+UUID+playback 验证迟到/重复0x30/31/32、无 ID stop、停止旧 DMA 后才能新 prompt、普通 TTS 持续长间隙/真实终态，正常回复无截断；实际 stop 延迟分离数字/物理。
-- [ ] T07-C：P3 SSE accepted/not accepted/end/partial、session stop once、失败/timeout 不复用旧 session、保留新对话入口；真实 HA owner ResultStream/cache token、Wyoming FIN/EOF、FFmpeg/GET 取消与对照正常完成；5/15/5/10s 各 watchdog 无永久 barrier。先失败后最小扩展失败传播。
-- [ ] T07-D：严格 true+有效 Intent+正常 run+真实 completed 双顺序或已证实无 TTS；false/缺失/error/stop/intercept/发送失败无授权；0x27 单次 parent→新 UUID，beep 后实际 gate 4s，5s grant handoff，重复/旧 grant/新 wake/无命令/早 ready，首次仍3s。不能以 playback_id None 推断无 TTS；正常无授权发匹配 0x23、设备匹配 0x22 后回 idle，迟到 END 不影响新轮。
-- [ ] 验证：`bash scripts/test-ha.sh tests/homeassistant tests/esp32` 及 Sherpa suite，S3 build；真实服务/设备定向打断证据；报告/提交。
+- [x] T07-A（软件 PASS；真实设备各阶段另验）：用 fake owner/clock 先测未ready/STT/intent/合成/播放/等待续聊重新 wake、连续3次、旧 caller finally、FIFO旧 PCM、断线/reload、慢 cleanup 超限；本地同步失效旧输出，旧清理只捕获其资源，HA reader 不阻塞，串行 public caller，最后一轮独占。普通 VAD 无权，短 gate 例外。
+- [ ] T07-B（软件实现及 host PASS；真实 stop/drain/声学 GAP）：按 epoch+UUID+playback 验证迟到/重复0x30/31/32、无 ID stop、停止旧 DMA 后才能新 prompt、普通 TTS 持续长间隙/真实终态，正常回复无截断；实际 stop 延迟分离数字/物理。
+- [x] T07-C（软件 PASS；真实服务定向打断 GAP）：P3 SSE accepted/not accepted/end/partial、session stop once、失败/timeout 不复用旧 session、保留新对话入口；真实 HA owner ResultStream/cache token、Wyoming FIN/EOF、FFmpeg/GET 取消与对照正常完成；5/15/5/10s 各 watchdog 无永久 barrier。先失败后最小扩展失败传播。
+- [x] T07-D（软件 PASS；真实 beep/gate GAP）：严格 true+有效 Intent+正常 run+真实 completed 双顺序或已证实无 TTS；false/缺失/error/stop/intercept/发送失败无授权；0x27 单次 parent→新 UUID，beep 后实际 gate 4s，5s grant handoff，重复/旧 grant/新 wake/无命令/早 ready，首次仍3s。不能以 playback_id None 推断无 TTS；正常无授权发匹配 0x23、设备匹配 0x22 后回 idle，迟到 END 不影响新轮。
+- [ ] 验证（软件全量 PASS，真实服务/设备 GAP）：`bash scripts/test-ha.sh tests/homeassistant tests/esp32` 及 Sherpa suite，S3 build；真实服务/设备定向打断证据；报告/提交。
+
+软件验收报告：[b7 lifecycle acceptance](../reports/2026-11-18-p6-8-b7-lifecycle-acceptance.md)。HA 独立全量527 passed + 追加六阶段专项21 passed；ESP32 91 passed、Sherpa 135 passed、S3 build PASS；不部署、不刷写。保留实物与生产服务核销项。
 
 ## b8 — 表情事件来源
 
