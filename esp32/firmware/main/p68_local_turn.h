@@ -14,6 +14,7 @@ typedef bool (*tivoo_turn_send_t)(void *, tivoo_turn_event_t, const int16_t *, s
 
 typedef struct {
     bool active, start_sent, gated, gate_sent, ready, speaking, speech_sent, ended, complete;
+    uint32_t command_window_ms;
     uint64_t wake_ms, gate_ms, speech_ms, end_ms, next, last_progress_ms;
     size_t read, pending, valid_samples, pad_samples, sent;
     const char *abort_reason;
@@ -21,6 +22,8 @@ typedef struct {
 } tivoo_local_turn_t;
 
 void tivoo_turn_begin(tivoo_local_turn_t *, uint64_t now);
+bool tivoo_turn_followup_allowed(bool same_parent, bool reply_allowed, bool playback_complete, bool consumed);
+void tivoo_turn_begin_followup(tivoo_local_turn_t *, uint64_t now);
 void tivoo_turn_gate(tivoo_local_turn_t *, uint64_t now);
 void tivoo_turn_ready(tivoo_local_turn_t *, uint64_t now);
 void tivoo_turn_speech(tivoo_local_turn_t *, uint64_t now, uint64_t first);

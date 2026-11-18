@@ -8,9 +8,9 @@ from custom_components.tivoo import diagnostics as codec
 from test_audio_session import SESSION_1, SESSION_2, _start_payload
 
 
-def local_start(session_id=SESSION_1):
+def local_start(session_id=SESSION_1, uptime_ms=100):
     return _start_payload(session_id, trigger_source="local_wake", preroll_ms=0,
-                          wake_word_phrase="嗨，乐鑫", uptime_ms=100)
+                          wake_word_phrase="嗨，乐鑫", uptime_ms=uptime_ms)
 
 
 def gate(session_id=SESSION_1, prompt_result="skipped"):
@@ -87,7 +87,7 @@ async def test_local_new_uuid_cancels_old_and_duplicate_cannot_reopen():
     async with manager.audio_subscription(SESSION_1, start=0, on_pull=AsyncMock()) as audio:
         pending = asyncio.create_task(anext(audio))
         await asyncio.sleep(0)
-        await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
+        await manager.async_start_session(local_start(SESSION_2, 101), persistent=True, local_mode=True)
         await manager.async_start_session(local_start(), persistent=True, local_mode=True)
         with pytest.raises(RuntimeError, match="aborted"):
             await pending

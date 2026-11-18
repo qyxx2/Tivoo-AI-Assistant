@@ -1834,7 +1834,7 @@ async def test_p68_local_capability_and_session_bound_tts(monkeypatch, socket_en
         assert ready2[0] == 0x25 and ready2[2]["session_id"] == SESSION_2
         writer.write(frame(0x26,8,gate(SESSION_2))+frame(0x24,9,activity("speech_start",SESSION_2))
                      +_tvio_message(0x21,10,b"y"*640)+frame(0x24,11,activity("speech_end",SESSION_2,pcm_samples=320))
-                     +frame(0x20,12,local_start(session3)))
+                     +frame(0x20,12,local_start(session3, 102)))
         await writer.drain()
         await reader.read()
     control_server = await asyncio.start_server(control,"127.0.0.1",0)
@@ -1854,7 +1854,7 @@ async def test_p68_local_capability_and_session_bound_tts(monkeypatch, socket_en
             await done.wait()
             while not states:
                 await asyncio.sleep(.01)
-            await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
+            await manager.async_start_session(local_start(SESSION_2, 101), persistent=True, local_mode=True)
             await adapter.async_send_message(0x31, json.dumps({
                 "session_id": SESSION_1,
                 "expected_audio_id": "44444444-4444-4444-8444-444444444444",

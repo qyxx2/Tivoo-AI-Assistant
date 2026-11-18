@@ -30,6 +30,7 @@ class _MicSession:
     cursors: dict[object, int] = field(default_factory=dict)
     local_mode: bool = False
     wake_uptime: int = 0
+    followup: bool = False
     gate_uptime: int | None = None
     speech_uptime: int | None = None
     ready: bool = False
@@ -65,10 +66,20 @@ class AudioSessionManager:
         self._shutdown = False
         self.overflow_count = 0
         self._local_seen: set[str] = set()
-        self.on_local_start: Callable[[str, str], None] | None = None
+        self._local_uptime = -1
+        self._followup_grant: str | None = None
+        self.on_local_start: Callable[[str, str | None], None] | None = None
         self.on_gate: Callable[[str], None] | None = None
         self.on_activity: Callable[[str, str], None] | None = None
         self.on_end: Callable[[str, str], None] | None = None
+
+    def grant_followup(self, session_id: str) -> bool:
+        session = self._active_session
+        if (session is None or session.session_id != session_id or not session.local_mode
+            or not session.input_finished or self._followup_grant is not None):
+            return False
+        self._followup_grant = session_id
+        return True
 
     @property
     def active_session_id(self) -> str | None:
@@ -122,20 +133,32 @@ class AudioSessionManager:
         if local_mode:
             phrase = payload.get("wake_word_phrase")
             uptime = payload.get("uptime_ms")
+            followup = trigger_source == "local_followup"
             if (
-                trigger_source != "local_wake" or not persistent or preroll_ms != 0
-                or not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 128
+                trigger_source not in {"local_wake", "local_followup"} or not persistent or preroll_ms != 0
                 or type(uptime) is not int or uptime < 0
+                or (not followup and (not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 128))
+                or (followup and "wake_word_phrase" in payload)
             ):
                 raise ValueError("invalid local wake start")
             if session_id in self._local_seen:
                 return
+            if followup:
+                parent = _require_uuid(payload, "parent_session_id")
+                if parent != self._followup_grant or parent != self.active_session_id:
+                    if self._stop_sender is not None:
+                        await self._stop_sender(session_id, "invalid_followup")
+                    return
+            if uptime <= self._local_uptime:
+                return
+            self._followup_grant = None
             if self._active_session is not None:
-                await self._finish_session(self._active_session, "superseded",
+                await self._finish_session(self._active_session, "followup" if followup else "superseded",
                                            notify_device=False, clear=True)
             self._local_seen.add(session_id)
+            self._local_uptime = uptime
             self._active_session = _MicSession(
-                session_id, persistent=True, local_mode=True, wake_uptime=uptime,
+                session_id, persistent=True, local_mode=True, wake_uptime=uptime, followup=followup,
             )
             if self.on_local_start is not None:
                 self.on_local_start(session_id, phrase)
@@ -283,7 +306,7 @@ class AudioSessionManager:
                 await self.async_stop_session(session_id, "invalid_local_activity")
                 return
             if state == "speech_start":
-                if not session.gate_uptime <= uptime_ms <= session.gate_uptime + 3000:
+                if not session.gate_uptime <= uptime_ms <= session.gate_uptime + (4000 if session.followup else 3000):
                     await self.async_stop_session(session_id, "invalid_local_start_time")
                     return
                 session.speech_uptime = uptime_ms
@@ -309,6 +332,8 @@ class AudioSessionManager:
     async def async_disconnect(self) -> None:
         """Release the upload owned by the disconnected diagnostic socket."""
         self._local_seen.clear()
+        self._local_uptime = -1
+        self._followup_grant = None
         if (session := self._active_session) is not None:
             await self._finish_session(
                 session, "disconnected", notify_device=False, clear=True
@@ -466,6 +491,7 @@ class AudioSessionManager:
     ) -> None:
         if self._active_session is session:
             self._active_session = None
+            self._followup_grant = None
         if session.local_mode:
             session.aborted = True
         if clear:

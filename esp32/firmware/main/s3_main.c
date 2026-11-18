@@ -15,6 +15,7 @@ void tivoo_s3_api_smoke(void);
 
 static bool app_message_handler(uint8_t type, const uint8_t *payload, size_t size)
 {
+    if (type == TVIO_TYPE_FOLLOWUP_OPEN) return tivoo_s3_local_turn_followup_message(payload,size);
     if (type == TVIO_TYPE_STT_READY) return tivoo_s3_local_turn_ready_message(payload,size);
     if (type == 0x30U || type == 0x31U)
         return tivoo_audio_resource_handle_message(type, payload, size);
@@ -26,7 +27,7 @@ void app_main(void)
     tivoo_s3_api_smoke(); /* volatile-disabled compile/link probe */
     tivoo_board_memory_report();
     /* GPIO38 RGB is enabled only after actual carrier revision is confirmed. */
-    ESP_LOGI("tivoo_boot", "P6.8 b6 S3 local prompt and STT; RGB GPIO38 pending board check");
+    ESP_LOGI("tivoo_boot", "P6.8 b7 S3 local lifecycle; RGB GPIO38 pending board check");
     esp_err_t err = tivoo_wifi_station_init_nvs();
     if (err != ESP_OK) {
         ESP_LOGE("tivoo_boot", "NVS initialization failed: %s", esp_err_to_name(err));

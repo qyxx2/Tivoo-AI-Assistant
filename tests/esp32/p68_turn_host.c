@@ -54,5 +54,19 @@ int main(void)
     memset(&w,0,sizeof(w)); tivoo_turn_begin(&t,0); tivoo_turn_gate(&t,1); tivoo_turn_tick(&t,1,send,&w);
     tivoo_turn_ready(&t,1002); tivoo_turn_tick(&t,1002,send,&w);
     assert(w.aborts==1 && !w.ends && !t.active);
+    memset(&w,0,sizeof(w)); tivoo_turn_begin_followup(&t,0); tivoo_turn_gate(&t,1);
+    tivoo_turn_tick(&t,1,send,&w); tivoo_turn_ready(&t,1);
+    tivoo_turn_tick(&t,3002,send,&w); assert(!w.aborts);
+    tivoo_turn_speech(&t,4001,0); assert(t.speaking && !t.abort_reason);
+    memset(&w,0,sizeof(w)); tivoo_turn_begin_followup(&t,0); tivoo_turn_gate(&t,1);
+    tivoo_turn_tick(&t,1,send,&w); tivoo_turn_ready(&t,1);
+    tivoo_turn_tick(&t,4002,send,&w); assert(w.aborts==1 && !t.active);
+    /* A grant binds the completed parent once; playback in progress or a
+     * stale epoch/UUID never authorizes a second microphone session. */
+    assert(!tivoo_turn_followup_allowed(false,true,true,false));
+    assert(!tivoo_turn_followup_allowed(true,false,true,false));
+    assert(!tivoo_turn_followup_allowed(true,true,false,false));
+    assert(!tivoo_turn_followup_allowed(true,true,true,true));
+    assert(tivoo_turn_followup_allowed(true,true,true,false));
     return 0;
 }

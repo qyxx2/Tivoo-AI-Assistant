@@ -6,6 +6,16 @@ void tivoo_turn_begin(tivoo_local_turn_t *t, uint64_t now)
     memset(t,0,offsetof(tivoo_local_turn_t,ring));
     t->wake_ms=t->last_progress_ms=now;
     t->active=true;
+    t->command_window_ms=3000;
+}
+bool tivoo_turn_followup_allowed(bool same_parent, bool reply_allowed, bool playback_complete, bool consumed)
+{
+    return same_parent && reply_allowed && playback_complete && !consumed;
+}
+void tivoo_turn_begin_followup(tivoo_local_turn_t *t, uint64_t now)
+{
+    tivoo_turn_begin(t,now);
+    t->command_window_ms=4000;
 }
 void tivoo_turn_abort(tivoo_local_turn_t *t, const char *reason)
 {
@@ -31,7 +41,7 @@ void tivoo_turn_ready(tivoo_local_turn_t *t, uint64_t now)
 void tivoo_turn_speech(tivoo_local_turn_t *t, uint64_t now, uint64_t first)
 {
     if (!t->active || t->abort_reason) return;
-    if (!t->gated || t->speaking || now-t->gate_ms>3000) {
+    if (!t->gated || t->speaking || now-t->gate_ms>t->command_window_ms) {
         tivoo_turn_abort(t,"invalid_speech_start"); return;
     }
     t->speech_ms=t->last_progress_ms=now; t->speaking=true; t->next=first;
@@ -73,7 +83,7 @@ void tivoo_turn_tick(tivoo_local_turn_t *t, uint64_t now, tivoo_turn_send_t send
     if (!t->complete && !t->abort_reason) {
         if(!t->gated && now-t->wake_ms>5000) tivoo_turn_abort(t,"gate_timeout");
         else if(t->gated && !t->ready && now-t->gate_ms>1000) tivoo_turn_abort(t,"ready_timeout");
-        else if(t->gated && !t->speaking && now-t->gate_ms>3000) tivoo_turn_abort(t,"command_timeout");
+        else if(t->gated && !t->speaking && now-t->gate_ms>t->command_window_ms) tivoo_turn_abort(t,"command_timeout");
         else if(t->speaking && !t->ended && now-t->speech_ms>15000) tivoo_turn_abort(t,"speech_timeout");
         else if(t->ready && (t->pending || t->ended) && now-t->last_progress_ms>1000) tivoo_turn_abort(t,"tx_timeout");
     }

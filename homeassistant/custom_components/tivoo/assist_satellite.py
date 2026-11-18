@@ -30,7 +30,7 @@ from homeassistant.helpers.event import async_call_later
 from .audio_resource import PipelineTtsEvents
 from .audio_session import AudioSessionManager
 from .const import DOMAIN
-from .diagnostics import TYPE_STT_READY
+from .diagnostics import TYPE_STT_READY, TYPE_FOLLOWUP_OPEN
 from .display_state import DisplayState, ExpressionCoordinator, build_expression_command
 from .prompt_audio import PromptSoundPlayer
 from .transport import Esp32ConnectionAdapter
@@ -80,6 +80,14 @@ class _Turn:
     prompt_before_command: bool = False
     continue_conversation: bool = False
     local_phrase: str | None = None
+    local_mode: bool = False
+    valid_stt: bool = False
+    run_end: bool = False
+    run_returned: bool = False
+    tts_attempted: bool = False
+    response_finished: bool = False
+    playback_terminal: bool = False
+    stop_unconfirmed: bool = False
     local_pipeline_id: str | None = None
     stt_started: bool = False
 
@@ -185,15 +193,15 @@ class AudioSessionCoordinator:
             await self.ingress.async_stop_session(turn.session_id, reason)
 
     @callback
-    def on_local_start(self, session_id: str, phrase: str) -> None:
+    def on_local_start(self, session_id: str, phrase: str | None) -> None:
         self._session_id = session_id
-        self._start_turn(PipelineStage.STT, start=0, confirmed=True, local_phrase=phrase)
+        self._start_turn(PipelineStage.STT, start=0, confirmed=phrase is not None, local_phrase=phrase, local_mode=True)
 
     @callback
     def on_gate(self, session_id: str) -> None:
-        if session_id == self._session_id and self._turn and self._turn.local_phrase:
+        if session_id == self._session_id and self._turn and self._turn.local_mode:
             self._cancel_timer("local_gate_timeout")
-            self._arm(5, "command_timeout")
+            self._arm(6 if self._turn.local_phrase is None else 5, "command_timeout")
 
     @callback
     def on_activity(self, session_id: str, state: str) -> None:
@@ -208,7 +216,7 @@ class AudioSessionCoordinator:
         turn = self._turn
         if session_id != self._session_id or turn is None:
             return
-        if turn.local_phrase:
+        if turn.local_mode:
             if state == "speech_start":
                 turn.command_started = True
                 self._cancel_timer("command_timeout")
@@ -245,6 +253,7 @@ class AudioSessionCoordinator:
         confirmed: bool = False,
         prompt_before_command: bool = False,
         local_phrase: str | None = None,
+        local_mode: bool = False,
     ) -> None:
         self._clear_timers()
         self._followup = False
@@ -261,13 +270,14 @@ class AudioSessionCoordinator:
             PipelineTtsEvents(
                 self.entity.hass,
                 self.entity.adapter,
-                player.async_yield_to_tts if player is not None and not local_phrase else None,
-                session_id=session_id if local_phrase else None,
+                player.async_yield_to_tts if player is not None and not local_mode else None,
+                session_id=session_id if local_mode else None,
             ),
             waiting_for_wake=stage == PipelineStage.WAKE_WORD,
             confirmed=confirmed,
             prompt_before_command=prompt_before_command,
             local_phrase=local_phrase,
+            local_mode=local_mode,
         )
         previous = self._turn
         self._turn = turn
@@ -281,7 +291,7 @@ class AudioSessionCoordinator:
                 ),
                 "wake confirmed",
             )
-        elif stage is PipelineStage.STT:
+        elif stage is PipelineStage.STT and not local_mode:
             self._show(
                 self.display.async_set_intent(
                     DisplayState.ACTIVE_LISTENING,
@@ -290,7 +300,7 @@ class AudioSessionCoordinator:
                 ),
                 "followup listening",
             )
-        if local_phrase:
+        if local_mode:
             self._arm(6, "local_gate_timeout")
         elif turn.waiting_for_wake:
             self._arm(15, "wake_candidate_timeout")
@@ -347,24 +357,31 @@ class AudioSessionCoordinator:
 
             async with self.ingress.audio_subscription(
                 turn.session_id, start=start, consumer=turn,
-                on_pull=ready if turn.local_phrase else None,
+                on_pull=ready if turn.local_mode else None,
             ) as audio:
                 if cleanup is not None:
                     await asyncio.shield(cleanup)
-                elif prior is not None and not prior.done():
+                elif prior is not None:
                     # Reconnect/follow-up must not overtake the previous public
                     # caller, including its asynchronous cancellation cleanup.
-                    await asyncio.shield(asyncio.gather(prior, return_exceptions=True))
+                    if turn.local_mode:
+                        clean = await asyncio.shield(prior)
+                        if self._closing is prior:
+                            self._closing = None
+                        if clean is False:
+                            raise RuntimeError("previous local owner cleanup unconfirmed")
+                    else:
+                        await asyncio.shield(asyncio.gather(prior, return_exceptions=True))
                 if self._turn is not turn:
                     return
-                if turn.local_phrase:
+                if turn.local_mode:
                     _, turn.local_pipeline_id = self.entity.validate_local_pipeline()
                 self._event_turn = turn
                 try:
                     await turn.tts.async_run(
                         self.entity.async_accept_pipeline_from_satellite(
                             audio, stage, context=turn.context,
-                            **({"wake_word_phrase": turn.local_phrase} if turn.local_phrase else {}),
+                            **({"wake_word_phrase": turn.local_phrase} if turn.local_mode else {}),
                         )
                     )
                 finally:
@@ -380,10 +397,16 @@ class AudioSessionCoordinator:
 
         if self._turn is not turn:
             return
-        if turn.local_phrase and not turn.stt_started and not turn.error:
+        turn.run_returned = True
+        if turn.local_mode and not turn.stt_started and not turn.error:
             await self.ingress.async_stop_session(turn.session_id, "wake_intercepted")
         elif turn.error or not turn.command_started or turn.tts.send_failed:
             await self.ingress.async_stop_session(turn.session_id, "pipeline_failed")
+        elif turn.local_mode:
+            if turn.tts.playback_id is None and turn.tts_attempted:
+                await self.ingress.async_stop_session(turn.session_id, "tts_missing")
+            elif turn.tts.playback_id is None or turn.playback_completed:
+                await self._complete_response(turn)
         elif turn.tts.playback_id is None and not self._followup:
             await self._complete_response(turn)
 
@@ -391,7 +414,26 @@ class AudioSessionCoordinator:
         """Open follow-up only when HA explicitly requests another turn."""
         if self._turn is not turn:
             return
-        if turn.continue_conversation and not turn.local_phrase:
+        if turn.local_mode:
+            if not turn.run_returned or turn.response_finished:
+                return
+            if turn.tts.playback_id is not None and not turn.playback_completed:
+                return
+            turn.response_finished = True
+            self.entity.tts_response_finished()
+            if (turn.continue_conversation and turn.valid_stt and turn.run_end and
+                not turn.error and not turn.tts.send_failed and
+                self.ingress.grant_followup(turn.session_id)):
+                self._arm(5, "followup_handoff_timeout")
+                try:
+                    async with asyncio.timeout(5):
+                        await self.entity.adapter.async_send_message(
+                            TYPE_FOLLOWUP_OPEN, json.dumps({"session_id":turn.session_id}).encode()
+                        )
+                except Exception:
+                    await self.ingress.async_stop_session(turn.session_id,"followup_send_failed")
+                return
+        elif turn.continue_conversation:
             self._open_followup()
             return
         await self.ingress.async_stop_session(turn.session_id, "conversation_complete")
@@ -409,6 +451,42 @@ class AudioSessionCoordinator:
             # Also covers an already-returned caller and propagates a failed
             # Wyoming cleanup so the replacement cannot overtake it.
             await turn.tts.async_close()
+
+    async def _retire_local(
+        self, turn: _Turn, prior: asyncio.Future | None, reason: str,
+        cancel_task: bool,
+    ) -> bool:
+        clean = True
+        if prior is not None:
+            try:
+                clean = await asyncio.shield(prior) is not False
+            except Exception:
+                _LOGGER.exception("Previous Tivoo owner cleanup failed")
+                clean = False
+        if reason not in {"conversation_complete", "followup", "wake_intercepted"} and not turn.playback_completed:
+            try:
+                async with asyncio.timeout(5):
+                    await turn.tts.async_stop_playback()
+            except Exception:
+                _LOGGER.warning("Tivoo targeted old playback stop could not be sent")
+        if turn.task is not None:
+            if cancel_task and not turn.task.done() and not turn.task.cancelling():
+                turn.task.cancel()
+            result, = await asyncio.gather(turn.task, return_exceptions=True)
+            if isinstance(result, Exception):
+                clean = False
+                _LOGGER.error("Tivoo old Pipeline failed: %s", result)
+        try:
+            await turn.tts.async_close()
+        except Exception:
+            _LOGGER.exception("Tivoo old TTS owner cleanup failed")
+            clean = False
+        if turn.stop_unconfirmed:
+            _LOGGER.error("AstrBot remote session stop unconfirmed")
+            clean = False
+        if not turn.response_finished:
+            self.entity.tts_response_finished()
+        return clean
 
     def _start_watcher(self, turn: _Turn) -> None:
         if turn.watcher is not None or turn.waiting_for_wake or self._followup:
@@ -535,7 +613,7 @@ class AudioSessionCoordinator:
                     self._request_prompt(turn, "wake")
             case PipelineEventType.STT_START:
                 turn.stt_started = True
-                if turn.local_phrase:
+                if turn.local_mode:
                     return
                 if "command_timeout" not in self._timers:
                     self._arm(5, "command_timeout")
@@ -543,7 +621,7 @@ class AudioSessionCoordinator:
                     self._request_prompt(turn, "confirmed")
                 self._start_watcher(turn)
             case PipelineEventType.STT_VAD_START:
-                if turn.local_phrase:
+                if turn.local_mode:
                     turn.error = True
                     self._arm(0, "unexpected_ha_vad")
                     return
@@ -556,8 +634,22 @@ class AudioSessionCoordinator:
                     isinstance(intent_output, dict)
                     and intent_output.get("continue_conversation") is True
                 )
+                if turn.local_mode:
+                    response = intent_output.get("response") if isinstance(intent_output, dict) else None
+                    turn.continue_conversation = bool(
+                        turn.continue_conversation and turn.valid_stt and not turn.error
+                        and isinstance(response, dict)
+                        and response.get("response_type") in {"action_done", "query_answer"}
+                    )
+            case PipelineEventType.RUN_END:
+                turn.run_end = True
+            case PipelineEventType.TTS_START | PipelineEventType.TTS_END:
+                turn.tts_attempted = True
+            case PipelineEventType.INTENT_PROGRESS:
+                if (event.data or {}).get("tts_start_streaming") is True:
+                    turn.tts_attempted = True
             case PipelineEventType.STT_VAD_END | PipelineEventType.STT_END:
-                if turn.local_phrase:
+                if turn.local_mode:
                     if event.type is PipelineEventType.STT_VAD_END or not self.ingress.local_input_finished(turn.session_id):
                         turn.error = True
                         self._arm(0, "unexpected_stt_endpoint")
@@ -572,6 +664,7 @@ class AudioSessionCoordinator:
                         and isinstance(text, str)
                         and text.strip()
                     ):
+                        turn.valid_stt = True
                         self._show(
                             self.display.async_enter_thinking(turn.context.id),
                             "thinking",
@@ -603,6 +696,10 @@ class AudioSessionCoordinator:
         turn = self._turn
         if turn is None or turn.tts.playback_id != playback_id or self._followup:
             return
+        if turn.local_mode and turn.playback_terminal:
+            return
+        if turn.local_mode and state in {"completed", "stopped", "interrupted", "failed"}:
+            turn.playback_terminal = True
         if state == "playing":
             self._show(
                 self.display.async_set_intent(
@@ -661,6 +758,16 @@ class AudioSessionCoordinator:
                 reason,
                 turn.tts.playback_id,
             )
+        if turn is not None and turn.local_mode:
+            turn.tts.stop_dispatch()
+            self._show(self.display.async_end_generation(turn.context.id), "local session end")
+            task = turn.task
+            cancel_task = task is not None and task is not asyncio.current_task()
+            prior = self._closing
+            self._closing = self.entity.hass.async_create_background_task(
+                self._retire_local(turn, prior, reason, cancel_task), "Tivoo retire local owner"
+            )
+            return
         if turn is not None:
             if self.entity.prompt_player is not None and (
                 reason == "disconnected" or turn.tts.send_failed
@@ -735,6 +842,7 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         self.prompt_player: PromptSoundPlayer | None = None
         self.coordinator = AudioSessionCoordinator(self, ingress, display)
         self._unsubscribe_phase: Callable[[], None] | None = None
+        self._unsubscribe_stop: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Bind transport callbacks after the entity is ready."""
@@ -747,6 +855,17 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         self._unsubscribe_phase = self.hass.bus.async_listen(
             _ASTRBOT_PHASE_EVENT, self._on_astrbot_phase
         )
+        self._unsubscribe_stop = self.hass.bus.async_listen(
+            "astrbot_stop_unconfirmed", self._on_astrbot_stop_unconfirmed
+        )
+
+    @callback
+    def _on_astrbot_stop_unconfirmed(self, event: Event) -> None:
+        turn = self.coordinator._event_turn
+        if (turn is not None and turn.local_mode
+            and event.data.get("satellite_id") == self.entity_id
+            and event.data.get("context_id") == turn.context.id):
+            turn.stop_unconfirmed = True
 
     @callback
     def _on_astrbot_phase(self, event: Event) -> None:
@@ -812,7 +931,7 @@ class TivooAssistSatellite(AssistSatelliteEntity):
     @property
     def pipeline_entity_id(self) -> str | None:
         turn = self.coordinator._event_turn
-        if turn and turn.local_phrase:
+        if turn and turn.local_mode:
             select_id, pipeline_id = self.validate_local_pipeline()
             if pipeline_id != turn.local_pipeline_id:
                 raise ValueError("Tivoo local pipeline selection changed before start")
@@ -863,6 +982,9 @@ class TivooAssistSatellite(AssistSatelliteEntity):
             self._unsubscribe_phase()
             self._unsubscribe_phase = None
         await self.coordinator.async_shutdown()
+        if self._unsubscribe_stop is not None:
+            self._unsubscribe_stop()
+            self._unsubscribe_stop = None
         self.coordinator.ingress.on_activity = None
         self.coordinator.ingress.on_end = None
         self.coordinator.ingress.on_local_start = None

@@ -34,6 +34,7 @@ typedef void (*tivoo_diagnostics_mic_capture_stop_handler_t)(
 #define TVIO_TYPE_MIC_ACTIVITY 0x24U
 #define TVIO_TYPE_STT_READY 0x25U
 #define TVIO_TYPE_COMMAND_GATE 0x26U
+#define TVIO_TYPE_FOLLOWUP_OPEN 0x27U
 #define TVIO_LOCAL_WAKE_CAPABILITY "local_wake_stt_v1"
 
 esp_err_t tivoo_diagnostics_start(void);

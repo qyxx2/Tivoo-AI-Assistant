@@ -306,12 +306,50 @@ static audio_request_t *s_pending_request;
 static uint32_t s_generation;
 #ifdef TIVOO_P68_B5_LOCAL
 static uint32_t s_prompt_generation;
+static uint32_t s_quarantined_generation;
+static uint64_t s_last_drain;
+
+/* A timed-out DMA drain is not silence. Keep its owner quarantined until
+ * actual completed samples prove drain, then apply the calibrated tail. */
+bool tivoo_audio_resource_prompt_ready(unsigned acoustic_tail)
+{
+    if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return false;
+    uint64_t end=0, clock=0;
+    if (s_quarantined_generation &&
+        tivoo_audio_output_prompt_drain(s_quarantined_generation,&end,&clock)) {
+        s_last_drain=end;
+        tivoo_audio_output_end(s_quarantined_generation);
+        s_quarantined_generation=0;
+        atomic_store(&s_output_claimed,false);
+    }
+    (void)tivoo_audio_output_prompt_drain(0,&end,&clock);
+    const bool ready=!s_active_request && !s_pending_request && !s_prompt_generation &&
+        !s_quarantined_generation && clock>=s_last_drain+acoustic_tail;
+    xSemaphoreGive(s_mutex);
+    return ready;
+}
+
+void tivoo_audio_resource_retire_local(const char *session_id, uint32_t epoch)
+{
+    if(!s_mutex || !session_id || !epoch) return;
+    (void)xSemaphoreTake(s_mutex,portMAX_DELAY);
+    audio_request_t *requests[]={s_active_request,s_pending_request};
+    for (unsigned i=0;i<2;++i) {
+        audio_request_t *request=requests[i];
+        if(request && request->peer_generation==epoch && strcmp(request->session_id,session_id)==0 &&
+           !request->terminal && !atomic_exchange(&request->stop_requested,true)) {
+            tivoo_audio_output_stop(request->generation);
+            if(request->socket_fd>=0) (void)shutdown(request->socket_fd,SHUT_RDWR);
+        }
+    }
+    xSemaphoreGive(s_mutex);
+}
 
 uint32_t tivoo_audio_resource_prompt_begin(void)
 {
     if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return 0;
     uint32_t generation=0;
-    if (!s_active_request && !s_pending_request && !s_prompt_generation) {
+    if (!s_active_request && !s_pending_request && !s_prompt_generation && !s_quarantined_generation) {
         if (++s_generation==0) ++s_generation;
         if (tivoo_audio_output_begin_prompt(s_generation)) {
             generation=s_prompt_generation=s_generation;
@@ -330,6 +368,7 @@ bool tivoo_audio_resource_prompt_end(uint32_t generation)
     if (valid) {
         tivoo_audio_output_end(generation);
         s_prompt_generation=0;
+        atomic_store(&s_output_claimed,false);
     }
     xSemaphoreGive(s_mutex);
     return valid;
@@ -566,7 +605,20 @@ static audio_request_t *run_request(audio_request_t *request)
             }
             vTaskDelay(1);
         }
+#ifdef TIVOO_P68_B5_LOCAL
+        uint64_t end,clock;
+        (void)xSemaphoreTake(s_mutex,portMAX_DELAY);
+        if (tivoo_audio_output_prompt_drain(request->generation,&end,&clock)) {
+            s_last_drain=end;
+            tivoo_audio_output_end(request->generation);
+        } else {
+            s_quarantined_generation=request->generation;
+            error="audio_output_timeout";
+        }
+        xSemaphoreGive(s_mutex);
+#else
         tivoo_audio_output_end(request->generation);
+#endif
     }
 #ifndef TIVOO_P68_B3_AUDIO
     if (vad_suppressed) {
@@ -585,15 +637,29 @@ static audio_request_t *run_request(audio_request_t *request)
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     const bool stopped = atomic_load(&request->stop_requested);
     request->terminal = true;
+#ifndef TIVOO_P68_B5_LOCAL
     (void)xSemaphoreGive(s_mutex);
     send_audio_state(request, stopped ? "stopped" : error != NULL ? "failed" : "completed",
         stopped ? NULL : error, true);
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
+#endif
     remember_id(s_recent_playbacks, &s_next_playback, request->playback_id);
     audio_request_t *next = s_pending_request;
     s_active_request = next;
     s_pending_request = NULL;
+#ifdef TIVOO_P68_B5_LOCAL
+    atomic_store(&s_output_claimed,next || s_quarantined_generation);
+    tivoo_s3_local_turn_playback_finished(request->session_id,request->playback_id,
+        request->peer_generation,!stopped && !error);
+#else
+    atomic_store(&s_output_claimed,next!=NULL);
+#endif
     (void)xSemaphoreGive(s_mutex);
+#ifdef TIVOO_P68_B5_LOCAL
+    /* completed must mean the ordinary output owner is already released. */
+    send_audio_state(request, stopped ? "stopped" : error != NULL ? "failed" : "completed",
+        stopped ? NULL : error, true);
+#endif
     return next;
 }
 
@@ -613,13 +679,12 @@ static esp_err_t start_request(audio_request_t *request)
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     request->peer_generation = tivoo_diagnostics_mic_generation();
 #ifdef TIVOO_P68_B5_LOCAL
-    if (s_prompt_generation || !tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
+    if (s_prompt_generation || s_quarantined_generation || !tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
         (void)xSemaphoreGive(s_mutex);
         free(request);
         return ESP_ERR_INVALID_STATE;
     }
 #endif
-    atomic_store(&s_output_claimed,true);
     audio_request_t *active = s_active_request;
     audio_request_t *pending = s_pending_request;
     if (seen_id(s_recent_playbacks, request->playback_id) ||
@@ -641,6 +706,7 @@ static esp_err_t start_request(audio_request_t *request)
         ++s_generation;
     }
     request->generation = s_generation;
+    atomic_store(&s_output_claimed,true);
     if (active != NULL) {
         s_pending_request = request;
         (void)xSemaphoreGive(s_mutex);
@@ -652,6 +718,7 @@ static esp_err_t start_request(audio_request_t *request)
     if (xTaskCreatePinnedToCore(audio_resource_task, "tivoo_audio", AUDIO_TASK_STACK,
             request, tskIDLE_PRIORITY + 3, NULL, 0) != pdPASS) {
         s_active_request = NULL;
+        atomic_store(&s_output_claimed,false);
         send_audio_state(request, "failed", "audio_task_failed", false);
         remember_id(s_recent_playbacks, &s_next_playback, request->playback_id);
         (void)xSemaphoreGive(s_mutex);

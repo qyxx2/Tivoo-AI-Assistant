@@ -25,6 +25,8 @@ static uint32_t prompt_generation;
 static tivoo_prompt_t prompt;
 static int last_ready=-1;
 static const char *gate_result;
+static bool pending_prompt, is_followup;
+static char parent_uuid[37];
 extern const int16_t ready_01_start[], ready_01_end[], ready_02_start[], ready_02_end[];
 extern const int16_t ready_03_start[], ready_03_end[], followup_01_start[], followup_01_end[];
 
@@ -49,7 +51,7 @@ static struct {
     uint32_t epoch;
     char uuid[37], playback[37];
     uint64_t ready_ms;
-    bool ready, stop, reply_allowed;
+    bool ready, stop, reply_allowed, followup_requested, playback_completed;
 } shared;
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time()/1000; }
@@ -75,7 +77,10 @@ static void abort_turn(const char *reason)
     tivoo_s3_afe_close_local_gate();
     portENTER_CRITICAL(&lock);
     shared.reply_allowed=false;
+    shared.stop=true;
     portEXIT_CRITICAL(&lock);
+    pending_prompt=false;
+    tivoo_audio_resource_retire_local(uuid,epoch);
 }
 static bool send_event(void *ctx, tivoo_turn_event_t type, const int16_t *pcm, size_t samples, uint64_t time, const char *reason)
 {
@@ -95,8 +100,9 @@ static bool send_event(void *ctx, tivoo_turn_event_t type, const int16_t *pcm, s
         cJSON_AddStringToObject(root,"sample_format","s16le");
         cJSON_AddNumberToObject(root,"frame_duration_ms",20);
         cJSON_AddNumberToObject(root,"preroll_ms",0);
-        cJSON_AddStringToObject(root,"trigger_source","local_wake");
-        cJSON_AddStringToObject(root,"wake_word_phrase",phrase);
+        cJSON_AddStringToObject(root,"trigger_source",is_followup?"local_followup":"local_wake");
+        if (is_followup) cJSON_AddStringToObject(root,"parent_session_id",parent_uuid);
+        else cJSON_AddStringToObject(root,"wake_word_phrase",phrase);
         break;
     case TIVOO_TURN_GATE:
         wire=TVIO_TYPE_COMMAND_GATE;
@@ -164,6 +170,17 @@ static void poll_prompt(void)
 
 static void start_prompt(uint64_t now)
 {
+    if (test_gate_enabled) {
+        if (!tivoo_audio_resource_prompt_ready(0)) return;
+        if (tivoo_s3_afe_open_test_gate()) {
+            pending_prompt=false;
+            gate_result="skipped";
+            tivoo_turn_gate(turn,now);
+        } else {
+            abort_turn("test_gate_failed");
+        }
+        return;
+    }
     if (!prompt_calibrated) {
         abort_turn("prompt_calibration_required");
         return;
@@ -174,17 +191,36 @@ static void start_prompt(uint64_t now)
         {ready_03_start,((uintptr_t)ready_03_end-(uintptr_t)ready_03_start)/sizeof(int16_t)},
         {followup_01_start,((uintptr_t)followup_01_end-(uintptr_t)followup_01_start)/sizeof(int16_t)}
     };
-    const int pick=tivoo_prompt_select(pool,false,last_ready,esp_random());
+    if (!tivoo_audio_resource_prompt_ready(prompt_tail)) return;
+    const int pick=tivoo_prompt_select(pool,is_followup,last_ready,esp_random());
     prompt_generation=tivoo_audio_resource_prompt_begin();
-    if (!prompt_generation) {
-        /* b7 owns active-reply handoff; never stop an unrelated owner here. */
-        abort_turn("prompt_owner_unavailable");
-        return;
-    }
+    if (!prompt_generation) return;
+    pending_prompt=false;
     tivoo_s3_afe_begin_prompt();
     tivoo_prompt_begin(&prompt,pick<0 ? (tivoo_prompt_asset_t){0} : pool[pick],
         now,prompt_tail,prompt_offset);
-    if (pick>=0) last_ready=pick;
+    if (pick>=0 && !is_followup) last_ready=pick;
+}
+
+static void begin_turn(uint32_t current, const char *wake_phrase, bool followup, uint64_t now)
+{
+    /* Invalidate old network authorization before retiring its captured owner.
+     * RX may hold the resource mutex while consulting the shared snapshot. */
+    invalidate();
+    if (epoch && uuid[0]) tivoo_audio_resource_retire_local(uuid,epoch);
+    tivoo_s3_afe_close_local_gate();
+    if (followup) memcpy(parent_uuid,uuid,sizeof(parent_uuid));
+    is_followup=followup;
+    epoch=current;
+    phrase=wake_phrase;
+    new_uuid(uuid);
+    if (followup) tivoo_turn_begin_followup(turn,now);
+    else tivoo_turn_begin(turn,now);
+    pending_prompt=true;
+    portENTER_CRITICAL(&lock);
+    shared.epoch=epoch;
+    memcpy(shared.uuid,uuid,sizeof(uuid));
+    portEXIT_CRITICAL(&lock);
 }
 
 void tivoo_s3_local_turn_tick(void)
@@ -194,28 +230,33 @@ void tivoo_s3_local_turn_tick(void)
     uint32_t current=tivoo_diagnostics_local_wake_generation();
     if(current!=epoch) {
         turn->active=false;
+        pending_prompt=false;
         if (prompt_generation) tivoo_prompt_cancel(&prompt);
-        tivoo_s3_afe_close_local_gate();
         invalidate();
+        tivoo_audio_resource_retire_local(uuid,epoch);
+        tivoo_s3_afe_close_local_gate();
         poll_prompt();
         return;
     }
-    bool ready,stop;
+    bool ready,stop,followup;
     uint64_t ready_ms;
     portENTER_CRITICAL(&lock);
     ready=shared.ready; ready_ms=shared.ready_ms; stop=shared.stop;
+    followup=shared.followup_requested;
     portEXIT_CRITICAL(&lock);
     if(stop) abort_turn("ha_stop");
+    else if(followup && turn->complete && !prompt_generation) {
+        begin_turn(current,NULL,true,now_ms());
+        ready=false;
+    }
     if(ready) tivoo_turn_ready(turn,ready_ms);
+    if(pending_prompt && !turn->abort_reason) {
+        if(now_ms()-turn->wake_ms>=5000) abort_turn("prompt_owner_timeout");
+        else start_prompt(now_ms());
+    }
     poll_prompt();
     tivoo_turn_tick(turn,now_ms(),send_event,NULL);
-    if(turn->abort_reason) {
-        if (prompt_generation) tivoo_prompt_cancel(&prompt);
-        tivoo_s3_afe_close_local_gate();
-        portENTER_CRITICAL(&lock);
-        shared.reply_allowed=false;
-        portEXIT_CRITICAL(&lock);
-    }
+    if(turn->abort_reason) abort_turn(turn->abort_reason);
     if(!turn->active) invalidate();
 }
 void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
@@ -225,28 +266,10 @@ void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
     const uint64_t now=now_ms();
     if(event->type==TIVOO_AFE_WAKE) {
         if(prompt_generation) return;
-        if(turn->active) {
-            /* Full active-reply interruption and restart belong to b7. Do not
-             * splice audio from this newly confirmed wake into the old turn. */
-            if(!turn->complete) abort_turn("superseded_wake");
-            return;
-        }
-        epoch=tivoo_diagnostics_local_wake_generation();
-        phrase=tivoo_s3_afe_wake_word(event->word);
-        if(!epoch || !phrase) return;
-        new_uuid(uuid);
-        tivoo_turn_begin(turn,now);
-        portENTER_CRITICAL(&lock);
-        memset(&shared,0,sizeof(shared));
-        shared.epoch=epoch;
-        memcpy(shared.uuid,uuid,sizeof(uuid));
-        portEXIT_CRITICAL(&lock);
-        if(test_gate_enabled && tivoo_audio_resource_test_silent() && tivoo_s3_afe_open_test_gate()) {
-            gate_result="skipped";
-            tivoo_turn_gate(turn,now);
-        } else {
-            start_prompt(now);
-        }
+        const uint32_t current=tivoo_diagnostics_local_wake_generation();
+        const char *wake_phrase=tivoo_s3_afe_wake_word(event->word);
+        if(!current || !wake_phrase) return;
+        begin_turn(current,wake_phrase,false,now);
         tivoo_s3_local_turn_tick();
         return;
     }
@@ -291,11 +314,35 @@ bool tivoo_s3_local_turn_bind_playback(const char *id, const char *playback)
     bool ok=false;
     if(!id || !playback || strlen(playback)!=36) return false;
     portENTER_CRITICAL(&lock);
-    if(current && current==shared.epoch && shared.reply_allowed && !shared.stop &&
+    if(current && current==shared.epoch && shared.reply_allowed && !shared.stop && !shared.followup_requested &&
        strcmp(id,shared.uuid)==0 && (!shared.playback[0] || strcmp(playback,shared.playback)==0)) {
         memcpy(shared.playback,playback,37);
         ok=true;
     }
     portEXIT_CRITICAL(&lock);
     return ok;
+}
+
+bool tivoo_s3_local_turn_followup_message(const uint8_t *payload, size_t size)
+{
+    cJSON *root=cJSON_ParseWithLength((const char *)payload,size);
+    const char *id=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root,"session_id"));
+    const uint32_t current=tivoo_diagnostics_local_wake_generation();
+    portENTER_CRITICAL(&lock);
+    if(tivoo_turn_followup_allowed(id && current && current==shared.epoch && strcmp(id,shared.uuid)==0,
+        shared.reply_allowed && !shared.stop, !shared.playback[0] || shared.playback_completed,
+        shared.followup_requested)) shared.followup_requested=true;
+    portEXIT_CRITICAL(&lock);
+    cJSON_Delete(root);
+    return true;
+}
+
+void tivoo_s3_local_turn_playback_finished(const char *id, const char *playback, uint32_t peer, bool completed)
+{
+    portENTER_CRITICAL(&lock);
+    if(peer==shared.epoch && strcmp(id,shared.uuid)==0 && strcmp(playback,shared.playback)==0) {
+        shared.playback_completed=completed;
+        if(!completed) shared.reply_allowed=false;
+    }
+    portEXIT_CRITICAL(&lock);
 }

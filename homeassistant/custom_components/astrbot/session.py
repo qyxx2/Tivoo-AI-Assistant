@@ -29,6 +29,7 @@ class AstrBotSessionManager:
         self._api_key_id = api_key_id
         self.username = f"{API_KEY_USERNAME_PREFIX}{api_key_id}"
 
+        self._blocked_session: str | None = None
         self._session_id: str | None = None
         self._created_at: datetime | None = None
         self._last_activity_at: datetime | None = None
@@ -41,10 +42,12 @@ class AstrBotSessionManager:
             return
 
         now = dt_util.utcnow()
-        if now - record["last_activity_at"] >= SESSION_TTL:
+        if not record.get("stop_unconfirmed") and now - record["last_activity_at"] >= SESSION_TTL:
             return
 
         self._session_id = record["session_id"]
+        if record.get("stop_unconfirmed"):
+            self._blocked_session = self._session_id
         self._created_at = record["created_at"]
         self._last_activity_at = record["last_activity_at"]
 
@@ -53,6 +56,7 @@ class AstrBotSessionManager:
         now = dt_util.utcnow()
         if self._session_id is None or (
             self._last_activity_at is not None
+            and self._blocked_session != self._session_id
             and now - self._last_activity_at >= SESSION_TTL
         ):
             self._session_id = str(uuid4())
@@ -65,8 +69,20 @@ class AstrBotSessionManager:
         """Forget the active AstrBot session so the next turn starts fresh."""
         await self._store.async_remove()
         self._session_id = None
+        self._blocked_session = None
         self._created_at = None
         self._last_activity_at = None
+
+    def stop_unconfirmed(self, session_id: str) -> bool:
+        return self._blocked_session == session_id
+
+    async def async_mark_stop_unconfirmed(self, session_id: str) -> None:
+        if session_id != self._session_id:
+            return
+        self._blocked_session = session_id
+        # Persist the quarantine alongside this exact remote identity so reload
+        # cannot silently reissue a request to a session whose stop failed.
+        await self.async_confirm_session(session_id)
 
     async def async_invalidate_session(self, session_id: str) -> None:
         """Drop a session mapping after AstrBot confirms an owner mismatch."""
@@ -91,6 +107,8 @@ class AstrBotSessionManager:
             "created_at": created_at.isoformat(),
             "last_activity_at": now.isoformat(),
         }
+        if self.stop_unconfirmed(session_id):
+            record["stop_unconfirmed"] = True
         await self._store.async_save(record)
 
         self._created_at = created_at
@@ -101,7 +119,7 @@ class AstrBotSessionManager:
         if not isinstance(data, dict):
             return None
 
-        if set(data) != {
+        if set(data) - {"stop_unconfirmed"} != {
             "version",
             "base_url",
             "api_key_id",
@@ -143,6 +161,7 @@ class AstrBotSessionManager:
             "session_id": session_id,
             "created_at": created_at,
             "last_activity_at": last_activity_at,
+            "stop_unconfirmed": data.get("stop_unconfirmed") is True,
         }
 
     @staticmethod

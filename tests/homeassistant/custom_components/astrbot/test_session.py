@@ -329,3 +329,17 @@ async def test_invalidating_owner_conflict_removes_persisted_session_and_rotates
 
     with pytest.raises(ValueError):
         await manager.async_confirm_session(old_session_id)
+
+async def test_unconfirmed_stop_survives_reload_and_ttl(hass, clock):
+    entry, manager = await _setup_entry(hass)
+    session_id = manager.get_session_id()
+    await manager.async_confirm_session(session_id)
+    await manager.async_mark_stop_unconfirmed(session_id)
+    assert (await _stored_record(hass))["stop_unconfirmed"] is True
+    clock.advance(timedelta(days=365))
+    restored = await _reload_entry(hass, entry)
+    assert restored.get_session_id() == session_id
+    assert restored.stop_unconfirmed(session_id)
+    await restored.async_start_new_conversation()
+    assert restored.get_session_id() != session_id
+    assert not restored.stop_unconfirmed(restored.get_session_id())

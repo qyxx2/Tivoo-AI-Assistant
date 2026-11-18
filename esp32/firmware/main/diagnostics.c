@@ -622,6 +622,7 @@ static bool supported_message_type(uint8_t type)
     case TVIO_TYPE_MIC_ACTIVITY:
     case TVIO_TYPE_STT_READY:
     case TVIO_TYPE_COMMAND_GATE:
+    case TVIO_TYPE_FOLLOWUP_OPEN:
     case TVIO_TYPE_MIC_CAPTURE_STOP:
     case TVIO_TYPE_TTS_PLAY:
     case TVIO_TYPE_AUDIO_STOP:
@@ -640,7 +641,7 @@ static bool inbound_message_type(uint8_t type)
 {
     return type == TVIO_TYPE_HELLO_ACK || type == TVIO_TYPE_PING ||
            type == TVIO_TYPE_GET_STATUS ||
-           type == TVIO_TYPE_MIC_CAPTURE_STOP || type == TVIO_TYPE_STT_READY || type == TVIO_TYPE_TTS_PLAY ||
+           type == TVIO_TYPE_MIC_CAPTURE_STOP || type == TVIO_TYPE_STT_READY || type == TVIO_TYPE_FOLLOWUP_OPEN || type == TVIO_TYPE_TTS_PLAY ||
            type == TVIO_TYPE_AUDIO_STOP || type == TVIO_TYPE_ERROR;
 }
 
@@ -1168,7 +1169,7 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
             atomic_store(&s_mic_generation, s_next_generation);
             atomic_store(&s_local_wake_accepted, local);
         } else if (!atomic_load(&s_ack_accepted) ||
-                   (message_type == TVIO_TYPE_STT_READY && !atomic_load(&s_local_wake_accepted)) ||
+                   ((message_type == TVIO_TYPE_STT_READY || message_type == TVIO_TYPE_FOLLOWUP_OPEN) && !atomic_load(&s_local_wake_accepted)) ||
                    (supported_message_type(message_type) &&
                     !inbound_message_type(message_type))) {
             mutex_give();

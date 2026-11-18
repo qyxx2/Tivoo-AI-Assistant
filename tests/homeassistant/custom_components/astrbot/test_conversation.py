@@ -538,9 +538,14 @@ async def test_cancellation_closes_reader_stops_same_owned_session_and_propagate
         agent_id="conversation.astrbot",
         extra_system_prompt=None,
     )
+    if expect_warning:
+        with pytest.raises(astrbot_conversation.AstrBotApiError, match="unconfirmed"):
+            await _run_assist_conversation(hass, follow_up, None, chat_logs)
+        assert len(chat_bodies) == 1
+        await hass.services.async_call("astrbot", "new_conversation", blocking=True)
     result = await _run_assist_conversation(hass, follow_up, None, chat_logs)
     assert result.response.as_dict()["speech"]["plain"]["speech"] == "后续请求正常"
-    assert chat_bodies[1]["session_id"] == chat_bodies[0]["session_id"]
+    assert (chat_bodies[1]["session_id"] != chat_bodies[0]["session_id"]) is expect_warning
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

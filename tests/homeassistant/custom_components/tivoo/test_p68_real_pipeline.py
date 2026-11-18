@@ -147,7 +147,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         # Simulate the Core's already pending ask_question caller (announcement
         # is outside b5); the actual public run automatically stops at STT.
         entity._ask_question_future = hass.loop.create_future()
-        await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
+        await manager.async_start_session(local_start(SESSION_2, 101), persistent=True, local_mode=True)
         await manager.async_handle_gate(gate(SESSION_2, "completed"))
         await asyncio.wait_for(ready.wait(), 2)
         assert adapter.async_send_message.call_args.args[0] == TYPE_STT_READY
@@ -179,7 +179,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         cancelled = str(uuid4())
         wire.clear(); ready.clear(); got_pcm.clear(); events.clear()
         entity._ask_question_future = hass.loop.create_future()
-        await manager.async_start_session(local_start(cancelled), persistent=True, local_mode=True)
+        await manager.async_start_session(local_start(cancelled, 102), persistent=True, local_mode=True)
         await manager.async_handle_gate(gate(cancelled))
         await asyncio.wait_for(ready.wait(), 2)
         await manager.async_handle_activity(activity("speech_start", cancelled))
@@ -207,7 +207,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             ready.clear()
             events.clear()
             sid = str(uuid4())
-            await manager.async_start_session(local_start(sid), persistent=True, local_mode=True)
+            await manager.async_start_session(local_start(sid, 100 + expected_chats), persistent=True, local_mode=True)
             await manager.async_handle_gate(gate(sid))
             await asyncio.wait_for(ready.wait(), 3)
             await manager.async_handle_activity(activity("speech_start", sid))

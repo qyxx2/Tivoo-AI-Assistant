@@ -68,7 +68,7 @@ class AstrBotConversationEntity(conversation.ConversationEntity):
         """Send the user's text to AstrBot and stream visible text into ChatLog."""
 
         async def async_stop_session(session_id: str, reason: str) -> None:
-            """Best-effort stop without changing the original failure/cancellation."""
+            """Quarantine an unconfirmed remote owner before releasing the lock."""
             try:
                 await asyncio.wait_for(
                     self._api_client.async_stop_session(session_id),
@@ -80,6 +80,11 @@ class AstrBotConversationEntity(conversation.ConversationEntity):
                     reason,
                     type(err).__name__,
                 )
+                self.hass.bus.async_fire("astrbot_stop_unconfirmed", {
+                    "satellite_id": user_input.satellite_id,
+                    "context_id": user_input.context.id,
+                })
+                await self._session_manager.async_mark_stop_unconfirmed(session_id)
 
         async def async_deltas(
             stream_state: dict[str, str | bool],
@@ -132,8 +137,11 @@ class AstrBotConversationEntity(conversation.ConversationEntity):
                     assistant_started = False
 
         async with self._conversation_lock:
+            session_id = self._session_manager.get_session_id()
+            if self._session_manager.stop_unconfirmed(session_id):
+                raise AstrBotApiError("AstrBot session stop unconfirmed; start a new conversation")
             stream_state: dict[str, str | bool] = {
-                "session_id": self._session_manager.get_session_id(),
+                "session_id": session_id,
                 "response_accepted": False,
                 "stream_completed": False,
             }
