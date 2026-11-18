@@ -23,11 +23,12 @@ def test_main_initializes_nvs_and_bluetooth_before_accepting_network_clients():
 
 
 def test_firmware_default_controller_mode_includes_classic_bluetooth():
-    defaults = (FIRMWARE / "sdkconfig.defaults").read_text()
+    bridge = ROOT / "esp32/bridge_firmware"
+    defaults = (bridge / "sdkconfig.defaults").read_text()
     assert "CONFIG_BT_SPP_ENABLED=y" in defaults
     assert "CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y" in defaults
 
-    sdkconfig = (FIRMWARE / "sdkconfig").read_text()
+    sdkconfig = (bridge / "sdkconfig").read_text()
     assert "CONFIG_BT_SMP_ENABLE=y" in sdkconfig
     assert "CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y" in sdkconfig
 

@@ -1,4 +1,27 @@
-# Tivoo ESP32 firmware
+# Tivoo ESP32-S3 firmware (P6.8 b1)
+
+**Do not flash these development images onto the current production ESP32.** The active project here now targets ESP32-S3 N16R8-M. The independent Classic ESP32 SPP project is [../bridge_firmware](../bridge_firmware/README.md). P6.8 b1 is a build/partition/network scaffold, not a production voice assistant: UART bridge, live I2S/AFE and local wake are later batches. The packaged `wn9_hilexin` is only a smoke model. Physical acceptance is pending.
+
+Build on the ARM64 development host with ESP-IDF v6.1, one project at a time and bounded build parallelism:
+
+```bash
+. ~/.espressif/tools/activate_idf_v6.1.sh
+export CMAKE_BUILD_PARALLEL_LEVEL=2
+idf.py set-target esp32s3   # first initialization only
+ninja -C build -j2
+idf.py size
+idf.py merge-bin --format raw --flash-offset 0x0 --pad-to-size 16MB
+```
+
+The S3 defaults are 16 MiB DIO flash at 80 MHz, Octal PSRAM at 80 MHz, 240 MHz CPU, 8 MiB factory app and 4 MiB model partition. Set Wi-Fi credentials locally via menuconfig only if needed for later hardware acceptance. Keep the generated sdkconfig private. Use this project's own generated flash_args; the S3 offset differs from the Classic ESP32. Never use a padded full image to preserve existing NVS.
+
+See the [frozen hardware contract](../../docs/superpowers/specs/2026-11-18-p6-8-b0-2-hardware-uart-spp-design.md) and [b1 plan](../../docs/superpowers/plans/2026-11-18-p6-8-b1-b10-execution-plan.md).
+
+---
+
+## Historical single-board documentation (P5–P6.7)
+
+The sections below describe the legacy ESP32-WROVER-E single-board firmware, retained for historical regression and migration. Their target, pinout, flashing commands and production claims do **not** apply to the current S3 project. To rebuild the old production image use the pre-P6.8 implementation commit in an independent workspace; do not change this project's target.
 
 This is the production ESP-IDF project for the ESP32-WROVER-E-N16R8 target. It is pinned to ESP-IDF v6.1 and `IDF_TARGET=esp32`. The dependency lock and partition layout are carried forward from P5b0 compatibility verification. The firmware is a Wi-Fi Station, two TCP listeners, and a Bluetooth Classic SPP initiator; Home Assistant owns the Tivoo display codec. The firmware runs the P6.5b8 microphone frontend and the P6.5b10 streaming MP3 playback path.
 

@@ -19,22 +19,22 @@ menu "Tivoo I2S audio"
 config TIVOO_I2S_BCLK_GPIO
     int "Shared BCLK GPIO"
     range 0 33
-    default 26
+    default 4
 
 config TIVOO_I2S_WS_GPIO
     int "Shared WS GPIO"
     range 0 33
-    default 25
+    default 5
 
 config TIVOO_I2S_DIN_GPIO
     int "INMP441 SD GPIO"
     range 0 39
-    default 32
+    default 6
 
 config TIVOO_I2S_DOUT_GPIO
     int "PCM5102 DIN GPIO"
     range -1 33
-    default 33
+    default 7
     help
         -1 leaves DAC data disconnected and playback unavailable.
 

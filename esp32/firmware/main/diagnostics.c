@@ -516,18 +516,22 @@ static char *build_hello_payload(size_t *payload_size)
     cJSON_AddStringToObject(root, "device_id", "tivoo-esp32");
     cJSON_AddStringToObject(root, "firmware_version", TIVOO_FIRMWARE_VERSION);
     cJSON_AddNumberToObject(root, "protocol_version", 1);
+#ifndef TIVOO_P68_B1_SCAFFOLD
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("spp_control"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("spp_reverse"));
+#endif
     cJSON_AddItemToArray(
         capabilities, cJSON_CreateString("remote_diagnostics"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("device_status"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("device_events"));
+#ifndef TIVOO_P68_B1_SCAFFOLD
     cJSON_AddItemToArray(
         capabilities, cJSON_CreateString("audio_resource_http"));
     cJSON_AddItemToArray(capabilities, cJSON_CreateString("audio_control"));
     if (atomic_load(&s_mic_activity_enabled)) {
         cJSON_AddItemToArray(capabilities, cJSON_CreateString("mic_activity_events"));
     }
+#endif
     cJSON_AddItemToObject(root, "capabilities", capabilities);
     cJSON_AddStringToObject(root, "reset_reason", reset_reason);
 

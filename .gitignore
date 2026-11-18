@@ -27,6 +27,10 @@ esp32/firmware/build/
 esp32/firmware/managed_components/
 esp32/firmware/sdkconfig
 esp32/firmware/sdkconfig.old
+esp32/bridge_firmware/build/
+esp32/bridge_firmware/managed_components/
+esp32/bridge_firmware/sdkconfig
+esp32/bridge_firmware/sdkconfig.old
 .pio/
 
 # Downloaded speech model assets (keep source manifests and benchmark code)

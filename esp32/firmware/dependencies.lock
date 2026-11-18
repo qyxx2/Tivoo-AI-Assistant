@@ -141,5 +141,5 @@ direct_dependencies:
 - espressif/esp_audio_codec
 - espressif/esp_audio_effects
 manifest_hash: 6fff9a9f5dfca233cb5f526f352b27b1c6dd2d9da3a05179c33590112be698e5
-target: esp32
+target: esp32s3
 version: 3.0.0

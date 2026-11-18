@@ -1,40 +1,21 @@
 idf_component_register(
     SRCS
-        "main.c"
-        "audio_resource.c"
-        "audio_playback.c"
-        "audio_output_manager.c"
-        "audio_capture.c"
-        "audio_frontend.c"
+        "s3_main.c"
+        "s3_scaffold.c"
+        "s3_api_smoke.c"
+        "board_boot.c"
         "device_status.c"
-        "hardware_memory.c"
         "wifi_station.c"
         "network_listeners.c"
         "diagnostics.c"
-        "control_bridge.c"
-        "tivoo_frame_stream.c"
-        "bt_security_policy.c"
-        "tivoo_spp.c"
-        "tivoo_spp_session.c"
     INCLUDE_DIRS "."
     REQUIRES
-        esp_driver_i2s
-        esp_driver_gpio
-        esp_driver_rmt
-        esp_event
-        esp_http_client
-        mbedtls
-        esp_netif
-        esp_timer
-        esp_wifi
-        bt
-        espressif__cjson
-        esp_psram
-        heap
-        spi_flash
-        lwip
-        nvs_flash
+        esp_driver_uart esp_driver_i2s esp_driver_gpio esp_driver_rmt
+        esp_event esp_http_client mbedtls esp_netif esp_timer esp_wifi
+        espressif__cjson esp_psram heap spi_flash lwip nvs_flash
+        esp-sr esp_audio_codec esp_audio_effects
 )
+target_compile_definitions(${COMPONENT_LIB} PRIVATE TIVOO_P68_B1_SCAFFOLD=1)
 
 execute_process(
     COMMAND git rev-parse --short=7 HEAD
