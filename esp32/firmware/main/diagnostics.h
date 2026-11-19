@@ -40,6 +40,8 @@ typedef void (*tivoo_diagnostics_mic_capture_stop_handler_t)(
 esp_err_t tivoo_diagnostics_start(void);
 void tivoo_diagnostics_enable_mic_activity(void);
 uint32_t tivoo_diagnostics_mic_generation(void);
+/* Retire only the acknowledged diagnostic connection that owns generation. */
+void tivoo_diagnostics_invalidate_mic(uint32_t generation);
 void tivoo_diagnostics_enable_local_wake(void);
 /* Nonblocking availability publication; a changed HELLO requires a fresh ACK. */
 void tivoo_diagnostics_set_local_wake_available(bool available);

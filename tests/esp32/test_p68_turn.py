@@ -29,14 +29,25 @@ def test_local_lifecycle_adapter(tmp_path):
         p.write_text(content)
     cjson = MAIN.parent / "managed_components/espressif__cjson/cJSON"
     exe = tmp_path / "lifecycle"
+    diag = tmp_path / "diagnostics.o"
+    # Link the real POSIX diagnostics implementation, aliasing only the
+    # two functions used by other cases' fake wire seam.
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                    "-D_POSIX_C_SOURCE=200809L", "-pthread",
+                    "-Dtivoo_diagnostics_send_mic=host_diag_send_mic",
+                    "-Dtivoo_diagnostics_local_wake_generation=host_diag_local_wake_generation",
+                    "-I", str(MAIN), "-I", str(cjson), "-c",
+                    str(MAIN / "diagnostics.c"), "-o", str(diag)], check=True)
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-DESP_PLATFORM",
+                    "-D_POSIX_C_SOURCE=200809L", "-pthread",
                     "-I", str(tmp_path), "-I", str(MAIN), "-I", str(cjson),
                     str(Path(__file__).with_name("p68_lifecycle_host.c")),
                     str(MAIN / "s3_local_turn.c"), str(MAIN / "p68_local_turn.c"),
-                    str(MAIN / "p68_prompt.c"), str(cjson / "cJSON.c"),
+                    str(MAIN / "p68_prompt.c"), str(cjson / "cJSON.c"), str(diag),
                     "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
     subprocess.run([str(exe), "prompt_fault"], check=True)
+    subprocess.run([str(exe), "normal_end"], check=True)
     subprocess.run([str(exe), "stale_fault"], check=True)
 
     metrics = subprocess.run([str(exe), "metrics"], check=True, text=True, capture_output=True)

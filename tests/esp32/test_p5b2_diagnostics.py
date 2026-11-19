@@ -925,3 +925,38 @@ def test_p68_capability_rehandshake_preserves_nonvoice_channels(tmp_path):
         if client is not None: client.close()
         if control is not None: control.close()
         _stop(process)
+
+
+@pytest.mark.enable_socket
+def test_terminal_loss_invalidates_only_own_diagnostic_epoch(tmp_path):
+    process, control_port, port = _start_simulator(tmp_path)
+    control = client = None
+    try:
+        _command(process, "up")
+        control = _connect(control_port)
+        client = _connect(port)
+        _handshake(client)
+        _send_frame(client, 0x30, 1, b'{}')
+        assert _read_raw_frame(client) == (0x32, 1, b'{}')
+        _command(process, "remember_epoch")
+        _command(process, "invalidate_saved_epoch")
+        _wait_closed(client)
+        client.close()
+        client, (kind, seq, _) = _reconnect_hello(port)
+        assert (kind, seq) == (1, 0)
+        _send_ack(client)
+        _send_frame(client, 0x30, 1, b'{}')
+        assert _read_raw_frame(client) == (0x32, 1, b'{}')
+        # Late terminal from the already retired epoch may not close this one.
+        _command(process, "invalidate_saved_epoch")
+        _command(process, "send 0x32 7b7d")
+        assert _read_raw_frame(client) == (0x32, 2, b'{}')
+        control.settimeout(.1)
+        with pytest.raises(socket.timeout):
+            control.recv(1)
+    finally:
+        if client is not None:
+            client.close()
+        if control is not None:
+            control.close()
+        _stop(process)

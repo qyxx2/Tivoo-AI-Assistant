@@ -149,9 +149,11 @@ R07 软件验收完成（F11/F12）：[R07 验收报告](../reports/2026-11-19-p
 **Files:** `esp32/firmware/main/{audio_resource,audio_output_manager,diagnostics,s3_local_turn}.c`、必要 header；`tests/esp32/{test_p68_turn,test_p65b10_output,test_p6_audio_resource}.py`、p68_lifecycle_host.c 及最小新 worker harness（必要时）；HA test_p68_lifecycle.py/test_audio_resource.py/test_transport.py。
 **Interfaces:** send_audio_state→diagnostics enqueue、matching session/playback/epoch terminal→on_playback；active/pending owner、retire_local/socket shutdown/drain/quarantine；R03 安全 drain、R05 prompt、R07 轮次取消。
 
-- [ ] R08.1 RED：实际 audio_resource worker 的终态消息入队暂满+永久失败（原尝试250ms），模拟原7778仍健康；HA 不得永久等 terminal，失败不得发 grant 或伪报 completed。先评估现诊断连接失效/epoch teardown 是否可在发送失败处安全触发，能则优先使用；否则同连接保留 terminal 有界重送。二选一且关联当前连接，不能旧 epoch 关闭新连接、无限重发或用固定短播放时限截断正常长 TTS。GREEN。
-- [ ] R08.2 最小 socket/output fake seam 执行真实 audio_resource.c 的 active/pending、旧 UUID retire、HTTP shutdown、drain 超时隔离、旧 stop/new play、matching terminal 一次及 late terminal inert；普通 0x23→实际 tivoo_s3_local_turn_stop→0x22 正常结束。旧测试的 bool prompt_ready/记录 retire stub 继续作为 turn 层断言，不能代替 worker 证据。
-- [ ] R08.3 运行上述 ESP、HA 三文件、test_p68_prompt.py/test_p68_audio.py 回归；S3 build；确认 R05 prompt 与普通 TTS 的 AUDIO_STATE/owner 仍隔离。报告 terminal policy 与真实 fixture，为 R09 提供组合边界，审查、提交。
+- [x] R08.1 RED：实际 audio_resource worker 的终态消息入队暂满+永久失败（原尝试250ms），模拟原7778仍健康；HA 不得永久等 terminal，失败不得发 grant 或伪报 completed。先评估现诊断连接失效/epoch teardown 是否可在发送失败处安全触发，能则优先使用；否则同连接保留 terminal 有界重送。二选一且关联当前连接，不能旧 epoch 关闭新连接、无限重发或用固定短播放时限截断正常长 TTS。GREEN。
+- [x] R08.2 最小 socket/output fake seam 执行真实 audio_resource.c 的 active/pending、旧 UUID retire、HTTP shutdown、drain 超时隔离、旧 stop/new play、matching terminal 一次及 late terminal inert；普通 0x23→实际 tivoo_s3_local_turn_stop→0x22 正常结束。旧测试的 bool prompt_ready/记录 retire stub 继续作为 turn 层断言，不能代替 worker 证据。
+- [x] R08.3 运行上述 ESP、HA 三文件、test_p68_prompt.py/test_p68_audio.py 回归；S3 build；确认 R05 prompt 与普通 TTS 的 AUDIO_STATE/owner 仍隔离。报告 terminal policy 与真实 fixture，为 R09 提供组合边界，审查、提交。
+
+R08 软件验收完成（F14）：[R08 报告](../reports/2026-11-19-p6-8-r08-repair-acceptance.md)，真实资源 worker RED/GREEN、诊断 epoch 与正常结束 wire 通过；ESP 全量 118、HA 全量 578 passed，S3 构建及归档哈希通过；保留 R09 真实组合及硬件 GAP。
 
 ## R09 — 真实 HA 完整 Pipeline 与 owner 生命周期组合
 
@@ -220,4 +222,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R07 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07 全量通过）；R08–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R08 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过）；R09–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

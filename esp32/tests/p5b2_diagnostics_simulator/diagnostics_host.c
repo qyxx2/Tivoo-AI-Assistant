@@ -136,6 +136,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    uint32_t saved_epoch = 0;
     char line[10240];
     while (fgets(line, sizeof(line), stdin) != NULL) {
         char *save = NULL;
@@ -145,6 +146,10 @@ int main(int argc, char **argv)
         }
         if (strcmp(command, "local_wake_on") == 0) {
             tivoo_diagnostics_enable_local_wake();
+        } else if (strcmp(command, "remember_epoch") == 0) {
+            saved_epoch = tivoo_diagnostics_mic_generation();
+        } else if (strcmp(command, "invalidate_saved_epoch") == 0) {
+            tivoo_diagnostics_invalidate_mic(saved_epoch);
         } else if (strcmp(command, "local_wake_cycle") == 0) {
             tivoo_diagnostics_set_local_wake_available(false);
             tivoo_diagnostics_set_local_wake_available(true);

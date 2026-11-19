@@ -138,7 +138,7 @@ async def test_followup_requires_normal_run_return(hass, satellite, monkeypatch,
     else:
         stop.assert_awaited_once_with(SESSION_1,"tts_missing" if tts_attempt else "conversation_complete")
 
-@pytest.mark.parametrize("completed_first", [True, False])
+@pytest.mark.parametrize("completed_first", [True, False, None], ids=["completed_first", "run_first", "terminal_lost"])
 async def test_local_grant_waits_for_both_playback_and_run(hass, satellite, monkeypatch, completed_first):
     entity, manager, stop = satellite
     await manager.async_end_session(SESSION_1,"test")
@@ -180,6 +180,24 @@ async def test_local_grant_waits_for_both_playback_and_run(hass, satellite, monk
         release.set()
         await hass.async_block_till_done(wait_background_tasks=True)
         assert not grants()
+        if completed_first is None:
+            # R08 firmware invalidates its matching diagnostic epoch when
+            # queuing a terminal fails; HA must converge through its existing
+            # disconnect callback, without a fabricated completed event.
+            old = entity.coordinator._turn
+            assert old.run_returned and not old.playback_completed
+            await manager.async_disconnect()
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert manager.active_session_id is None and entity.coordinator._turn is None
+            assert not grants()
+            stop.assert_not_awaited()
+            await manager.async_start_session(local_start(SESSION_2, 1), persistent=True, local_mode=True)
+            entity.coordinator.on_playback(playback, "completed")
+            await hass.async_block_till_done()
+            assert manager.active_session_id == SESSION_2 and not grants()
+            await manager.async_disconnect()
+            await hass.async_block_till_done(wait_background_tasks=True)
+            return
         entity.coordinator.on_playback(playback,"completed")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(grants()) == 1

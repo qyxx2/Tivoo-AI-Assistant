@@ -857,6 +857,17 @@ static void disconnect_client_locked(int fd)
     clear_message_queue_locked();
 }
 
+void tivoo_diagnostics_invalidate_mic(uint32_t generation)
+{
+    if (!generation || !atomic_load(&s_running) || !mutex_take(true)) {
+        return;
+    }
+    if (s_client_fd >= 0 && generation == atomic_load(&s_mic_generation)) {
+        disconnect_client_locked(s_client_fd);
+    }
+    mutex_give();
+}
+
 static void diagnostics_worker(void)
 {
     while (atomic_load(&s_running)) {

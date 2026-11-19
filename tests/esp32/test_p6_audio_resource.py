@@ -102,3 +102,20 @@ def test_controlled_http_fixture_covers_stream_and_failure_responses(tmp_path):
     finally:
         server.terminate()
         server.wait(timeout=3)
+
+
+@pytest.mark.parametrize("case", ["temporary", "permanent", "old_epoch", "pending", "pending_lost", "timeout", "normal", "long_stream", "matching_stop"])
+def test_local_resource_worker(tmp_path, case):
+    """Production worker and parser, deterministic RTOS/HTTP/output/diagnostics boundaries."""
+    from test_p68_prompt import write_resource_test_headers
+
+    write_resource_test_headers(tmp_path)
+    binary = tmp_path / "resource-worker"
+    subprocess.run([
+        "cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+        "-Wno-sign-compare", "-DESP_PLATFORM", "-DTIVOO_P68_B5_LOCAL",
+        "-DTIVOO_P68_B3_AUDIO", "-I", str(tmp_path), "-I", str(FIRMWARE),
+        "-I", str(CJSON.parent), str(HARNESS.with_name("p68_resource_worker_host.c")),
+        str(FIRMWARE / "audio_resource.c"), str(CJSON), "-o", str(binary)
+    ], check=True)
+    subprocess.run([str(binary), case], check=True, timeout=5)

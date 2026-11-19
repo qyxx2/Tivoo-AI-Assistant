@@ -414,19 +414,16 @@ static void send_audio_state(
     bool retry)
 {
     cJSON *root = cJSON_CreateObject();
-    if (root == NULL) {
-        return;
+    bool queued = false;
+    char *payload = NULL;
+    if (root && cJSON_AddStringToObject(root, "audio_id", request->playback_id) &&
+        (!request->session_id[0] || cJSON_AddStringToObject(root, "session_id", request->session_id)) &&
+        cJSON_AddStringToObject(root, "source", "tts_http") &&
+        cJSON_AddStringToObject(root, "state", state) &&
+        cJSON_AddNumberToObject(root, "bytes_received", (double)request->bytes_received) &&
+        (!error_code || cJSON_AddStringToObject(root, "error_code", error_code))) {
+        payload = cJSON_PrintUnformatted(root);
     }
-    cJSON_AddStringToObject(root, "audio_id", request->playback_id);
-    if(request->session_id[0]) cJSON_AddStringToObject(root,"session_id",request->session_id);
-    cJSON_AddStringToObject(root, "source", "tts_http");
-    cJSON_AddStringToObject(root, "state", state);
-    cJSON_AddNumberToObject(root, "bytes_received", (double)request->bytes_received);
-    if (error_code != NULL) {
-        cJSON_AddStringToObject(root, "error_code", error_code);
-    }
-
-    char *payload = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (payload != NULL) {
         const size_t size = strlen(payload);
@@ -434,15 +431,26 @@ static void send_audio_state(
         while (request->peer_generation != 0 &&
                request->peer_generation == tivoo_diagnostics_mic_generation()) {
             if (tivoo_diagnostics_send_mic(request->peer_generation, TYPE_AUDIO_STATE, payload, size)) {
+                queued = true;
                 break;
             }
             if (!retry || esp_timer_get_time() >= deadline) {
-                ESP_LOGW(TAG, "Playback state %s could not be queued", state);
                 break;
             }
             vTaskDelay(1);
         }
         cJSON_free(payload);
+    }
+    if (!queued) {
+        ESP_LOGW(TAG, "Playback state %s could not be queued", state);
+#ifdef TIVOO_P68_B5_LOCAL
+        /* Losing a terminal leaves HA waiting indefinitely. Retire the
+         * matching diagnostics epoch so both sides use existing teardown.
+         * Intermediate states remain best effort. */
+        if (strcmp(state, "buffering") && strcmp(state, "playing")) {
+            tivoo_diagnostics_invalidate_mic(request->peer_generation);
+        }
+#endif
     }
     ESP_LOGI(TAG, "playback=%s state=%s error=%s", request->playback_id,
         state, error_code != NULL ? error_code : "-");
@@ -585,13 +593,29 @@ static const char *stream_audio(audio_request_t *request, bool *vad_suppressed)
 
 static audio_request_t *run_request(audio_request_t *request)
 {
-    (void)tivoo_device_status_set_audio_resource(true, request->playback_id);
-    send_audio_state(request, "buffering", NULL, true);
+    /* A pending request from a retired peer must not claim output or
+     * publish a fetching snapshot on a replacement diagnostic connection. */
+#ifdef TIVOO_P68_B5_LOCAL
+    const bool announce = request->peer_generation != 0 &&
+        request->peer_generation == tivoo_diagnostics_mic_generation();
+#else
+    const bool announce = true;
+#endif
+    if (announce) {
+        (void)tivoo_device_status_set_audio_resource(true, request->playback_id);
+        send_audio_state(request, "buffering", NULL, true);
+    }
 
     const char *error = NULL;
     bool output = false;
     bool vad_suppressed = false;
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
+#ifdef TIVOO_P68_B5_LOCAL
+    if (!request->peer_generation ||
+        request->peer_generation != tivoo_diagnostics_mic_generation()) {
+        atomic_store(&request->stop_requested, true);
+    }
+#endif
     if (!atomic_load(&request->stop_requested)) {
         if (!media_type_equal(request->mime_type, "audio/mpeg") &&
             !media_type_equal(request->mime_type, TIVOO_PCM_MIME)) {
@@ -656,7 +680,9 @@ static audio_request_t *run_request(audio_request_t *request)
         tivoo_audio_frontend_set_vad_suppressed(false);
     }
 #endif
-    (void)tivoo_device_status_set_audio_resource(false, NULL);
+    if (announce) {
+        (void)tivoo_device_status_set_audio_resource(false, NULL);
+    }
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     const bool stopped = atomic_load(&request->stop_requested);
     request->terminal = true;

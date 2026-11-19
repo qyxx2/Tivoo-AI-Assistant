@@ -52,11 +52,9 @@ def test_prompt_source_tamper_rejected(tmp_path):
     assert '"${_prompt_src}" "${_prompt_out}" COMMAND_ERROR_IS_FATAL ANY)' in (MAIN / "CMakeLists.txt").read_text()
 
 
-def test_prompt_real_adapter_dma_and_owner(tmp_path):
-    """Actual S3 turn/AFE gates/resource owner/output ISR, fake electrical/vendor boundaries."""
+def write_resource_test_headers(tmp_path):
     from test_p68_audio import dma_headers
     from test_p68_afe import afe_headers
-    import struct
 
     dma, afe = dma_headers(), afe_headers()
     headers = {**dma, **afe}
@@ -126,6 +124,12 @@ int esp_http_client_cleanup(esp_http_client_handle_t);
         p = tmp_path / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
+
+
+def test_prompt_real_adapter_dma_and_owner(tmp_path):
+    """Actual S3 turn/AFE gates/resource owner/output ISR, fake electrical/vendor boundaries."""
+    import struct
+    write_resource_test_headers(tmp_path)
     # Nonzero signed marker samples, at exactly all four frozen asset lengths.
     asm = ['.section .rodata']
     for name, n in zip(("ready_01", "ready_02", "ready_03", "followup_01"),

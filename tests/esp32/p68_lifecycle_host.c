@@ -3,6 +3,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <time.h>
 #include "s3_local_turn.h"
 #include "diagnostics.h"
 #include "audio_output_manager.h"
@@ -29,11 +33,74 @@ void *heap_caps_calloc(size_t n,size_t s,unsigned caps) { (void)caps; return cal
 void esp_fill_random(void *p,size_t n) { static unsigned v; memset(p,++v,n); }
 uint32_t esp_random(void) { return 0; }
 int64_t esp_timer_get_time(void) { return (int64_t)ms*1000; }
+/* In the normal-end case, use the actual host diagnostic parser and
+ * sender on a socket pair; other cases retain the deterministic wire seam. */
+static int diag_socket[2] = {-1,-1};
+static uint32_t tx_seq;
+uint32_t host_diag_local_wake_generation(void);
+bool host_diag_send_mic(uint32_t,uint8_t,const void *,size_t);
+static void read_exact(void *data,size_t n) {
+    uint8_t *p=data;
+    while(n) {
+        ssize_t got=read(diag_socket[1],p,n); assert(got>0);
+        p+=got;n-=(size_t)got;
+    }
+}
+static uint32_t le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1]<<8) |
+        ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
+}
+static void put32(uint8_t *p,uint32_t v) {
+    for(unsigned i=0;i<4;i++) p[i]=(uint8_t)(v>>(8*i));
+}
+static void read_wire(uint8_t type,const void *payload,size_t size) {
+    uint8_t header[16], body[4096];read_exact(header,sizeof(header));
+    assert(!memcmp(header,"TVIO",4) && header[4]==1 && header[5]==type);
+    size_t n=le32(header+8);assert(n<=sizeof(body) && le32(header+12)==tx_seq++);
+    read_exact(body,n);
+    if(payload) assert(n==size && !memcmp(body,payload,n));
+}
+static void receive_wire(uint8_t type,uint32_t seq,const char *payload) {
+    uint8_t frame[256]={'T','V','I','O',1,type,0,0};
+    size_t n=strlen(payload);assert(n<=sizeof(frame)-16);
+    put32(frame+8,n);put32(frame+12,seq);memcpy(frame+16,payload,n);
+    assert(tivoo_diagnostics_client_data(diag_socket[0],frame,16+n));
+}
+static void start_wire(void) {
+    assert(socketpair(AF_UNIX,SOCK_STREAM,0,diag_socket)==0);
+    struct timeval timeout={2,0};
+    assert(setsockopt(diag_socket[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout))==0);
+    tivoo_diagnostics_set_mic_capture_stop_handler(tivoo_s3_local_turn_stop);
+    assert(tivoo_diagnostics_start()==ESP_OK);
+    tivoo_diagnostics_enable_local_wake();
+    tivoo_diagnostics_client_connected(diag_socket[0]);
+    read_wire(1,NULL,0);
+    receive_wire(2,0,"{\"accepted\":true,\"capabilities\":[\"local_wake_stt_v1\"]}");
+    assert(host_diag_local_wake_generation()==connection);
+}
+static void stop_wire(const char *id,uint32_t seq) {
+    char body[128];snprintf(body,sizeof(body),"{\"session_id\":\"%s\",\"reason\":\"conversation_complete\"}",id);
+    receive_wire(0x23,seq,body);
+}
+static void close_wire(void) {
+    tivoo_diagnostics_stop();close(diag_socket[0]);close(diag_socket[1]);
+}
 uint32_t tivoo_diagnostics_local_wake_generation(void) { return connection; }
 bool tivoo_diagnostics_send_mic(uint32_t e,uint8_t type,const void *data,size_t n)
 {
     assert(e==connection);
     if(wire_blocked) return false;
+    if(diag_socket[0]>=0) {
+        /* Synchronous test consumer drains each message so this check is
+         * independent of host thread scheduling and queue backpressure. */
+        const struct timespec pause={0,1000000};
+        bool sent=false;
+        for(unsigned i=0;i<100 && !sent;i++) {
+            sent=host_diag_send_mic(e,type,data,n);
+            if(!sent) nanosleep(&pause,NULL);
+        }
+        assert(sent);read_wire(type,data,n);
+    }
     if(type==TVIO_TYPE_MIC_PCM) { assert(n==640); ++pcm_frames; return true; }
     cJSON *o=cJSON_ParseWithLength(data,n);
     assert(o);
@@ -47,7 +114,12 @@ bool tivoo_diagnostics_send_mic(uint32_t e,uint8_t type,const void *data,size_t 
         assert(strcmp(source,p?"local_followup":"local_wake")==0);
         assert((cJSON_GetObjectItemCaseSensitive(o,"wake_word_phrase")!=NULL)==(p==NULL));
     } else if(type==TVIO_TYPE_COMMAND_GATE) { assert(drained && gate_open); ++gates; }
-    else if(type==TVIO_TYPE_MIC_SESSION_END) { ++ends; }
+    else if(type==TVIO_TYPE_MIC_SESSION_END) {
+        assert(strcmp(id,sid)==0);
+        const char *reason=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"reason"));
+        assert(reason);
+        ++ends;
+    }
     cJSON_Delete(o);
     return true;
 }
@@ -92,6 +164,23 @@ static void command(void) {
     tivoo_s3_local_turn_event(NULL,&(tivoo_afe_event_t){.type=TIVOO_AFE_END,.index=320});
 }
 int main(int argc, char **argv) {
+    if(argc==2 && strcmp(argv[1],"normal_end")==0) {
+        start_wire();
+        assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
+        wake(); command();
+        char first[37]; strcpy(first,sid);
+        assert(tivoo_s3_local_turn_bind_playback(first,playback));
+        tivoo_s3_local_turn_playback_finished(first,playback,connection,true);
+        stop_wire(first,1);
+        tivoo_s3_local_turn_tick(); tivoo_s3_local_turn_tick();
+        assert(ends==1 && !gate_open && !strcmp(retired_id,first));
+        wake(); assert(starts==2 && gates==2 && strcmp(sid,first));
+        stop_wire(first,2);
+        tivoo_s3_local_turn_tick();
+        assert(ends==1 && gate_open);
+        close_wire();
+        return 0;
+    }
     if(argc==2 && strcmp(argv[1],"metrics")==0) {
         assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
         wake(); ms+=100; message(false,sid); tivoo_s3_local_turn_tick();
