@@ -130,8 +130,11 @@ async def test_local_mood_requires_valid_stt_reply(hass, satellite, monkeypatch)
 
 
 async def test_spp_reconnect_does_not_wait_for_slow_screen_write():
+    from unittest.mock import Mock
+
     adapter = Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
     adapter.states["control"] = "connected"
+    adapter._writers["control"] = Mock(is_closing=Mock(return_value=False))
     output = RecordingAdapter()
     display = ExpressionCoordinator(output)
     await display.async_start()
@@ -149,6 +152,7 @@ async def test_spp_reconnect_does_not_wait_for_slow_screen_write():
     finally:
         release.set()
         await notification
+        adapter._writers.clear()
         await adapter.async_stop()
         await display.async_shutdown()
 
@@ -296,6 +300,10 @@ async def test_new_runtime_waits_for_validated_spp_and_reasserts_off():
         await adapter._notify_spp_state("spp_connected", "00:11:22:33:44:55")
         await join_notifications()
         assert output.commands == []
+        # Connected state alone is not sufficient without an active writer.
+        await adapter._notify_spp_state("spp_connected", "11:75:58:97:49:98")
+        await join_notifications()
+        assert output.commands == []
         writer = Mock()
         writer.is_closing.return_value = True
         adapter._writers["control"] = writer
@@ -334,7 +342,7 @@ async def test_mood_is_not_accepted_after_physical_reply_terminal(hass, satellit
 async def test_ha_reload_initial_sync_uses_new_runtime_default_gate(
     hass, enable_custom_integrations, monkeypatch
 ):
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, Mock
     from pytest_homeassistant.common import MockConfigEntry
 
     # Exercise real HA platform/runtime load and reload without real network.
@@ -354,6 +362,9 @@ async def test_ha_reload_initial_sync_uses_new_runtime_default_gate(
         connection = runtime["connection_adapter"]
         assert display.last_sent is None
         connection.states["control"] = "connected"
+        connection._writers["control"] = Mock(
+            is_closing=Mock(return_value=False), wait_closed=AsyncMock()
+        )
         await connection._notify_spp_state("spp_connected","11:75:58:97:49:98")
         await asyncio.gather(*connection._spp_state_tasks)
         return display, output

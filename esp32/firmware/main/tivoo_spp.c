@@ -175,9 +175,15 @@ static bool same_address(const uint8_t left[6], const uint8_t right[6])
     return memcmp(left, right, 6) == 0;
 }
 
-static void report_spp_error(const char *code, const char *detail)
+static void report_spp_error(const spp_request_t *queued, const char *code, const char *detail)
 {
+#ifdef TIVOO_P68_B2_BRIDGE
+    TIVOO_LOGE(TAG, "%s: %s", code, detail);
+    tivoo_uart_bridge_request_error(queued->generation, code);
+#else
+    (void)queued;
     tivoo_report_error(code, TAG, detail);
+#endif
 }
 
 static bool gap_set_io_capability(void *context, uint8_t capability)
@@ -759,7 +765,7 @@ static void process_request(spp_request_t *queued)
     if (queued->type == REQUEST_FRAME &&
         (!s_session.peer_valid || !same_address(queued->peer, s_session.peer))) {
         tivoo_uart_bridge_hint(queued->generation, 0x96);
-        report_spp_error("spp_not_connected", "frame target is not the authenticated peer");
+        report_spp_error(queued, "spp_not_connected", "frame target is not the authenticated peer");
         return;
     }
 #endif
@@ -791,7 +797,7 @@ static void process_request(spp_request_t *queued)
             s_reconnect_not_before =
                 xTaskGetTickCount() + pdMS_TO_TICKS(SPP_RECONNECT_RETRY_MS);
         }
-        report_spp_error("spp_connect_failed", "spp_open_or_authentication_failed");
+        report_spp_error(queued, "spp_connect_failed", "spp_open_or_authentication_failed");
         break;
     case TIVOO_SPP_SESSION_DISCONNECT_FAILED:
         atomic_store(&s_disconnect_pending, false);
@@ -802,7 +808,7 @@ static void process_request(spp_request_t *queued)
         } else {
             set_link_state(SPP_LINK_DISCONNECTED);
         }
-        report_spp_error("spp_disconnect_failed", "spp_close_event_not_received");
+        report_spp_error(queued, "spp_disconnect_failed", "spp_close_event_not_received");
         break;
     case TIVOO_SPP_SESSION_NOT_CONNECTED:
 #ifdef TIVOO_P68_B2_BRIDGE
@@ -810,16 +816,16 @@ static void process_request(spp_request_t *queued)
             atomic_load(&s_link_state) == SPP_LINK_CONNECTING ? 0x69 : 0x96);
 #endif
         set_link_state(SPP_LINK_DISCONNECTED);
-        report_spp_error(
+        report_spp_error(queued,
             "spp_not_connected", "tivoo_frame_received_without_authenticated_peer");
         break;
     case TIVOO_SPP_SESSION_WRITE_FAILED:
         set_link_state(SPP_LINK_DISCONNECTED);
-        report_spp_error("spp_write_failed", "spp_chunk_write_or_completion_failed");
+        report_spp_error(queued, "spp_write_failed", "spp_chunk_write_or_completion_failed");
         break;
     case TIVOO_SPP_SESSION_INVALID_REQUEST:
     default:
-        report_spp_error("tivoo_frame_malformed", "invalid_spp_worker_request");
+        report_spp_error(queued, "tivoo_frame_malformed", "invalid_spp_worker_request");
         break;
     }
 }

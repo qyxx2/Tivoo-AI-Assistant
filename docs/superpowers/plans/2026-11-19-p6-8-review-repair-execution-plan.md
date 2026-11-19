@@ -67,11 +67,13 @@ R01 是构建证据；R02 控制链；R03 是独立且最重的音频底层；R0
 **Files:** `esp32/firmware/main/{network_listeners,uart_transport,uart_link,uart_router,tivoo_spp,tivoo_spp_session}.c` 及必要 header；Classic CMake 复用同一组 shared 文件；`homeassistant/custom_components/tivoo/{transport,display_state}.py`；`esp32/tests/p5b3_control_simulator/control_host.c`、`esp32/tests/p68_uart/{link_host,router_host}.c`、`tests/esp32/{test_p68_uart,test_p5b3_control_bridge,test_p5b3_session,test_p5b3_security,test_p6_reverse_channel,test_p6_device_status}.py`、HA test_transport/test_display_state。
 **Interfaces:** 7777 raw→staging→UART OPEN/CLOSE/FRAME/ACK + epoch→SPP generation/peer/WRITE；反向 ERROR 关联请求 epoch；7778 STATUS→现 coordinator 发送资格。
 
-- [ ] R02.1 RED：真实 listener 一次 sendall 两帧，首帧到桥后 FIN/close 或 RST，延迟 ACK，第二帧不能进入桥；7778 同时正常。用已有 control_host ACK seam；正常两帧与已开始 SPP write 不撤销亦有断言。修复可见 EOF/RST 检查、未提交 staging/token 作废，保留 ACK 仅入队与非幂等不重发；定向 GREEN。
-- [ ] R02.2 RED：实际 adapter/worker 最小 fake driver 执行 32 FIFO/8192 ring 双向饱和、CLOSE/OPEN 后旧 generation 跳过、reverse overflow 带当前 ERROR(epoch) 并关闭对应 7777、迟到旧 error 不闭新 7777、桥 invalidation 恢复通知、最长 256 GIF chunks；补原 link/router 计数测试没有跑到的边界。对 connect/disconnect/write/not_connected 关联 error 保留 epoch，真实全局错误才 epoch=0，核对现 wire schema。不为 RF 或通用 RPC 另造系统；GREEN。
-- [ ] R02.3 RED：真实或最小 driver 模拟 A→B、A disconnect API 暂时失败/CLOSE 超时，保留真实 A 状态且 B 帧不向 A，自动重新尝试最新 B。先核对 R02.2 关联错误能否准确定位 7777；优先使用关闭受影响连接及 HA 重新发送当前 MAC，若现有调用边界更适合，则仅使用桥保存最新目标的有限重试，报告为何；不能两套竞争或无限立即重连。执行 adapter 断言与 HA peer 过滤回归。
-- [ ] R02.4 RED：7777 未断、7778 独立重连后收到可信 connecting/非当前 peer，当前 display 不发送；随后 matched connected 只同步最新赢家/OFF。修改现 STATUS observer 资格规则，不将 7778 掉线等同 SPP 物理断开，不变动语音 UUID、gate/owner。旧/重复快照不影响新连接；GREEN。R10 复用此 fixture 加真实慢显示+语音，不重复创造桥。
-- [ ] R02.5 全部上述 ESP 测试 + `tests/homeassistant/custom_components/tivoo/{test_transport,test_display_state}.py`；两 target build；报告与提交。真实配对、射频、UART 水位与 Bond 保持 GAP。
+- [x] R02.1 RED：真实 listener 一次 sendall 两帧，首帧到桥后 FIN/close 或 RST，延迟 ACK，第二帧不能进入桥；7778 同时正常。用已有 control_host ACK seam；正常两帧与已开始 SPP write 不撤销亦有断言。修复可见 EOF/RST 检查、未提交 staging/token 作废，保留 ACK 仅入队与非幂等不重发；定向 GREEN。
+- [x] R02.2 RED：实际 adapter/worker 最小 fake driver 执行 32 FIFO/8192 ring 双向饱和、CLOSE/OPEN 后旧 generation 跳过、reverse overflow 带当前 ERROR(epoch) 并关闭对应 7777、迟到旧 error 不闭新 7777、桥 invalidation 恢复通知、最长 256 GIF chunks；补原 link/router 计数测试没有跑到的边界。对 connect/disconnect/write/not_connected 关联 error 保留 epoch，真实全局错误才 epoch=0，核对现 wire schema。不为 RF 或通用 RPC 另造系统；GREEN。
+- [x] R02.3 RED：真实或最小 driver 模拟 A→B、A disconnect API 暂时失败/CLOSE 超时，保留真实 A 状态且 B 帧不向 A，自动重新尝试最新 B。先核对 R02.2 关联错误能否准确定位 7777；优先使用关闭受影响连接及 HA 重新发送当前 MAC，若现有调用边界更适合，则仅使用桥保存最新目标的有限重试，报告为何；不能两套竞争或无限立即重连。执行 adapter 断言与 HA peer 过滤回归。
+- [x] R02.4 RED：7777 未断、7778 独立重连后收到可信 connecting/非当前 peer，当前 display 不发送；随后 matched connected 只同步最新赢家/OFF。修改现 STATUS observer 资格规则，不将 7778 掉线等同 SPP 物理断开，不变动语音 UUID、gate/owner。旧/重复快照不影响新连接；GREEN。R10 复用此 fixture 加真实慢显示+语音，不重复创造桥。
+- [x] R02.5 全部上述 ESP 测试 + `tests/homeassistant/custom_components/tivoo/{test_transport,test_display_state}.py`；两 target build；报告与提交。真实配对、射频、UART 水位与 Bond 保持 GAP。
+
+软件验收：[R02 修复验收](../reports/2026-11-19-p6-8-r02-repair-acceptance.md)，F02/F03/F04 对应软件问题已核销；本批专项 102 passed，双 target reconfigure/build/size exit 0；T02/T08 物理 GAP 保留。
 
 ## R03 — DMA 时轴、旧 PCM、可信 drain 与恢复
 
@@ -208,4 +210,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01 已完成软件修复验收；R02–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R02 已完成软件修复验收；R03–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

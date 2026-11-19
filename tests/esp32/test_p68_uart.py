@@ -103,3 +103,46 @@ def test_router_and_reverse_capacity(tmp_path):
                     str(MAIN.parents[1] / "tests/p68_uart/router_host.c"),
                     "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+
+@pytest.fixture(scope="module")
+def real_uart_adapter(request, tmp_path_factory):
+    host = MAIN.parents[1] / "tests/p68_uart"
+    binary = tmp_path_factory.mktemp("real-uart") / request.param
+    sources = [MAIN / "uart_wire.c", MAIN / "uart_link.c", MAIN / "uart_router.c",
+               MAIN / "tivoo_frame_stream.c"]
+    if request.param == "bridge":
+        sources += [MAIN / "tivoo_spp_session.c", MAIN / "bt_security_policy.c"]
+        defines = ["-DTIVOO_P68_B2_BRIDGE"]
+    else:
+        sources += [MAIN / "control_bridge.c"]
+        defines = ["-DTIVOO_P68_B2_UART"]
+    subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-DESP_PLATFORM",
+                    *defines, "-I", str(host / "fake"), "-I", str(MAIN),
+                    str(host / "adapter_host.c"), *map(str, sources), "-o", str(binary)], check=True)
+    return request.param, binary
+
+
+@pytest.mark.parametrize("real_uart_adapter", ["bridge", "master"], indirect=True)
+def test_real_uart_adapter_worker(real_uart_adapter):
+    role, binary = real_uart_adapter
+    if role == "master":
+        subprocess.run([str(binary)], check=True)
+    else:
+        from custom_components.tivoo.protocol import encode_command
+        from custom_components.tivoo.commands import TivooCommand
+        # 49 full palettes plus a smaller palette reach the 256-chunk limit.
+        pixels = [[(x, y, x * 16 + y) for x in range(16)] for y in range(16)]
+        small = [[((y * 16 + x) % 100, 0, 0) for x in range(16)] for y in range(16)]
+        frames = [pixels] * 49 + [small]
+        packets = encode_command(TivooCommand("play_animation", {"frames": frames, "delays": [20] * len(frames)}))
+        assert len(packets) == 256
+        subprocess.run([str(binary), "queue"], input=b"".join(packets), check=True)
+
+
+@pytest.mark.parametrize("real_uart_adapter", ["bridge"], indirect=True)
+@pytest.mark.parametrize("failure", ["1", "2", "connect", "retired"])
+def test_real_uart_worker_request_error(real_uart_adapter, failure):
+    role, binary = real_uart_adapter
+    assert role == "bridge"
+    subprocess.run([str(binary), failure], check=True)

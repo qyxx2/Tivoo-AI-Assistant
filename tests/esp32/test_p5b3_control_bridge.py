@@ -285,3 +285,46 @@ def test_p68_tcp_backpressure_does_not_block_7778(b2_simulator_binary):
         if diag is not None:
             diag.close()
         simulator.stop()
+
+
+@pytest.mark.parametrize('termination', ['fin', 'rst'])
+def test_p68_closed_client_discards_uncommitted_staging(b2_simulator_binary, termination):
+    import struct
+
+    simulator = ControlSimulator(b2_simulator_binary)
+    client = simulator.connect()
+    diag = None
+    first, second = _tivoo_frame(b'\x11'), _tivoo_frame(b'\x22')
+    try:
+        simulator.expect_event('OPEN')
+        simulator.process.stdin.write(b'ack\n')
+        client.sendall(b'\x69' + MAC)
+        simulator.expect_event('CONNECT 11:75:58:97:49:98')
+        simulator.process.stdin.write(b'ack\n')
+        client.sendall(first + second)
+        simulator.expect_event('FRAME ' + first.hex().upper())
+        if termination == 'fin':
+            client.shutdown(socket.SHUT_WR)
+        else:
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+            client.close()
+        diag = _wait_connected(simulator.diagnostic_port)
+        assert diag.recv(4) == b'TVIO'
+        time.sleep(0.3)
+        simulator.process.stdin.write(b'ack\n')
+        simulator.expect_event('CLOSE')
+        # The already accepted first frame is not undone; the second never reached UART.
+        assert not select.select([simulator.process.stdout], [], [], 0.15)[0]
+        assert [event for event in simulator.output if event.startswith('FRAME ')] == [
+            'FRAME ' + first.hex().upper()
+        ]
+        diag.settimeout(0.1)
+        try:
+            assert diag.recv(4096)
+        except TimeoutError:
+            pass
+    finally:
+        client.close()
+        if diag is not None:
+            diag.close()
+        simulator.stop()

@@ -471,11 +471,11 @@ class ExpressionCoordinator:
         self._last_sent = None
 
     async def async_on_spp_state(self, state: str) -> None:
-        """React only to validated diagnostic DEVICE_EVENT connection changes."""
+        """React to control loss or validated diagnostic display eligibility."""
         if self._shutdown:
             return
         self._spp_revision += 1
-        if state == "spp_disconnected":
+        if state in {"spp_disconnected", "spp_unavailable"}:
             self._spp_connected = False
             self._last_sent = None
             self._cancel_idle_timer()

@@ -156,6 +156,7 @@ class Esp32ConnectionAdapter:
         self._spp_reverse_handler: Callable[[bytes], Awaitable[None]] | None = None
         self._spp_state_handler: Callable[[str], Awaitable[None]] | None = None
         self._spp_state_tasks: set[asyncio.Task] = set()
+        self._spp_display_eligible = False
         self.spp_hint = "unavailable"
         self._stopping = False
 
@@ -187,6 +188,7 @@ class Esp32ConnectionAdapter:
         if self._spp_state_tasks:
             await asyncio.gather(*self._spp_state_tasks, return_exceptions=True)
         self._spp_state_tasks.clear()
+        self._spp_display_eligible = False
 
         for writer in self._writers.values():
             writer.close()
@@ -257,13 +259,20 @@ class Esp32ConnectionAdapter:
         )
 
     async def _notify_spp_state(self, state: str, mac: str | None = None) -> None:
-        if state == "spp_connected" and (
-            self.states["control"] != "connected" or not self._matches_spp_mac(mac)
-            or ((writer := self._writers.get("control")) is not None and writer.is_closing())
-        ):
+        eligible = (
+            state == "spp_connected"
+            and self.states["control"] == "connected"
+            and self._matches_spp_mac(mac)
+            and (writer := self._writers.get("control")) is not None
+            and not writer.is_closing()
+        )
+        if self._spp_state_handler is None or eligible == self._spp_display_eligible:
             return
-        if self._spp_state_handler is None:
-            return
+        self._spp_display_eligible = eligible
+        # A credible connecting/mismatched peer revokes display eligibility,
+        # without asserting that the physical SPP connection is disconnected.
+        if not eligible and state != "spp_disconnected":
+            state = "spp_unavailable"
         handler = self._spp_state_handler
 
         async def notify() -> None:
@@ -540,6 +549,7 @@ class Esp32ConnectionAdapter:
         self._diagnostic_handshaken = False
         self._device_status_request_id = None
         self.device_status = None
+        spp_uptime = -1
 
         try:
             while True:
@@ -637,28 +647,31 @@ class Esp32ConnectionAdapter:
                             payload = self._validate_device_status(
                                 self._decode_json(message.payload)
                             )
-                            self.device_status = payload
-                            # DEVICE_STATUS is the ESP32-side truth for whether
-                            # its 7777 server still owns this HA connection. An
-                            # ESP32 reset can leave the pre-reset client socket
-                            # looking ESTABLISHED locally until the next write.
-                            # Closing that stale writer lets the existing control
-                            # loop reconnect and resend the Bluetooth MAC.
-                            if (
-                                payload["tcp"]["7777"] == "disconnected"
-                                and self.states["control"] == "connected"
-                                and (control_writer := self._writers.get("control"))
-                                is not None
-                                and control_writer is self._status_control_writer
-                                and not control_writer.is_closing()
-                            ):
-                                _LOGGER.info(
-                                    "ESP32 reports stale 7777 control channel; reconnecting"
-                                )
-                                control_writer.close()
-                            # A validated initial snapshot handles HA reload while
-                            # Bluetooth remains connected and emits no new event.
-                            if payload["spp"]["state"] in {"connected", "disconnected"}:
+                            # Uptime is scoped to this negotiated diagnostic session.
+                            # A delayed snapshot cannot replace a newer SPP event.
+                            if payload["uptime_ms"] >= spp_uptime:
+                                spp_uptime = payload["uptime_ms"]
+                                self.device_status = payload
+                                # DEVICE_STATUS is the ESP32-side truth for whether
+                                # its 7777 server still owns this HA connection. An
+                                # ESP32 reset can leave the pre-reset client socket
+                                # looking ESTABLISHED locally until the next write.
+                                # Closing that stale writer lets the existing control
+                                # loop reconnect and resend the Bluetooth MAC.
+                                if (
+                                    payload["tcp"]["7777"] == "disconnected"
+                                    and self.states["control"] == "connected"
+                                    and (control_writer := self._writers.get("control"))
+                                    is not None
+                                    and control_writer is self._status_control_writer
+                                    and not control_writer.is_closing()
+                                ):
+                                    _LOGGER.info(
+                                        "ESP32 reports stale 7777 control channel; reconnecting"
+                                    )
+                                    control_writer.close()
+                                # A validated initial snapshot handles HA reload while
+                                # Bluetooth remains connected and emits no new event.
                                 await self._notify_spp_state(
                                     f"spp_{payload['spp']['state']}", payload["spp"].get("mac")
                                 )
@@ -666,13 +679,17 @@ class Esp32ConnectionAdapter:
                             payload = self._validate_device_event(
                                 self._decode_json(message.payload)
                             )
-                            self._apply_device_event(payload)
-                            self.last_device_event = payload
-                            if payload["event"] in {
-                                "spp_connected",
-                                "spp_disconnected",
-                            }:
-                                await self._notify_spp_state(payload["event"], payload["data"].get("mac"))
+                            if payload["event"].startswith("spp_"):
+                                if payload["uptime_ms"] >= spp_uptime:
+                                    spp_uptime = payload["uptime_ms"]
+                                    self._apply_device_event(payload)
+                                    self.last_device_event = payload
+                                    await self._notify_spp_state(
+                                        payload["event"], payload["data"].get("mac")
+                                    )
+                            else:
+                                self._apply_device_event(payload)
+                                self.last_device_event = payload
                         elif message.message_type == TYPE_DIAGNOSTIC_LOG:
                             self._log_diagnostic(self._decode_json(message.payload))
                         elif message.message_type == TYPE_ERROR:

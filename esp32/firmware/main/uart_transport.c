@@ -43,6 +43,7 @@ typedef struct {
     uart_reverse_ring_t reverse;
     uint8_t reverse_chunk[UART_WIRE_PAYLOAD];
     uint32_t reverse_epoch, generation;
+    uint32_t request_errors[8];
     unsigned reverse_peak;
     bool reverse_failed, reverse_error_sent;
 #else
@@ -114,6 +115,20 @@ void tivoo_uart_bridge_error(const char *code)
         }
     }
 }
+/* Worker results are associated with the generation accepted into its FIFO.
+ * Retired generations must never be relabelled as the new TCP owner's epoch. */
+void tivoo_uart_bridge_request_error(uint32_t generation,const char *code)
+{
+    if(!s) return;
+    for(unsigned i=1;i<sizeof(errors)/sizeof(errors[0]);i++) {
+        if(strcmp(code,errors[i])) continue;
+        portENTER_CRITICAL(&s_snapshot_mux);
+        if(generation==s->generation && s->reverse_epoch)
+            s->request_errors[i]=s->reverse_epoch;
+        portEXIT_CRITICAL(&s_snapshot_mux);
+        return;
+    }
+}
 static void bridge_client(void *ctx,uint32_t epoch)
 {
     transport_t *t=ctx;
@@ -121,6 +136,7 @@ static void bridge_client(void *ctx,uint32_t epoch)
     t->reverse_epoch=epoch;
     if(++t->generation==0) ++t->generation;
     uart_reverse_clear(&t->reverse);
+    memset(t->request_errors,0,sizeof(t->request_errors));
     t->reverse_failed=t->reverse_error_sent=false;
     portEXIT_CRITICAL(&s_snapshot_mux);
     tivoo_spp_set_control_generation(t->generation);
@@ -189,10 +205,18 @@ static void service_role(transport_t *t,uint64_t now)
     if(atomic_exchange(&s_status_dirty,false)) uart_link_status(&t->link);
     unsigned bits=atomic_exchange(&s_error_bits,0);
     for(unsigned i=1;i<sizeof(errors)/sizeof(errors[0]);i++) {
+        uint8_t code=i;
         if(bits&(1u<<i)) {
-            uint8_t code=i;
             if(!uart_link_control(&t->link,UW_ERROR,0,0,&code,1))
                 atomic_fetch_or(&s_error_bits,1u<<i);
+        }
+        portENTER_CRITICAL(&s_snapshot_mux);
+        uint32_t request_epoch=t->request_errors[i];
+        portEXIT_CRITICAL(&s_snapshot_mux);
+        if(request_epoch && uart_link_control(&t->link,UW_ERROR,0,request_epoch,&code,1)) {
+            portENTER_CRITICAL(&s_snapshot_mux);
+            t->request_errors[i]=0;
+            portEXIT_CRITICAL(&s_snapshot_mux);
         }
     }
     portENTER_CRITICAL(&s_snapshot_mux);
@@ -242,6 +266,9 @@ static void reset(void *ctx)
         tivoo_report_error("spp_not_connected",TAG,"UART session unavailable");
     static const uint8_t offline[8]={0};
     publish_status(t,offline);
+    /* Even if diagnostics could not enqueue offline, re-handshake must
+     * publish a fresh connected snapshot (including the same physical peer). */
+    if(memcmp(t->reported,offline,8)) t->reported_valid=false;
     t->next_status_retry=now_ms()+1000;
 }
 static int receive(void *ctx,const uart_wire_packet_t *p)
@@ -253,7 +280,11 @@ static int receive(void *ctx,const uart_wire_packet_t *p)
     }
     if(p->type==UW_ERROR) {
         tivoo_report_error(errors[p->payload[0]],TAG,"Classic SPP bridge error");
-        if(p->payload[0]==6 && p->epoch && p->epoch==t->epoch) t->client_fault=true;
+        /* A failed peer switch cannot forward frames to the old peer.
+         * Retire this 7777 owner so HA resends its latest target on reconnect.
+         * The same epoch isolation already applies to reverse overflow. */
+        if((p->payload[0]==3 || p->payload[0]==6) && p->epoch && p->epoch==t->epoch)
+            t->client_fault=true;
         return 0;
     }
     if(p->epoch==t->closing_epoch && p->epoch!=t->epoch) return 0;

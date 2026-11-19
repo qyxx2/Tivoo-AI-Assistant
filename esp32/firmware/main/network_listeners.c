@@ -179,7 +179,12 @@ static void accept_one_client(listener_endpoint_t *endpoint)
 static void pump_control_input(listener_endpoint_t *endpoint)
 {
     if (endpoint->client_fd < 0) return;
-    if (!tivoo_uart_client_valid()) {
+    /* A readable EOF/RST invalidates uncommitted staging even while waiting
+     * for the previous UART ACK. Do not consume unread socket bytes. */
+    uint8_t byte;
+    ssize_t n = recv(endpoint->client_fd, &byte, 1, MSG_PEEK);
+    if (!tivoo_uart_client_valid() || n == 0 ||
+        (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
         close_client(endpoint);
         return;
     }
@@ -193,12 +198,6 @@ static void pump_control_input(listener_endpoint_t *endpoint)
     }
     if (s_control_offset == s_control_size) {
         s_control_offset = s_control_size = 0;
-        if (!tivoo_uart_client_can_read()) {
-            uint8_t byte;
-            ssize_t n = recv(endpoint->client_fd, &byte, 1, MSG_PEEK);
-            if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
-                close_client(endpoint);
-        }
     }
 }
 #endif

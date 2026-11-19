@@ -1425,6 +1425,7 @@ async def test_device_status_and_event_validation_updates_only_known_state(
         ]
         assert spp_states == [
             "spp_connected",  # Validated initial DEVICE_STATUS snapshot.
+            "spp_unavailable",  # Missing/mismatched peer revokes eligibility.
             "spp_connected",  # Validated DEVICE_EVENT transition.
             "spp_disconnected",
         ]
@@ -1870,6 +1871,141 @@ async def test_p68_local_capability_and_session_bound_tts(monkeypatch, socket_en
         assert len(states)==1
     finally:
         await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()
+
+
+@pytest.mark.parametrize("off", [False, True])
+@pytest.mark.parametrize("initial_state, initial_mac", [
+    ("connecting", "11:75:58:97:49:98"),
+    ("connected", "00:11:22:33:44:55"),
+])
+async def test_p68_spp_status_reconnect_revokes_display_eligibility(
+    monkeypatch, socket_enabled, off, initial_state, initial_mac
+):
+    import json
+    from custom_components.tivoo.commands import TivooCommand
+    from custom_components.tivoo.display_state import ExpressionCoordinator, build_expression_command
+    from custom_components.tivoo.protocol import encode_command
+
+    control_peers = asyncio.Queue()
+    diagnostic_peers = asyncio.Queue()
+    writers = []
+
+    async def control_handler(reader, writer):
+        writers.append(writer)
+        assert await reader.readexactly(7) == bytes.fromhex("69 11 75 58 97 49 98")
+        await control_peers.put((reader, writer))
+        await writer.wait_closed()
+
+    async def diagnostic_handler(reader, writer):
+        writers.append(writer)
+        writer.write(_tvio_message(0x01, 0, json.dumps({
+            "device_id": "tivoo-esp32", "firmware_version": "test",
+            "protocol_version": 1, "reset_reason": "ESP_RST_POWERON",
+            "capabilities": ["spp_control", "spp_reverse", "remote_diagnostics",
+                             "device_status", "device_events", "audio_resource_http", "audio_control"]
+        }).encode()))
+        await writer.drain()
+        assert (await _read_tvio_message(reader))[2]["accepted"]
+        request = await _read_tvio_message(reader)
+        await diagnostic_peers.put((writer, request[2]["request_id"]))
+        await writer.wait_closed()
+
+    control_server = await asyncio.start_server(control_handler, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(diagnostic_handler, "127.0.0.1", 0)
+    monkeypatch.setattr(transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1])
+    monkeypatch.setattr(transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1])
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98", retry_interval=0.05)
+    display = ExpressionCoordinator(adapter, spp_connected=False)
+    adapter.register_spp_state_handler(display.async_on_spp_state)
+    observed = asyncio.Queue()
+
+    async def received(message):
+        await observed.put(message)
+
+    adapter.register_message_handler(transport.TYPE_DEVICE_STATUS, received)
+    adapter.register_message_handler(transport.TYPE_DEVICE_EVENT, received)
+
+    async def status(peer, state, mac, uptime, *, seq=1, request_id=None):
+        writer, rid = peer
+        writer.write(_tvio_message(transport.TYPE_DEVICE_STATUS, seq, json.dumps({
+            "request_id": request_id or rid, "device_id": "tivoo-esp32", "firmware_version": "test",
+            "uptime_ms": uptime, "wifi": {"state": "connected"},
+            "tcp": {"7777": "connected", "7778": "connected"},
+            "spp": {"state": state, "mac": mac}, "audio_resource": {"state": "idle"},
+        }).encode()))
+        await writer.drain()
+        await asyncio.wait_for(observed.get(), 1)
+        await asyncio.gather(*adapter._spp_state_tasks)
+
+    def command(value):
+        return build_expression_command(value)
+
+    async def assert_wire(cmd):
+        expected = b"".join(encode_command(cmd))
+        assert await asyncio.wait_for(control_reader.readexactly(len(expected)), 1) == expected
+
+    try:
+        await display.async_start()
+        await display.async_set_explicit(command("fish"))
+        await adapter.async_start()
+        control_reader, control_writer = await asyncio.wait_for(control_peers.get(), 2)
+        first = await asyncio.wait_for(diagnostic_peers.get(), 2)
+        await status(first, "connected", "11:75:58:97:49:98", 10)
+        await assert_wire(command("fish"))
+        first[0].close()
+        second = await asyncio.wait_for(diagnostic_peers.get(), 2)
+        assert adapter.states["control"] == "connected"
+        assert not control_writer.is_closing()
+        # Diagnostic EOF alone is not a physical disconnect.
+        await display.async_set_explicit(command("happy"))
+        await assert_wire(command("happy"))
+        await status(second, initial_state, initial_mac, 20)
+        await display.async_set_explicit(command("thinking"))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(control_reader.read(1), 0.05)
+        await status(second, "connected", "00:11:22:33:44:55", 21, seq=2)
+        await display.async_set_explicit(command("music"))
+        if off:
+            await display.async_acquire_screen_off("night")
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(control_reader.read(1), 0.05)
+        second[0].write(_tvio_message(transport.TYPE_DEVICE_EVENT, 3, json.dumps({
+            "event":"spp_connected", "uptime_ms":22, "data":{"mac":"11:75:58:97:49:98"}
+        }).encode()))
+        await second[0].drain()
+        await asyncio.wait_for(observed.get(), 1)
+        await asyncio.gather(*adapter._spp_state_tasks)
+        await assert_wire(TivooCommand("set_screen_power", {"value": False}) if off else command("music"))
+        await status(second, "connecting", "11:75:58:97:49:98", 20, seq=4)
+        await display.async_set_explicit(command("fish"))
+        if not off:
+            await assert_wire(command("fish"))
+        # Duplicate of the already-consumed snapshot/event must not force another write.
+        second[0].write(_tvio_message(transport.TYPE_DEVICE_EVENT, 5, json.dumps({
+            "event":"spp_connected", "uptime_ms":22, "data":{"mac":"11:75:58:97:49:98"}
+        }).encode()))
+        await second[0].drain()
+        await asyncio.wait_for(observed.get(), 1)
+        await asyncio.gather(*adapter._spp_state_tasks)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(control_reader.read(1), 0.05)
+        assert control_peers.empty()
+        # A matching bridge ERROR closes only 7777 (as exercised by the
+        # firmware adapter host). The existing HA loop resends the current MAC
+        # and reasserts the latest state, with this diagnostic session intact.
+        control_writer.close()
+        control_reader, control_writer = await asyncio.wait_for(control_peers.get(), 2)
+        await assert_wire(TivooCommand("set_screen_power", {"value": False}) if off else command("fish"))
+        assert not second[0].is_closing()
+        assert diagnostic_peers.empty()
+    finally:
+        await display.async_shutdown()
+        await adapter.async_stop()
+        await _close_clients(writers)
         control_server.close()
         diagnostic_server.close()
         await control_server.wait_closed()
