@@ -107,3 +107,68 @@ def test_p68_s3_compile_probe_matches_frozen_afe_graph():
     assert 'config->wakenet_init = true;' in source
     assert 'config->vad_mute_playback = false;' in source
     assert 'volatile bool tivoo_s3_enable_api_probe = false;' in source
+
+
+def test_active_targets_boot_and_memory():
+    s3 = ROOT / "esp32/firmware"
+    classic = ROOT / "esp32/bridge_firmware"
+    for project, target, entry in (
+        (s3, "esp32s3", "s3_main.c"),
+        (classic, "esp32", "main.c"),
+    ):
+        project_cmake = (project / "CMakeLists.txt").read_text()
+        graph = (project / "main/CMakeLists.txt").read_text()
+        assert f'set(IDF_TARGET "{target}" CACHE STRING' in project_cmake
+        assert f'if(NOT IDF_TARGET STREQUAL "{target}")' in project_cmake
+        assert f'"{entry}"' in graph
+        assert "board_boot.c" in graph
+        assert "hardware_memory.c" not in graph
+        boot = (project / "main" / entry).read_text().split("void app_main(void)", 1)[1]
+        assert "tivoo_board_memory_report();" in boot
+        assert "nvs_flash_erase" not in boot
+
+    s3_graph = (s3 / "main/CMakeLists.txt").read_text()
+    assert '"main.c"' not in s3_graph
+    assert '"wifi_station.c"' in s3_graph
+    assert '"diagnostics.c"' in s3_graph
+    assert '"network_listeners.c"' in s3_graph
+    assert "esp_wifi" in s3_graph and "esp-sr" in s3_graph
+    s3_boot = (FIRMWARE_MAIN / "s3_main.c").read_text().split("void app_main(void)", 1)[1]
+    assert (s3_boot.index("tivoo_wifi_station_init_nvs()")
+            < s3_boot.index("tivoo_diagnostics_start()")
+            < s3_boot.index("network_listeners_start(7777, 7778)")
+            < s3_boot.index("tivoo_wifi_station_start()"))
+    nvs_guard = s3_boot.split("tivoo_wifi_station_init_nvs()", 1)[1].split(
+        "tivoo_audio_resource_init()", 1
+    )[0]
+    assert "if (err != ESP_OK)" in nvs_guard and "return;" in nvs_guard
+    nvs = (FIRMWARE_MAIN / "wifi_station.c").read_text()
+    assert "nvs_flash_init()" in nvs and "nvs_flash_erase" not in nvs
+    assert "tivoo_board_rgb_off(" not in s3_boot  # GPIO38 revision gate
+
+    classic_boot = (classic / "main/main.c").read_text().split("void app_main(void)", 1)[1]
+    assert (classic_boot.index("tivoo_board_rgb_off(GPIO_NUM_27)")
+            < classic_boot.index("nvs_flash_init()")
+            < classic_boot.index("tivoo_spp_start()"))
+    nvs_guard = classic_boot.split("nvs_flash_init()", 1)[1].split(
+        "tivoo_spp_start()", 1
+    )[0]
+    assert "if (err != ESP_OK)" in nvs_guard and "return;" in nvs_guard
+
+    board = (FIRMWARE_MAIN / "board_boot.c").read_text()
+    memory = board.split("void tivoo_board_memory_report(void)", 1)[1]
+    for call in (
+        "esp_flash_get_size(NULL, &flash)", "esp_psram_is_initialized()",
+        "esp_psram_get_size()", "heap_caps_get_total_size(MALLOC_CAP_SPIRAM)",
+        "heap_caps_get_free_size(MALLOC_CAP_SPIRAM)",
+        "heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)",
+        "heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)",
+        "esp_himem_get_phys_size()", "esp_himem_get_free_size()",
+    ):
+        assert call in memory
+    assert "#if CONFIG_IDF_TARGET_ESP32" in memory
+    rgb = board.split("esp_err_t tivoo_board_rgb_off", 1)[1].split(
+        "void tivoo_board_memory_report", 1
+    )[0]
+    assert "rmt_transmit(" in rgb and "rmt_tx_wait_all_done(" in rgb
+    assert "gpio_set_level(pin, 0)" in rgb

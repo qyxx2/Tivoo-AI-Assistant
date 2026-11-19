@@ -1,6 +1,9 @@
 """P5b3 startup ordering and non-destructive NVS invariants."""
 
+import os
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FIRMWARE = ROOT / "esp32/firmware"
@@ -28,9 +31,45 @@ def test_firmware_default_controller_mode_includes_classic_bluetooth():
     assert "CONFIG_BT_SPP_ENABLED=y" in defaults
     assert "CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y" in defaults
 
-    sdkconfig = (bridge / "sdkconfig").read_text()
-    assert "CONFIG_BT_SMP_ENABLE=y" in sdkconfig
-    assert "CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y" in sdkconfig
+
+def test_effective_target_configs_after_configure():
+    # Source/host tests can run on a clean checkout. Explicit configure
+    # evidence must exist when requested (missing config is a failure).
+    configured_root = os.environ.get("TIVOO_P68_CONFIG_ROOT")
+    paths = (
+        (Path(configured_root) / "esp32s3/sdkconfig",
+         Path(configured_root) / "esp32/sdkconfig")
+        if configured_root else
+        (FIRMWARE / "sdkconfig", ROOT / "esp32/bridge_firmware/sdkconfig")
+    )
+    if not configured_root and not all(path.is_file() for path in paths):
+        pytest.skip("configure both targets first; set TIVOO_P68_CONFIG_ROOT for independent builds")
+    s3, classic = (set(path.read_text().splitlines()) for path in paths)
+    common = {
+        "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y", "CONFIG_ESPTOOLPY_FLASHMODE_DIO=y",
+        "CONFIG_SPIRAM=y", "CONFIG_SPIRAM_USE_MALLOC=y",
+        "CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240",
+        "# CONFIG_FREERTOS_UNICORE is not set",
+        "CONFIG_PARTITION_TABLE_CUSTOM=y", "CONFIG_PARTITION_TABLE_OFFSET=0x8000",
+    }
+    assert common <= s3
+    assert common <= classic
+    assert {
+        'CONFIG_IDF_TARGET="esp32s3"', "CONFIG_ESPTOOLPY_FLASHFREQ_80M=y",
+        "CONFIG_SPIRAM_MODE_OCT=y", "CONFIG_SPIRAM_SPEED_80M=y",
+        "CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y",
+        "CONFIG_MODEL_IN_FLASH=y", "CONFIG_SR_VADN_VADNET1_MEDIUM=y",
+        "CONFIG_SR_WN_WN9_HILEXIN=y",
+    } <= s3
+    assert "CONFIG_BT_ENABLED=y" not in s3
+    assert {
+        'CONFIG_IDF_TARGET="esp32"', "CONFIG_ESPTOOLPY_FLASHFREQ_40M=y",
+        "CONFIG_SPIRAM_MODE_QUAD=y", "CONFIG_SPIRAM_SPEED_40M=y",
+        "CONFIG_SPIRAM_TYPE_ESPPSRAM64=y", "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=y",
+        "CONFIG_SPIRAM_BANKSWITCH_ENABLE=y", "CONFIG_SPIRAM_BANKSWITCH_RESERVE=8",
+        "CONFIG_BT_SMP_ENABLE=y", "CONFIG_BT_SPP_ENABLED=y",
+        "CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y",
+    } <= classic
 
 
 def test_classic_spp_uses_explicit_mac_sdp_and_never_scans_for_devices():
