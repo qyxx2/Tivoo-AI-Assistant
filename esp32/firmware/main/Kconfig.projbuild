@@ -74,6 +74,20 @@ config TIVOO_P68_PROMPT_AFE_OFFSET_SAMPLES
     range -80000 80000
     default 0
 
+config TIVOO_P68_CALIBRATION_TRACE
+    bool "One-shot 4-second local calibration trace (debug only)"
+    default n
+    help
+        Capture indexed raw RX/TX and enhanced PCM/cache/VAD/gate to bounded
+        PSRAM buffers, then dump once to the local serial console. Contains
+        microphone audio. Explicit calibration builds only, never production.
+
+config TIVOO_P68_TRACE_DELAY_SECONDS
+    int "Seconds after AFE startup to start the one-shot trace"
+    depends on TIVOO_P68_CALIBRATION_TRACE
+    range 0 120
+    default 15
+
 config TIVOO_AUDIO_PROBE
     bool "Log one-second audio measurements to UART"
     default n

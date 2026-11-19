@@ -22,9 +22,8 @@ def test_s3_uses_physical_audio_without_legacy_afe():
     assert "tivoo_audio_resource_handle_message" in main
 
 
-def test_dma_runtime_recovery(tmp_path):
-    """Run the real ISR/capture/queue functions; only I2S/RTOS boundary is fake."""
-    headers = {
+def dma_headers():
+    return {
         "esp_err.h": """#pragma once
 typedef int esp_err_t;
 #define ESP_OK 0
@@ -95,6 +94,11 @@ esp_err_t i2s_del_channel(i2s_chan_handle_t);
 esp_err_t i2s_channel_read(i2s_chan_handle_t,void *,size_t,size_t *,unsigned);
 """,
     }
+
+
+def test_dma_runtime_recovery(tmp_path):
+    """Run the real ISR/capture/queue functions; only I2S/RTOS boundary is fake."""
+    headers = dma_headers()
     for name, content in headers.items():
         p = tmp_path / name
         p.parent.mkdir(parents=True, exist_ok=True)

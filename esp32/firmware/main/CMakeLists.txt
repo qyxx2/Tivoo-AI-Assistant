@@ -5,6 +5,7 @@ idf_component_register(
         "p68_afe_flow.c"
         "p68_local_turn.c"
         "p68_prompt.c"
+        "p68_trace.c"
         "s3_local_turn.c"
         "s3_afe.c"
         "audio_output_manager.c"

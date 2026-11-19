@@ -1,4 +1,5 @@
 #include "s3_afe.h"
+#include "p68_trace.h"
 #include "s3_local_turn.h"
 #include "audio_capture.h"
 #include "diagnostics.h"
@@ -54,6 +55,9 @@ bool tivoo_s3_afe_control(tivoo_afe_control_t control, uint64_t index)
 static bool open_gate(uint64_t index)
 {
     vad_gate_pending=tivoo_afe_flow_open(flow,index);
+    tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_GATE,
+        .index=flow->have_next?flow->next:UINT64_MAX,.epoch=flow->have_next?epoch_first:UINT64_MAX,.aux=index,
+        .flags=TIVOO_TRACE_OPEN_REQUESTED|(vad_gate_pending?TIVOO_TRACE_GATE_OPEN:0)}),NULL,NULL);
     return vad_gate_pending;
 }
 
@@ -80,12 +84,22 @@ bool tivoo_s3_afe_open_test_gate(void)
 }
 void tivoo_s3_afe_close_local_gate(void)
 {
-    if(flow) tivoo_afe_flow_close(flow);
+    if(flow) {
+        tivoo_afe_flow_close(flow);
+        tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_GATE,
+            .index=flow->have_next?flow->next:UINT64_MAX,.epoch=flow->have_next?epoch_first:UINT64_MAX,
+            .aux=UINT64_MAX}),NULL,NULL);
+    }
 }
 
 void tivoo_s3_afe_begin_prompt(void)
 {
-    if (flow) tivoo_afe_flow_prompt(flow,true,0);
+    if (flow) {
+        tivoo_afe_flow_prompt(flow,true,0);
+        tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_GATE,
+            .index=flow->have_next?flow->next:UINT64_MAX,.epoch=flow->have_next?epoch_first:UINT64_MAX,
+            .aux=UINT64_MAX,.flags=TIVOO_TRACE_PROMPT}),NULL,NULL);
+    }
 }
 bool tivoo_s3_afe_finish_prompt(uint64_t boundary, bool open)
 {
@@ -94,7 +108,11 @@ bool tivoo_s3_afe_finish_prompt(uint64_t boundary, bool open)
         !atomic_load(&fatal) && (!flow->have_next || boundary>=flow->next);
     const uint64_t wake_after=flow->have_next && boundary<flow->next ? flow->next : boundary;
     tivoo_afe_flow_prompt(flow,false,wake_after);
-    return open && valid && open_gate(boundary);
+    if (open && valid) return open_gate(boundary);
+    tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_GATE,
+        .index=flow->have_next?flow->next:UINT64_MAX,.epoch=flow->have_next?epoch_first:UINT64_MAX,.aux=boundary,
+        .flags=open?TIVOO_TRACE_OPEN_REQUESTED:0}),NULL,NULL);
+    return false;
 }
 
 static void publish_available(bool available)
@@ -128,9 +146,19 @@ static void feed_task(void *arg)
         }
         if (tivoo_audio_capture_next(&frame)!=ESP_OK) {
             ++rx_gaps;
+            tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_CAPTURE_ERROR,
+                .index=UINT64_MAX,.epoch=UINT64_MAX,.aux=UINT64_MAX,
+                .flags=TIVOO_TRACE_GAP}),NULL,NULL);
             if (contiguous || atomic_load(&streaming)) request_reset();
             continue;
         }
+        /* Copy both transient raw pointers before capture_next can reuse them. */
+        tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_RAW,
+            .index=frame.first_sample*2,.epoch=frame.epoch_first_raw,
+            .aux=frame.tx_first_sample,.count=2*TIVOO_CAPTURE_SAMPLES,.extra=2*TIVOO_CAPTURE_SAMPLES,
+            .flags=((frame.gap || (contiguous && expected!=frame.first_sample))?TIVOO_TRACE_GAP:0)|
+                   (frame.reference_valid?TIVOO_TRACE_REFERENCE_VALID:0)}),
+            frame.raw_slots,frame.raw_tx);
         if (frame.gap || !frame.reference_valid ||
             (contiguous && expected!=frame.first_sample)) {
             ++rx_gaps;
@@ -210,6 +238,9 @@ static void fetch_task(void *arg)
                 (void)afe->fetch_with_delay(data,1);
                 continue;
             }
+            tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_AFE_GAP,
+                .index=have_epoch?cursor:UINT64_MAX,.epoch=have_epoch?epoch_first:UINT64_MAX,
+                .aux=UINT64_MAX,.flags=TIVOO_TRACE_GAP}),NULL,NULL);
             tivoo_afe_flow_gap(flow);
             xQueueReset(controls);
             have_epoch=false;
@@ -289,6 +320,15 @@ static void fetch_task(void *arg)
          * vendor result was evaluated. Keep its legal PCM, not its VAD. */
         const bool vad_valid=!(flow->gate_open && vad_gate_pending);
         if (atomic_load(&reset_requested)) continue;
+        /* The vendor owns both pointers; copy before the next fetch. Cache
+         * is recorded separately, never prepended or assigned a sample index. */
+        tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_FETCH,
+            .index=cursor,.epoch=epoch_first,.aux=flow->gate_open?flow->gate:UINT64_MAX,
+            .count=count,.extra=r->vad_cache_size/sizeof(int16_t),
+            .flags=(r->vad_state==VAD_SPEECH?TIVOO_TRACE_SPEECH:0)|
+                   (vad_valid?TIVOO_TRACE_VAD_VALID:0)|
+                   (flow->gate_open?TIVOO_TRACE_GATE_OPEN:0)|
+                   (flow->prompt?TIVOO_TRACE_PROMPT:0)}),r->data,r->vad_cache);
         tivoo_afe_flow_frame(flow,cursor,r->data,count,r->vad_state==VAD_SPEECH,vad_valid,
             wait_neutral ? WAKENET_NO_DETECT : r->wakeup_state,r->raw_data_channels,
             r->wakenet_model_index,r->wake_word_index,r->vad_cache_size/sizeof(int16_t));
@@ -393,6 +433,7 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
     tivoo_afe_flow_init(flow,word_count,sink,ctx);
     if (xTaskCreatePinnedToCore(feed_task,"afe_feed",4096,NULL,7,&feed_handle,1)!=pdPASS ||
         xTaskCreatePinnedToCore(fetch_task,"afe_fetch",4096,NULL,5,&fetch_handle,1)!=pdPASS) goto fail;
+    tivoo_trace_start();
     xTaskNotifyGive(fetch_handle);
     xTaskNotifyGive(feed_handle);
     return ESP_OK;

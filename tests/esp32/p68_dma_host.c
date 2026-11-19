@@ -28,6 +28,9 @@ static void step(void)
     i2s_event_data_t out={tx->slots[i],sizeof(tx->slots[i])};
     i2s_event_data_t in={rx->slots[j],sizeof(rx->slots[j])};
     for(unsigned n=0;n<2*TIVOO_OUTPUT_BLOCK;n++) rx->slots[j][n]=0x12340000;
+#ifdef P68_DMA_TX_OBSERVER
+    P68_DMA_TX_OBSERVER(tx->slots[i]);
+#endif
     if(!skip_tx && !stall_tx) tx->cb.on_sent(tx,&out,tx->ctx);
     if(!skip_rx) rx->cb.on_recv(rx,&in,rx->ctx);
     skip_tx=skip_rx=false;
@@ -93,6 +96,12 @@ int main(int argc,char **argv)
     } else {
         valid_frame();
         uint64_t before=frame.first_sample;
+        uint64_t initial_epoch=frame.epoch_first_raw;
+        assert(initial_epoch==0 && frame.tx_first_sample==2*before);
+        valid_frame();
+        assert(frame.epoch_first_raw==initial_epoch && frame.first_sample==before+80);
+        assert(frame.tx_first_sample==2*frame.first_sample);
+        assert(frame.raw_slots[0]==0x12340000 && frame.raw_tx[0]==0);
         int16_t pcm[TIVOO_OUTPUT_QUEUE_SAMPLES];
         for(unsigned i=0;i<TIVOO_OUTPUT_QUEUE_SAMPLES;i++) pcm[i]=1234;
         if(!strcmp(argv[1],"normal")) {
@@ -149,6 +158,7 @@ int main(int argc,char **argv)
         }
         valid_frame();
         assert(creates==2 && disables==2 && frame.first_sample>before);
+        assert(frame.epoch_first_raw>initial_epoch && frame.epoch_first_raw<2*frame.first_sample);
         assert(!tivoo_audio_output_prompt_drain(1,&end,&clock));
         assert(!tivoo_audio_output_drained(1));
         assert(!tivoo_audio_output_release_drained(1,&end));

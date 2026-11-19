@@ -16,10 +16,13 @@ static bool capture_valid, capability, stop_monitor, gate_mode, gate_requested, 
 static unsigned starts, pcm_count;
 static uint64_t start_index;
 static int reset_buffer_result=1, reset_vad_result=1;
-static int16_t enhanced[160], in[640];
+static int16_t enhanced[160], in[640], raw_tx[160], cache[32];
+static uint32_t raw_slots[320];
+static unsigned trace_raw, trace_bad, trace_fetch, trace_gate, trace_gap;
 static tivoo_afe_flow_t state;
 static afe_fetch_result_t result={
-    .data=enhanced,.data_size=sizeof(enhanced),.ret_value=ESP_OK,.vad_state=VAD_SILENCE
+    .data=enhanced,.data_size=sizeof(enhanced),.vad_cache=cache,.vad_cache_size=sizeof(cache),
+    .ret_value=ESP_OK,.vad_state=VAD_SILENCE
 };
 static int fake_feed(esp_afe_sr_data_t *d,const int16_t *pcm) {
     (void)d; (void)pcm; ++feed_count; return 160;
@@ -45,6 +48,12 @@ esp_err_t tivoo_audio_capture_next(tivoo_capture_frame_t *f) {
     ++capture_count;
     memset(f,0,sizeof(*f));
     f->first_sample=(uint64_t)capture_count*80;
+    f->epoch_first_raw=0;
+    f->tx_first_sample=f->first_sample*2-6;
+    f->raw_slots=raw_slots;
+    f->raw_tx=raw_tx;
+    raw_slots[0]=capture_count<<16; raw_slots[1]=(capture_count+1)<<16;
+    raw_tx[0]=(int16_t)capture_count;
     f->reference_valid=capture_valid;
     return capture_valid ? ESP_OK : ESP_ERR_TIMEOUT;
 }
@@ -56,6 +65,35 @@ void tivoo_s3_local_turn_tick(void) {
         gate_requested=true;
         tivoo_s3_afe_begin_prompt();
         assert(tivoo_s3_afe_finish_prompt(epoch_first+(gate_cross?80:0),true));
+    }
+}
+void tivoo_trace_start(void) {}
+void tivoo_trace_record(const tivoo_trace_header_t *h,const void *a,const void *b) {
+    switch(h->kind) {
+    case TIVOO_TRACE_RAW:
+        ++trace_raw;
+        assert(h->index==capture_count*160 && h->aux==h->index-6 && h->epoch==0);
+        assert(h->flags==TIVOO_TRACE_REFERENCE_VALID && h->count==160 && h->extra==160);
+        assert(a==raw_slots && b==raw_tx && raw_tx[0]==(int16_t)capture_count);
+        break;
+    case TIVOO_TRACE_CAPTURE_ERROR:
+        ++trace_bad; assert(h->flags==TIVOO_TRACE_GAP && h->index==UINT64_MAX && !a && !b);break;
+    case TIVOO_TRACE_FETCH:
+        ++trace_fetch;
+        assert(h->epoch==epoch_first && h->count==160 && h->extra==32);
+        assert(a==enhanced && b==cache && cache[0]==-123);
+        if(gate_mode) {
+            assert(h->flags&TIVOO_TRACE_GATE_OPEN && h->flags&TIVOO_TRACE_SPEECH);
+            assert((bool)(h->flags&TIVOO_TRACE_VAD_VALID)==(fetch_count!=1));
+            assert(h->aux==epoch_first+(gate_cross?80:0));
+        }
+        break;
+    case TIVOO_TRACE_GATE:
+        ++trace_gate;assert(!a && !b);
+        break;
+    case TIVOO_TRACE_AFE_GAP:
+        ++trace_gap;assert(h->flags==TIVOO_TRACE_GAP);break;
+    default: assert(0);
     }
 }
 void tivoo_diagnostics_enable_local_wake(void) {capability=true;}
@@ -97,6 +135,7 @@ static void run(void (*task)(void *), unsigned calls) {
 }
 int main(int argc,char **argv) {
     assert(argc==2);
+    cache[0]=-123;
     afe=&vendor; data=(esp_afe_sr_data_t *)1; input=in; feed_size=fetch_size=160;
     flow=&state; tivoo_afe_flow_init(flow,1,sink,NULL);
     controls=xQueueCreate(4,sizeof(gate_control_t));
@@ -107,6 +146,7 @@ int main(int argc,char **argv) {
         run(fetch_task,2);
         assert(gate_requested && starts==1 && reset_vad_count==1);
         assert(start_index==epoch_first+(gate_cross?80:0) && pcm_count==(gate_cross?240:320));
+        assert(trace_raw==2 && trace_fetch==2 && trace_gate>=2 && !trace_bad && !trace_gap);
         vQueueDelete(controls);
         return 0;
     }
@@ -114,7 +154,7 @@ int main(int argc,char **argv) {
     run(feed_task,8);
     run(fetch_task,15);
     assert(!capability && !feed_count && !fetch_count && atomic_load(&rx_gaps)==8);
-    assert(initial_report);
+    assert(initial_report && trace_bad==8 && !trace_raw && !trace_fetch);
     capture_valid=true;
     run(feed_task,2);
     assert(feed_count==1 && !capability);
@@ -127,7 +167,7 @@ int main(int argc,char **argv) {
     if (!strcmp(argv[1],"buffer_fail")) reset_buffer_result=-1;
     if (!strcmp(argv[1],"vad_fail")) reset_vad_result=-1;
     run(fetch_task,1);
-    assert(!capability && gaps==1 && reset_buffer_count==1);
+    assert(!capability && gaps==1 && reset_buffer_count==1 && trace_gap==1 && trace_bad==9);
     if (strcmp(argv[1],"recover")) {
         assert(atomic_load(&fatal) && !tivoo_s3_afe_control(TIVOO_AFE_GATE_OPEN,0));
         assert(buffer_report==!strcmp(argv[1],"buffer_fail"));

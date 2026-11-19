@@ -108,10 +108,12 @@ R04 软件验收完成（F06/F08）：[R04 报告](../reports/2026-11-19-p6-8-r0
 **Files:** `esp32/firmware/main/{audio_capture,audio_output_manager,s3_afe,p68_afe_flow,s3_local_turn,p68_prompt,audio_resource}.c`，`generate_prompts.py`；既有 `tests/esp32/{p68_audio_host,p68_prompt_host,p68_lifecycle_host}.c`、test_p68_audio.py/test_p68_afe.py/test_p68_prompt.py/test_p68_turn.py；HA test_prompt_assets.py/test_p68_local_session.py；新增 trace 文件仅按已确认的有界格式归属命名。
 **Interfaces:** capture frame raw_slots/raw_tx/tx_first_sample（生命周期至下次 capture_next）；reference_read，AFE enhanced/cache/VAD/索引；R03 可信时轴、R04 gate 语义、0x26 真实 adapter 发送。
 
-- [ ] R05.1 定义并记录一次短时、有界、显式启用的 trace 格式/大小/导出途径（沿现有诊断或本地窄入口，正常模式无持续录音、无额外网络服务），同轴原始 L/R 与实际最终 TX、索引/epoch/gap，关联增强 PCM、cache 数据/长度、VAD 与 gate marker；先验证 pointer 生命周期/复制位置及开发机读取。RED 跨 80 sample reference 块的160样本、非整块偏移、缺半块/环覆盖、gap、索引连续；GREEN 真实 reference 与采集格式。实物后用互相关/marker 决定 delay/漂移/cache 重叠，不能提前拼 cache、不能采用旧47.5ms/0当实测。
-- [ ] R05.2 RED：通过现 s3_local_turn/s3_afe/audio_resource 真实适配层小型 stub，驱动 15360–26627 非零 PCM、5120 queue 多次补写逐样本一致，signed offset/非整块 gate、poll 已晚、可信 drain 失败及回收后的新 owner、epoch/STOP，prompt 不发 ordinary AUDIO_STATE；从 adapter 获得正确 0x26，不手写事件代替。复用 R03/R04 fault/gate 实现，修测试揭示的必要 adapter 缺口，不做新 owner。GREEN；R09 再组合真实 HA。
-- [ ] R05.3 现有 generate_prompts 源保护负例：临时副本追加1字节，生成拒绝且不使用过期 PCM；保持四 MP3 原 hash、确定性转换、缺失策略。该断言可能直接 GREEN，已有 probe 证明保护有效；不改源资产。
-- [ ] R05.4 运行上述 ESP/HA 测试与 test_p6_audio_resource.py；S3 build，归档 trace 样例/读取说明及数字 PCM 证据。实际 HTTP/HTTPS/MP3/SRC、AUX、物理 offset 与校准、声学首尾仍 GAP，production gate 保持关闭；报告、审查、提交。
+- [x] R05.1 定义并记录一次短时、有界、显式启用的 trace 格式/大小/导出途径（沿现有诊断或本地窄入口，正常模式无持续录音、无额外网络服务），同轴原始 L/R 与实际最终 TX、索引/epoch/gap，关联增强 PCM、cache 数据/长度、VAD 与 gate marker；先验证 pointer 生命周期/复制位置及开发机读取。RED 跨 80 sample reference 块的160样本、非整块偏移、缺半块/环覆盖、gap、索引连续；GREEN 真实 reference 与采集格式。实物后用互相关/marker 决定 delay/漂移/cache 重叠，不能提前拼 cache、不能采用旧47.5ms/0当实测。
+- [x] R05.2 RED：通过现 s3_local_turn/s3_afe/audio_resource 真实适配层小型 stub，驱动 15360–26627 非零 PCM、5120 queue 多次补写逐样本一致，signed offset/非整块 gate、poll 已晚、可信 drain 失败及回收后的新 owner、epoch/STOP，prompt 不发 ordinary AUDIO_STATE；从 adapter 获得正确 0x26，不手写事件代替。复用 R03/R04 fault/gate 实现，修测试揭示的必要 adapter 缺口，不做新 owner。GREEN；R09 再组合真实 HA。
+- [x] R05.3 现有 generate_prompts 源保护负例：临时副本追加1字节，生成拒绝且不使用过期 PCM；保持四 MP3 原 hash、确定性转换、缺失策略。该断言可能直接 GREEN，已有 probe 证明保护有效；不改源资产。
+- [x] R05.4 运行上述 ESP/HA 测试与 test_p6_audio_resource.py；S3 build，归档 trace 样例/读取说明及数字 PCM 证据。实际 HTTP/HTTPS/MP3/SRC、AUX、物理 offset 与校准、声学首尾仍 GAP，production gate 保持关闭；报告、审查、提交。
+
+R05 软件专项验收完成（F07/F13）：[R05 报告](../reports/2026-11-19-p6-8-r05-repair-acceptance.md)，ESP 指定 17 passed、HA 26 passed，S3 默认及调试 trace 构建与归档均通过；额外全 ESP 旧诊断/状态用例时序波动（最后 107 passed/1 failed，失败项各自复测通过），保留 R11 全量复验；未做实物校准，不解除 gate。
 
 ## R06 — HA STT 输入终态与 Sherpa 并发
 
@@ -214,4 +216,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R04 已完成软件修复验收；R05–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R05 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动）；R06–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

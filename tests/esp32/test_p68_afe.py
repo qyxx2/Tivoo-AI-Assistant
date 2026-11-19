@@ -27,9 +27,8 @@ def test_s3_runs_real_afe_not_legacy_or_smoke():
         assert token in afe
 
 
-def test_afe_runtime_availability(tmp_path):
-    """Actual vendor call sites, capture failures and recovery; RTOS is scripted."""
-    headers = {
+def afe_headers():
+    return {
         "esp_err.h": """#pragma once
 typedef int esp_err_t;
 #define ESP_OK 0
@@ -91,6 +90,11 @@ static inline void xQueueReset(QueueHandle_t q) {(void)q;}
 #define vQueueDelete free
 """,
     }
+
+
+def test_afe_runtime_availability(tmp_path):
+    """Actual vendor call sites, capture failures and recovery; RTOS is scripted."""
+    headers = afe_headers()
     for name, content in headers.items():
         p = tmp_path / name
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +103,7 @@ static inline void xQueueReset(QueueHandle_t q) {(void)q;}
     exe = tmp_path / "afe_runtime"
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                     "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                    "-DESP_PLATFORM", '-DTIVOO_AFE_MODEL_ID="wn9_hilexin"',
+                    "-DESP_PLATFORM", "-DCONFIG_TIVOO_P68_CALIBRATION_TRACE=1", '-DTIVOO_AFE_MODEL_ID="wn9_hilexin"',
                     "-I", str(tmp_path), "-I", str(MAIN),
                     "-I", str(sr / "include/esp32s3"), "-I", str(sr / "src/include"),
                     "-I", str(MAIN.parent / "managed_components/espressif__cjson/cJSON"),

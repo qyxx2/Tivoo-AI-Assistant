@@ -51,6 +51,7 @@ bool tivoo_rx_timeline_accept(tivoo_rx_timeline_t *timeline, uint64_t block, boo
 #define TIVOO_CAPTURE_SAMPLES 80U
 typedef struct {
     uint64_t first_sample;
+    uint64_t epoch_first_raw; /* 32 kHz DMA epoch base */
     uint64_t tx_first_sample; /* raw 32 kHz index */
     bool gap;
     bool reference_valid;

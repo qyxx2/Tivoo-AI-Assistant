@@ -85,6 +85,21 @@ int main(void) {
     tivoo_tx_reference_record(&ref,32,dma);
     assert(!tivoo_tx_reference_read(&ref,0,pcm,80));
 
+    // Actual 160 raw samples at arbitrary calibrated 16k offset: cross
+    // the 160-sample DMA reference boundary, including missing/overwritten halves.
+    memset(&ref,0,sizeof(ref));
+    for (unsigned block=0;block<2;block++) {
+        for(unsigned i=0;i<160;i++) dma[2*i]=(uint32_t)(block*160+i+1)<<16;
+        tivoo_tx_reference_record(&ref,block,dma);
+    }
+    assert(tivoo_tx_reference_read(&ref,78,pcm,160));
+    for(unsigned i=0;i<160;i++) assert(pcm[i]==(int16_t)(79+i));
+    assert(!tivoo_tx_reference_read(&ref,238,pcm,160));
+    for(unsigned i=0;i<160;i++) assert(pcm[i]==(int16_t)(i<82?239+i:0));
+    tivoo_tx_reference_record(&ref,TIVOO_REFERENCE_BLOCKS,dma);
+    assert(!tivoo_tx_reference_read(&ref,78,pcm,160));
+    for(unsigned i=0;i<160;i++) assert(pcm[i]==(int16_t)(i<82?0:79+i));
+
     tivoo_output_queue_t q={0};
     int16_t input[TIVOO_OUTPUT_PREFILL]={1};
     assert(tivoo_output_begin(&q,1));

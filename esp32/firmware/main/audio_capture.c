@@ -401,6 +401,7 @@ esp_err_t tivoo_audio_capture_next(tivoo_capture_frame_t *frame)
         bool gap;
         if (!tivoo_rx_timeline_accept(&s_timeline, s_task_block.block, &gap)) continue;
         frame->first_sample = s_task_block.block * TIVOO_CAPTURE_SAMPLES;
+        frame->epoch_first_raw = s_epoch_base * TIVOO_OUTPUT_BLOCK;
         frame->raw_slots = s_task_block.slots;
         frame->raw_tx = s_tx_raw;
         const uint64_t tx_sample = 2 * (frame->first_sample - CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES);
