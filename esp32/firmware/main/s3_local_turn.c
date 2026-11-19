@@ -223,8 +223,23 @@ static void start_prompt(uint64_t now)
     if (pick>=0 && !is_followup) last_ready=pick;
 }
 
+/* One input outcome per local UUID; no steady-state sampling/log service.
+ * Failed enqueue attempts include retries through the first terminal decision. */
+static void log_turn_metrics(const char *outcome)
+{
+    if(turn->metrics_reported) return;
+    turn->metrics_reported=true;
+    ESP_LOGI(TAG,"turn_metrics session=%s epoch=%lu outcome=%s ready_latency_ms=%lld gate_ready_wait_ms=%lld peak_pending_samples=%zu send_failures=%lu send_attempts=%lu start_sent=%d",
+        uuid,(unsigned long)epoch,outcome,
+        turn->ready?(long long)(turn->ready_ms-turn->wake_ms):-1LL,
+        turn->ready && turn->gated?(turn->ready_ms>turn->gate_ms?(long long)(turn->ready_ms-turn->gate_ms):0LL):-1LL,
+        turn->peak_pending,(unsigned long)turn->send_failures,(unsigned long)turn->send_attempts,(int)turn->start_sent);
+    (void)outcome; /* Some native test log stubs discard format arguments. */
+}
+
 static void begin_turn(uint32_t current, const char *wake_phrase, bool followup, uint64_t now)
 {
+    if(turn->active) log_turn_metrics(turn->abort_reason?turn->abort_reason:"superseded");
     /* Invalidate old network authorization before retiring its captured owner.
      * RX may hold the resource mutex while consulting the shared snapshot. */
     invalidate();
@@ -252,6 +267,7 @@ void tivoo_s3_local_turn_tick(void)
     if(!turn->active) { poll_prompt(); return; }
     uint32_t current=tivoo_diagnostics_local_wake_generation();
     if(current!=epoch) {
+        log_turn_metrics(turn->abort_reason?turn->abort_reason:"disconnected");
         turn->active=false;
         pending_prompt=false;
         if (prompt_generation) tivoo_prompt_cancel(&prompt);
@@ -282,7 +298,10 @@ void tivoo_s3_local_turn_tick(void)
     poll_prompt();
     if (turn_fault_serial!=tivoo_audio_output_fault_serial()) abort_turn("audio_dma_fault");
     tivoo_turn_tick(turn,now_ms(),send_event,NULL);
-    if(turn->abort_reason) abort_turn(turn->abort_reason);
+    if(turn->abort_reason) {
+        log_turn_metrics(turn->abort_reason);
+        abort_turn(turn->abort_reason);
+    } else if(turn->complete) log_turn_metrics("input_complete");
     if(!turn->active) invalidate();
 }
 void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)

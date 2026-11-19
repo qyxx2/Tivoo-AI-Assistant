@@ -133,13 +133,15 @@ R06 软件专项验收完成（F09/F10/F15）：[R06 报告](../reports/2026-11-
 
 **F11/F12 / B5-R05/R06、B7-R01/R05；VOICE-C01/04/05/07、LIFE-C01/03/07/08、B0.5 §3.1、T05-C/T06-B/T07-A/C/D。**
 **Files:** HA `audio_session.py,assist_satellite.py,transport.py,diagnostics.py`；S3 `p68_local_turn.c,s3_local_turn.c`；`tests/esp32/p68_turn_host.c,p68_lifecycle_host.c,test_p68_turn.py`；HA test_p68_local_session.py/test_p68_lifecycle.py/test_transport.py/test_diagnostics.py。
-**Interfaces:** 0x26 ACTIVITY/gate、0x20 START、0x23 定向 stop、0x27 parent grant（原 UUID/epoch）；现 turn tick/send_event、on_local_start/_retire_local，R06 输入终态。
+**Interfaces:** 0x24 ACTIVITY、0x26 gate、0x20 START、0x23 定向 stop、0x27 parent grant（原 UUID/epoch）；现 turn tick/send_event、on_local_start/_retire_local，R06 输入终态。
 
-- [ ] R07.1 RED：非当前 UUID 非法 ACTIVITY、合法新帧、同轮冲突/完全相同重复 gate、旧 uptime/new UUID 边界；旧异常 inert、当前 payload 严格校验、完全相同重复 inert，不重复 START。按合同定义当前冲突重复处理；保持 B7 monotonic uptime，不改 wire schema。
-- [ ] R07.2 RED：过期/无 grant 的 followup START，定向 _stop_sender 产生 HomeAssistantError 或 write/drain 挂起；后续合法诊断帧和 reconnect 正常、新 UUID 不受影响。复用有界 best-effort stop 与正常诊断 teardown；不 await 无界通知阻断 reader，不增加 ACK。明确 stop 失败与本地清理关系，GREEN R07.1/2。
-- [ ] R07.3 RED：actual p68_local_turn host blocked=true、短阻塞后 START/PCM/end FIFO 恢复；过期且 START 从未发出则作废且无迟到开轮，已发 START 走匹配 ABORT；fake clock 使用原1s/3s/15s合同。最小修改 pump/event 发送边界，GREEN。
-- [ ] R07.4 利用现日志/诊断增加 per-turn ready latency、peak pending、失败次数及分母、retirement duration、ready timeout 次数/比例；假钟断言一次轮次一次指标，迟到 timer/旧轮不重复计。不是新监控服务，不标实机 P95。
-- [ ] R07.5 运行上述 ESP/HA 测试并 S3 build；更新 R09 fixture 所需 cleanup 及 UUID 断言，报告/审查/提交。
+- [x] R07.1 RED：非当前 UUID 非法 ACTIVITY、合法新帧、同轮冲突/完全相同重复 gate、旧 uptime/new UUID 边界；旧异常 inert、当前 payload 严格校验、完全相同重复 inert，不重复 START。按合同定义当前冲突重复处理；保持 B7 monotonic uptime，不改 wire schema。
+- [x] R07.2 RED：过期/无 grant 的 followup START，定向 _stop_sender 产生 HomeAssistantError 或 write/drain 挂起；后续合法诊断帧和 reconnect 正常、新 UUID 不受影响。复用有界 best-effort stop 与正常诊断 teardown；不 await 无界通知阻断 reader，不增加 ACK。明确 stop 失败与本地清理关系，GREEN R07.1/2。
+- [x] R07.3 RED：actual p68_local_turn host blocked=true、短阻塞后 START/PCM/end FIFO 恢复；过期且 START 从未发出则作废且无迟到开轮，已发 START 走匹配 ABORT；fake clock 使用原1s/3s/15s合同。最小修改 pump/event 发送边界，GREEN。
+- [x] R07.4 利用现日志/诊断增加 per-turn ready latency、peak pending、失败次数及分母、retirement duration、ready timeout 次数/比例；假钟断言一次轮次一次指标，迟到 timer/旧轮不重复计。不是新监控服务，不标实机 P95。
+- [x] R07.5 运行上述 ESP/HA 测试并 S3 build；更新 R09 fixture 所需 cleanup 及 UUID 断言，报告/审查/提交。
+
+R07 软件验收完成（F11/F12）：[R07 验收报告](../reports/2026-11-19-p6-8-r07-repair-acceptance.md)。专项 124 passed，最终 host 2 passed，HA 全量 577 passed，ESP 全量 108 passed；S3 编译和归档哈希通过。硬件、真实网络时序及 R09 纵向复验保留。
 
 ## R08 — 普通 TTS terminal 和真实资源 worker
 
@@ -218,4 +220,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R06 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动）；R07–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R07 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07 全量通过）；R08–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

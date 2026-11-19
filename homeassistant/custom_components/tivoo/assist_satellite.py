@@ -473,39 +473,50 @@ class AudioSessionCoordinator:
 
     async def _retire_local(
         self, turn: _Turn, prior: asyncio.Future | None, reason: str,
-        cancel_task: bool,
+        cancel_task: bool, started_at: float,
     ) -> bool:
-        clean = True
-        if prior is not None:
-            try:
-                clean = await asyncio.shield(prior) is not False
-            except Exception:
-                _LOGGER.exception("Previous Tivoo owner cleanup failed")
-                clean = False
-        if reason not in {"conversation_complete", "followup", "wake_intercepted"} and not turn.playback_completed:
-            try:
-                async with asyncio.timeout(5):
-                    await turn.tts.async_stop_playback()
-            except Exception:
-                _LOGGER.warning("Tivoo targeted old playback stop could not be sent")
-        if turn.task is not None:
-            if cancel_task and not turn.task.done() and not turn.task.cancelling():
-                turn.task.cancel()
-            result, = await asyncio.gather(turn.task, return_exceptions=True)
-            if isinstance(result, Exception):
-                clean = False
-                _LOGGER.error("Tivoo old Pipeline failed: %s", result)
+        clean = False
+        completed = False
         try:
-            await turn.tts.async_close()
-        except Exception:
-            _LOGGER.exception("Tivoo old TTS owner cleanup failed")
-            clean = False
-        if turn.stop_unconfirmed:
-            _LOGGER.error("AstrBot remote session stop unconfirmed")
-            clean = False
-        if not turn.response_finished:
-            self.entity.tts_response_finished()
-        return clean
+            clean = True
+            if prior is not None:
+                try:
+                    clean = await asyncio.shield(prior) is not False
+                except Exception:
+                    _LOGGER.exception("Previous Tivoo owner cleanup failed")
+                    clean = False
+            if reason not in {"conversation_complete", "followup", "wake_intercepted"} and not turn.playback_completed:
+                try:
+                    async with asyncio.timeout(5):
+                        await turn.tts.async_stop_playback()
+                except Exception:
+                    _LOGGER.warning("Tivoo targeted old playback stop could not be sent")
+            if turn.task is not None:
+                if cancel_task and not turn.task.done() and not turn.task.cancelling():
+                    turn.task.cancel()
+                result, = await asyncio.gather(turn.task, return_exceptions=True)
+                if isinstance(result, Exception):
+                    clean = False
+                    _LOGGER.error("Tivoo old Pipeline failed: %s", result)
+            try:
+                await turn.tts.async_close()
+            except Exception:
+                _LOGGER.exception("Tivoo old TTS owner cleanup failed")
+                clean = False
+            if turn.stop_unconfirmed:
+                _LOGGER.error("AstrBot remote session stop unconfirmed")
+                clean = False
+            if not turn.response_finished:
+                self.entity.tts_response_finished()
+            completed = True
+            return clean
+        finally:
+            _LOGGER.info(
+                "retire_metrics session=%s reason=%s duration_ms=%d clean=%s",
+                turn.session_id, reason,
+                round((self.entity.hass.loop.time() - started_at) * 1000),
+                completed and clean,
+            )
 
     def _start_watcher(self, turn: _Turn) -> None:
         if turn.watcher is not None or turn.waiting_for_wake or self._followup:
@@ -823,7 +834,8 @@ class AudioSessionCoordinator:
             cancel_task = task is not None and task is not asyncio.current_task()
             prior = self._closing
             self._closing = self.entity.hass.async_create_background_task(
-                self._retire_local(turn, prior, reason, cancel_task), "Tivoo retire local owner"
+                self._retire_local(turn, prior, reason, cancel_task, self.entity.hass.loop.time()),
+                "Tivoo retire local owner"
             )
             return
         if turn is not None:

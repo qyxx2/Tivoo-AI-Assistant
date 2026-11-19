@@ -14,7 +14,11 @@ typedef bool (*tivoo_turn_send_t)(void *, tivoo_turn_event_t, const int16_t *, s
 
 typedef struct {
     bool active, start_sent, gated, gate_sent, ready, speaking, speech_sent, ended, complete;
+    bool metrics_reported;
     uint32_t command_window_ms;
+    uint32_t send_attempts, send_failures;
+    uint64_t ready_ms;
+    size_t peak_pending;
     uint64_t wake_ms, gate_ms, speech_ms, end_ms, next, last_progress_ms;
     size_t read, pending, valid_samples, pad_samples, sent;
     const char *abort_reason;

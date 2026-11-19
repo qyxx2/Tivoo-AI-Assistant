@@ -106,3 +106,72 @@ def test_local_wire_direction():
     assert 0x26 in codec.ESP32_TO_HA_MESSAGE_TYPES
     assert 0x25 not in codec.ESP32_TO_HA_MESSAGE_TYPES
     assert 0x26 not in codec.HA_TO_ESP32_MESSAGE_TYPES
+
+
+async def test_stale_activity_ignored_before_payload_validation():
+    manager = AudioSessionManager(AsyncMock())
+    manager.on_activity = Mock()
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await manager.async_start_session(local_start(SESSION_2, 101), persistent=True, local_mode=True)
+    await manager.async_handle_activity(dict(session_id=SESSION_1, state='bad', uptime_ms=-1))
+    await manager.async_handle_gate(dict(session_id=SESSION_1, uptime_ms=-1))
+    await manager.async_start_session(local_start(SESSION_1, 102), persistent=True, local_mode=True)
+    await manager.async_handle_gate(gate(SESSION_2))
+    async with manager.audio_subscription(SESSION_2, start=0, on_pull=AsyncMock()) as audio:
+        pending = asyncio.create_task(anext(audio))
+        await asyncio.sleep(0)
+        await manager.async_handle_activity(activity('speech_start', SESSION_2))
+        await manager.async_push_pcm(SESSION_2, bytes(640))
+        assert await pending == bytes(640)
+    manager.on_activity.assert_called_once_with(SESSION_2, 'speech_start')
+
+
+@pytest.mark.parametrize('field,value', [('uptime_ms', 1001), ('prompt_result', 'completed')])
+async def test_conflicting_current_gate_stops_only_current(field, value):
+    stop, gated = AsyncMock(), Mock()
+    manager = AudioSessionManager(stop)
+    manager.on_gate = gated
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await manager.async_handle_gate(gate())
+    await manager.async_handle_gate(gate())
+    gated.assert_called_once_with(SESSION_1)
+    stop.assert_not_awaited()
+    await manager.async_handle_gate(dict(gate(), **{field: value}))
+    assert manager.active_session_id is None
+    stop.assert_awaited_once_with(SESSION_1, 'invalid_command_gate')
+
+
+@pytest.mark.parametrize('phase', ['speech_start', 'speech_end'])
+async def test_conflicting_current_activity_rejected(phase):
+    stop, observed = AsyncMock(), Mock()
+    manager = AudioSessionManager(stop)
+    manager.on_activity = observed
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await manager.async_handle_gate(gate())
+    async with manager.audio_subscription(SESSION_1, start=0, on_pull=AsyncMock()) as audio:
+        pending = asyncio.create_task(anext(audio))
+        await asyncio.sleep(0)
+        await manager.async_handle_activity(activity('speech_start'))
+        await manager.async_push_pcm(SESSION_1, bytes(640))
+        await pending
+        if phase == 'speech_end':
+            await manager.async_handle_activity(activity('speech_end', pcm_samples=320))
+        payload = activity(phase, **({'pcm_samples': 320} if phase == 'speech_end' else {}))
+        await manager.async_handle_activity(payload)
+        assert observed.call_count == (2 if phase == 'speech_end' else 1)
+        await manager.async_handle_activity(dict(payload, uptime_ms=1101))
+        assert manager.active_session_id is None
+        stop.assert_awaited_once()
+
+
+@pytest.mark.parametrize('patch', [dict(state='invalid'), dict(uptime_ms=-1), dict(uptime_ms=True)])
+async def test_current_invalid_activity_is_not_ignored(patch):
+    stop = AsyncMock()
+    manager = AudioSessionManager(stop)
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await manager.async_handle_activity(dict(activity('speech_start'), **patch))
+    assert manager.active_session_id is None
+    stop.assert_awaited_once_with(SESSION_1, 'invalid_local_activity')
+    await manager.async_start_session(local_start(SESSION_2, 101), persistent=True, local_mode=True)
+    await manager.async_handle_activity(dict(activity('speech_start'), **patch))
+    assert manager.active_session_id == SESSION_2

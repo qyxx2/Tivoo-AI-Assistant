@@ -14,6 +14,7 @@ _LOGGER = logging.getLogger("custom_components.tivoo.audio_session")
 PCM_QUEUE_DEPTH = 16
 PREROLL_BYTES = 32_000
 HANDOFF_BYTES = 480_000
+STOP_SEND_TIMEOUT = 5  # Existing lifecycle stop-send budget.
 
 
 @dataclass(eq=False, slots=True)
@@ -32,7 +33,9 @@ class _MicSession:
     wake_uptime: int = 0
     followup: bool = False
     gate_uptime: int | None = None
+    gate_result: str | None = None
     speech_uptime: int | None = None
+    end_uptime: int | None = None
     ready: bool = False
     input_finished: bool = False
     input_drained: bool = False
@@ -61,6 +64,7 @@ class AudioSessionManager:
 
     def __init__(self, stop_sender: StopSender | None = None) -> None:
         self._stop_sender = stop_sender
+        self._rejected_stops: set[asyncio.Task] = set()
         self._active_session: _MicSession | None = None
         self._iterators: set[_MicSession] = set()
         self._interrupted_handler: InterruptedHandler | None = None
@@ -147,8 +151,13 @@ class AudioSessionManager:
             if followup:
                 parent = _require_uuid(payload, "parent_session_id")
                 if parent != self._followup_grant or parent != self.active_session_id:
+                    # A rejected UUID never owns ingress. Its best-effort stop
+                    # must not wait for the diagnostic writer in the RX task.
+                    self._local_seen.add(session_id)
                     if self._stop_sender is not None:
-                        await self._stop_sender(session_id, "invalid_followup")
+                        task = asyncio.create_task(self._send_stop(session_id, "invalid_followup"))
+                        self._rejected_stops.add(task)
+                        task.add_done_callback(self._rejected_stops.discard)
                     return
             if uptime <= self._local_uptime:
                 return
@@ -289,25 +298,36 @@ class AudioSessionManager:
             await self.async_stop_session(session_id, "invalid_command_gate")
             return
         if session.gate_uptime is not None:
+            if (uptime, payload["prompt_result"]) != (session.gate_uptime, session.gate_result):
+                await self.async_stop_session(session_id, "invalid_command_gate")
             return
         session.gate_uptime = uptime
+        session.gate_result = payload["prompt_result"]
         if self.on_gate is not None:
             self.on_gate(session_id)
 
     async def async_handle_activity(self, payload: dict) -> None:
         """Validate and route speech transitions on the matching ingress."""
         session_id = _require_uuid(payload, "session_id")
+        session = self._active_session
+        if session is None or session.session_id != session_id:
+            return
         state = payload.get("state")
         uptime_ms = payload.get("uptime_ms")
-        if state not in ("speech_start", "speech_end"):
-            raise ValueError("invalid MIC_ACTIVITY state")
-        if type(uptime_ms) is not int or uptime_ms < 0:
-            raise ValueError("MIC_ACTIVITY uptime_ms must be a non-negative integer")
-        session = self._active_session
-        if session is not None and session.session_id == session_id and session.local_mode:
+        if state not in ("speech_start", "speech_end") or type(uptime_ms) is not int or uptime_ms < 0:
+            if session.local_mode:
+                await self.async_stop_session(session_id, "invalid_local_activity")
+                return
+            raise ValueError("invalid MIC_ACTIVITY state or uptime_ms")
+        if session.local_mode:
             if state == "speech_start" and session.speech_uptime is not None:
+                if uptime_ms != session.speech_uptime:
+                    await self.async_stop_session(session_id, "invalid_local_start_time")
                 return
             if state == "speech_end" and session.input_finished:
+                count = payload.get("pcm_samples")
+                if uptime_ms != session.end_uptime or type(count) is not int or count * 2 != session.tail:
+                    await self.async_stop_session(session_id, "invalid_local_endpoint")
                 return
             if not session.ready or session.gate_uptime is None:
                 await self.async_stop_session(session_id, "invalid_local_activity")
@@ -326,6 +346,7 @@ class AudioSessionManager:
                 ):
                     await self.async_stop_session(session_id, "invalid_local_endpoint")
                     return
+                session.end_uptime = uptime_ms
                 session.input_finished = True
                 session.data_ready.set()
         if (
@@ -338,6 +359,7 @@ class AudioSessionManager:
 
     async def async_disconnect(self) -> None:
         """Release the upload owned by the disconnected diagnostic socket."""
+        self._cancel_rejected_stops()
         self._local_seen.clear()
         self._local_uptime = -1
         self._followup_grant = None
@@ -463,6 +485,7 @@ class AudioSessionManager:
     async def async_shutdown(self) -> None:
         """Close active and already-created iterators during config-entry unload."""
         self._shutdown = True
+        self._cancel_rejected_stops()
         session = self._active_session
         if session is not None:
             await self._finish_session(
@@ -521,15 +544,23 @@ class AudioSessionManager:
         if session.persistent and self.on_end is not None:
             self.on_end(session.session_id, reason)
 
-        if notify_device and self._stop_sender is not None:
-            try:
-                await self._stop_sender(session.session_id, reason)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 — local session cleanup must still finish.
-                _LOGGER.warning(
-                    "Unable to send MIC_CAPTURE_STOP for session %s", session.session_id
-                )
+        if notify_device:
+            await self._send_stop(session.session_id, reason)
+
+    def _cancel_rejected_stops(self) -> None:
+        for task in self._rejected_stops:
+            task.cancel()
+
+    async def _send_stop(self, session_id: str, reason: str) -> None:
+        if self._stop_sender is None:
+            return
+        try:
+            async with asyncio.timeout(STOP_SEND_TIMEOUT):
+                await self._stop_sender(session_id, reason)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — cleanup is independent of notification.
+            _LOGGER.warning("Unable to send MIC_CAPTURE_STOP for session %s", session_id)
 
     async def _iterate_session(self, session: _MicSession) -> AsyncIterator[bytes]:
         try:

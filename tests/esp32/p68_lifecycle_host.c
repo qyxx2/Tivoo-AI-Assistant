@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include "s3_local_turn.h"
 #include "diagnostics.h"
@@ -10,10 +11,15 @@
 
 static uint32_t connection=1;
 static uint64_t ms=100;
-static bool drained=true, gate_open;
+static bool drained=true, gate_open, wire_blocked;
 static bool prompt_mode, prompt_failed, prompt_owned, output_available=true;
 static unsigned recoveries, discards;
 static uint32_t prompt_owner;
+void tivoo_test_log(const char *tag,const char *fmt,...) {
+    (void)tag;
+    if(strncmp(fmt,"turn_metrics ",13)) return;
+    va_list args; va_start(args,fmt); vprintf(fmt,args); va_end(args); puts("");
+}
 static unsigned starts, gates, retired, pcm_frames, ends;
 static char sid[37], parent[37], retired_id[37];
 static const char playback[]="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -27,6 +33,7 @@ uint32_t tivoo_diagnostics_local_wake_generation(void) { return connection; }
 bool tivoo_diagnostics_send_mic(uint32_t e,uint8_t type,const void *data,size_t n)
 {
     assert(e==connection);
+    if(wire_blocked) return false;
     if(type==TVIO_TYPE_MIC_PCM) { assert(n==640); ++pcm_frames; return true; }
     cJSON *o=cJSON_ParseWithLength(data,n);
     assert(o);
@@ -85,6 +92,16 @@ static void command(void) {
     tivoo_s3_local_turn_event(NULL,&(tivoo_afe_event_t){.type=TIVOO_AFE_END,.index=320});
 }
 int main(int argc, char **argv) {
+    if(argc==2 && strcmp(argv[1],"metrics")==0) {
+        assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
+        wake(); ms+=100; message(false,sid); tivoo_s3_local_turn_tick();
+        command(); tivoo_s3_local_turn_tick(); message(false,sid); tivoo_s3_local_turn_tick();
+        wire_blocked=true; wake(); ms+=1001; tivoo_s3_local_turn_tick();
+        wire_blocked=false; tivoo_s3_local_turn_tick();
+        wake(); ms+=1001; tivoo_s3_local_turn_tick(); tivoo_s3_local_turn_tick();
+        ++connection; tivoo_s3_local_turn_tick();
+        return 0;
+    }
     if(argc==2 && strcmp(argv[1],"stale_fault")==0) {
         assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
         wake(); command();

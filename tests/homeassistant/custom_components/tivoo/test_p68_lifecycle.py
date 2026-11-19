@@ -46,6 +46,7 @@ async def test_stale_start_and_ungranted_followup_inert():
     await manager.async_start_session(local_start(), persistent=True, local_mode=True)
     await manager.async_start_session(followup(), persistent=True, local_mode=True)
     assert manager.active_session_id == SESSION_1
+    await asyncio.sleep(0)  # Rejected UUID stop does not block RX.
     stop.assert_awaited_once_with(SESSION_2, "invalid_followup")
     await manager.async_start_session(local_start(SESSION_2), persistent=True, local_mode=True)
     assert manager.active_session_id == SESSION_1
@@ -242,6 +243,7 @@ async def test_followup_grant_timeout_and_late_start(hass, satellite, monkeypatc
     stop.assert_awaited_once_with(SESSION_1,"followup_send_failed" if grant_send_failed else "followup_handoff_timeout")
     await manager.async_start_session(followup(),persistent=True,local_mode=True)
     assert manager.active_session_id is None
+    await asyncio.sleep(0)
     assert stop.await_args.args == (SESSION_2,"invalid_followup")
 
 @pytest.mark.parametrize("phase", ["before_ready", "stt", "intent", "synthesis", "playing", "followup"])
@@ -318,4 +320,86 @@ async def test_true_wake_retires_each_local_phase(hass, satellite, monkeypatch, 
     assert manager.active_session_id == SESSION_2
     assert trace == (["stop","old_finally"] if phase == "playing" else ["old_finally"])
     await manager.async_end_session(SESSION_1,"late_old_end")
+    assert manager.active_session_id == SESSION_2
+
+
+@pytest.mark.parametrize('fault', ['error', 'hung'])
+async def test_invalid_followup_notification_does_not_block_new_turn(fault, monkeypatch):
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.tivoo import audio_session
+    entered, finished = asyncio.Event(), asyncio.Event()
+    async def stop(session_id, reason):
+        assert (session_id, reason) == (SESSION_2, 'invalid_followup')
+        entered.set()
+        try:
+            if fault == 'error':
+                raise HomeAssistantError('write failed')
+            await asyncio.Future()
+        finally:
+            finished.set()
+    monkeypatch.setattr(audio_session, 'STOP_SEND_TIMEOUT', .5, raising=False)
+    manager = AudioSessionManager(stop)
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await asyncio.wait_for(manager.async_start_session(followup(), persistent=True, local_mode=True), .2)
+    await asyncio.wait_for(entered.wait(), 1)
+    if fault == 'hung':
+        assert not finished.is_set()
+    third = str(uuid4())
+    await manager.async_start_session(local_start(third, 300), persistent=True, local_mode=True)
+    await manager.async_handle_gate(gate(third))
+    assert manager.active_session_id == third
+    await asyncio.wait_for(finished.wait(), 1)
+    assert manager.active_session_id == third
+    await manager.async_disconnect()
+    await manager.async_start_session(local_start(SESSION_1, 1), persistent=True, local_mode=True)
+    assert manager.active_session_id == SESSION_1
+
+
+async def test_retirement_metrics_once_for_captured_turn(hass, satellite, monkeypatch, caplog, advance_clock):
+    import logging
+    entity, manager, _ = satellite
+    await manager.async_end_session(SESSION_1, 'test')
+    monkeypatch.setattr(entity, 'validate_local_pipeline', lambda: ('select.test','local'))
+    entered, release, cleaning = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    async def run(audio, stage, *, context, wake_word_phrase):
+        entered.set()
+        await asyncio.Future()
+    monkeypatch.setattr(entity, 'async_accept_pipeline_from_satellite', run)
+    caplog.set_level(logging.INFO, logger='custom_components.tivoo.assist_satellite')
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await asyncio.wait_for(entered.wait(),1)
+    old = entity.coordinator._turn
+    async def close():
+        cleaning.set()
+        await release.wait()
+    old.tts.async_close = close
+    await manager.async_start_session(local_start(SESSION_2,101), persistent=True, local_mode=True)
+    await cleaning.wait()
+    retirement = entity.coordinator._closing
+    await advance_clock(.25)
+    release.set()
+    assert await retirement is True
+    await manager.async_end_session(SESSION_1,'ready_timeout')  # old late terminal
+    records = [r.getMessage() for r in caplog.records if 'retire_metrics' in r.getMessage()]
+    assert len(records) == 1 and SESSION_1 in records[0] and 'reason=superseded' in records[0]
+    duration = int(records[0].split('duration_ms=')[1].split()[0])
+    assert 250 <= duration < 1000 and 'clean=True' in records[0]
+
+
+async def test_disconnect_cancels_rejected_stop_and_reuses_epoch_uuid():
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+    async def stop(sid, reason):
+        assert (sid, reason) == (SESSION_2, 'invalid_followup')
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+    manager = AudioSessionManager(stop)
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await manager.async_start_session(followup(), persistent=True, local_mode=True)
+    await asyncio.wait_for(entered.wait(), 1)
+    await manager.async_disconnect()
+    await manager.async_start_session(local_start(SESSION_2, 1), persistent=True, local_mode=True)
+    await asyncio.wait_for(cancelled.wait(), 1)
     assert manager.active_session_id == SESSION_2

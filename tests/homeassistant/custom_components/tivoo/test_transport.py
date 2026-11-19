@@ -2086,3 +2086,113 @@ async def test_p68_afe_capability_reconnect_retires_old_turn_only(monkeypatch, s
         await _close_clients(controls + diagnostics)
         await control_server.wait_closed()
         await diagnostic_server.wait_closed()
+
+
+@pytest.mark.parametrize('fault', ['error', 'lock', 'drain'])
+async def test_p68_rejected_followup_preserves_rx_and_reconnect(monkeypatch, socket_enabled, fault):
+    import json
+    from custom_components.tivoo.audio_session import AudioSessionManager
+    from custom_components.tivoo import audio_session
+    from test_p68_local_session import local_start, gate
+    from test_p68_lifecycle import followup
+    from test_audio_session import SESSION_1, SESSION_2
+
+    third = '33333333-3333-4333-8333-333333333333'
+    adapter = transport.Esp32ConnectionAdapter('127.0.0.1', '11:75:58:97:49:98', retry_interval=.05)
+    rejected, settled = asyncio.Event(), asyncio.Event()
+    async def stop(sid, reason):
+        assert (sid, reason) == (SESSION_2, 'invalid_followup')
+        rejected.set()
+        try:
+            if fault == 'error':
+                raise HomeAssistantError('send failed')
+            await adapter.async_send_message(0x23, json.dumps(dict(session_id=sid, reason=reason)).encode())
+        finally:
+            settled.set()
+    monkeypatch.setattr(audio_session, 'STOP_SEND_TIMEOUT', .75)
+    manager = AudioSessionManager(stop)
+    manager.on_local_start = lambda *args: None
+    gated = asyncio.Queue()
+    manager.on_gate = gated.put_nowait
+    adapter.register_audio_session_manager(manager)
+    controls, peers = [], []
+    negotiated = asyncio.Queue()
+    async def control(reader, writer):
+        controls.append(writer)
+        await reader.read()
+    def frame(kind, seq, payload):
+        return _tvio_message(kind, seq, json.dumps(payload).encode())
+    async def peer(reader, writer):
+        peers.append(writer)
+        hello = dict(device_id='tivoo-esp32', firmware_version='0.1.0+abcdef0', protocol_version=1,
+                     capabilities=[*transport._BASE_CAPABILITIES, 'audio_resource_http', 'audio_control', 'local_wake_stt_v1'], reset_reason='ESP_RST_POWERON')
+        writer.write(frame(1,0,hello))
+        await writer.drain()
+        assert (await _read_tvio_message(reader))[2]['accepted']
+        assert (await _read_tvio_message(reader))[0] == 0x10
+        await negotiated.put(writer)
+        await reader.read()
+    cs = await asyncio.start_server(control,'127.0.0.1',0)
+    ds = await asyncio.start_server(peer,'127.0.0.1',0)
+    monkeypatch.setattr(transport,'CONTROL_PORT',cs.sockets[0].getsockname()[1])
+    monkeypatch.setattr(transport,'DIAGNOSTIC_PORT',ds.sockets[0].getsockname()[1])
+    await adapter.async_start()
+    try:
+        async with asyncio.timeout(3):
+            writer = await negotiated.get()
+            ha_writer = adapter._writers['diagnostic']
+            if fault == 'lock':
+                await adapter._diagnostic_write_lock.acquire()
+            elif fault == 'drain':
+                async def hung():
+                    await asyncio.Future()
+                monkeypatch.setattr(ha_writer, 'drain', hung)
+            try:
+                writer.write(frame(0x20,1,local_start()) + frame(0x20,2,followup())
+                             + frame(0x20,3,local_start(third,300))
+                             + frame(0x24,4,dict(session_id=SESSION_1,state='invalid',uptime_ms=-1))
+                             + frame(0x26,5,gate(third)))
+                await writer.drain()
+                await rejected.wait()
+                assert await asyncio.wait_for(gated.get(), .5) == third
+                assert manager.active_session_id == third
+                if fault != 'error':
+                    assert not settled.is_set()  # RX advances while stop is still blocked.
+                await settled.wait()
+                assert manager.active_session_id == third
+            finally:
+                if fault == 'lock':
+                    adapter._diagnostic_write_lock.release()
+            if fault == 'drain':
+                assert adapter._diagnostic_tx_sequence == 3  # HELLO/status/committed 0x23
+            writer.close()
+            new_writer = await negotiated.get()
+            new_writer.write(frame(0x20,1,local_start(SESSION_2,1)) + frame(0x26,2,gate(SESSION_2)))
+            await new_writer.drain()
+            assert await gated.get() == SESSION_2
+            assert manager.active_session_id == SESSION_2
+            assert adapter.states['control'] == 'connected' and len(controls) == 1
+    finally:
+        await adapter.async_stop()
+        cs.close(); ds.close()
+        await _close_clients(controls + peers)
+        await cs.wait_closed(); await ds.wait_closed()
+
+
+async def test_old_diagnostic_write_waiter_cannot_commit_on_new_socket():
+    from unittest.mock import AsyncMock, Mock
+    adapter = transport.Esp32ConnectionAdapter(None)
+    old, new = Mock(), Mock()
+    for writer in (old,new):
+        writer.is_closing.return_value = False
+        writer.drain = AsyncMock()
+    adapter._diagnostic_handshaken = True
+    adapter._writers['diagnostic'] = old
+    async with adapter._diagnostic_write_lock:
+        queued = asyncio.create_task(adapter.async_send_message(0x23,b'{}'))
+        await asyncio.sleep(0)
+        adapter._writers['diagnostic'] = new
+    with pytest.raises(HomeAssistantError):
+        await queued
+    old.write.assert_not_called()
+    new.write.assert_not_called()

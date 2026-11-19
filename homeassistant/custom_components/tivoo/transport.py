@@ -412,9 +412,12 @@ class Esp32ConnectionAdapter:
             raise ValueError("message_type is not an HA-to-ESP32 TVIO message")
         if not self._diagnostic_handshaken:
             raise HomeAssistantError("ESP32 diagnostic handshake is not accepted")
+        writer = self._writers.get("diagnostic")
         async with self._diagnostic_write_lock:
-            writer = self._writers.get("diagnostic")
-            if not self._diagnostic_handshaken or writer is None or writer.is_closing():
+            if (
+                not self._diagnostic_handshaken or writer is None or writer.is_closing()
+                or writer is not self._writers.get("diagnostic")
+            ):
                 raise HomeAssistantError("ESP32 diagnostic handshake is not accepted")
             if self._diagnostic_capabilities is not None:
                 if message_type == TYPE_TTS_PLAY and "audio_resource_http" not in self._diagnostic_capabilities:
