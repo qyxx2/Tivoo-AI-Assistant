@@ -188,11 +188,11 @@ R10 软件验收完成（F17/F18）：[R10 报告](../reports/2026-11-19-p6-8-r1
 **Consumes:** R01–R10 报告；**Produces:** 修复核销矩阵、完整软件回归证据、两 target 可复现产物、实际剩余 GAP 清单。仅文档/证据核销，不借机实现别的功能或顺手改代码。
 **Files:** 本计划勾选、`docs/superpowers/reports/YYYY-MM-DD-p6-8-r11-repair-acceptance.md`；原计划追加状态引用而不覆盖历史 PASS；必要修复应回对应 R 批重新红绿与提交。
 
-- [ ] R11.1 检查每个 F 项的实际 diff/测试断言/验收报告；34/34 原 R 编号追踪，包括 B4-R02 和 B5-R05 uptime 已修部分（复查保留保护）、B6-R04 已证实的源保护、静态 vs 实际复现区分。核验 F17 批准裁决存在；未决不算通过。
-- [ ] R11.2 运行 `bash scripts/test-ha.sh tests/esp32 tests/homeassistant -q -p no:cacheprovider`（若 HA 与 ESP 需按原环境分开，报告两完整命令与结果）；`bash scripts/test-sherpa-wyoming.sh -q`；失败/teardown/波动如实分类，定位后重测，不只报告独立成功用例。
-- [ ] R11.3 两 target clean build（只清独立生成 build 目录，绝不清工作区/凭据/NVS），限并发，核对依赖锁、实际有效配置、Wi-Fi+SR、flash_args/partition/model/manifest 与 SHA/size。R01 的非生产测试配置不冒充实际生产配置；软件产物不刷写。
-- [ ] R11.4 按原 T01–T08 各受影响测试组记录当前软件 PASS/GAP/FAIL、对应 F/R evidence 及保留 physical/deploy GAP；另写修复报告并引用原报告，不改写原报告历史事实。确认工作区仅授权变更、每批提交完成，无 NAS/部署/刷写。若尚有缺口，列出对应批次与原因、回相应批次；不能因为全量通过就自动核销无证据合同。
-- [ ] R11.5 总报告并本地提交。R11 不标 P6.8 总完成，不执行 B9/T09 或 B10/T10；硬件到齐且用户授权后按原计划必要 gate 及实际配置/服务/声学验收，之后才允许 B9 条件清理，最后 B10 逐行核销49新合同、192历史ID、19遗留项。
+- [x] R11.1 检查每个 F 项的实际 diff/测试断言/验收报告；34/34 原 R 编号追踪，包括 B4-R02 和 B5-R05 uptime 已修部分（复查保留保护）、B6-R04 已证实的源保护、静态 vs 实际复现区分。核验 F17 批准裁决存在；未决不算通过。
+- [x] R11.2 运行 `bash scripts/test-ha.sh tests/esp32 tests/homeassistant -q -p no:cacheprovider`（若 HA 与 ESP 需按原环境分开，报告两完整命令与结果）；`bash scripts/test-sherpa-wyoming.sh -q`；失败/teardown/波动如实分类，定位后重测，不只报告独立成功用例。
+- [x] R11.3 两 target clean build（只清独立生成 build 目录，绝不清工作区/凭据/NVS），限并发，核对依赖锁、实际有效配置、Wi-Fi+SR、flash_args/partition/model/manifest 与 SHA/size。R01 的非生产测试配置不冒充实际生产配置；软件产物不刷写。
+- [x] R11.4 按原 T01–T08 各受影响测试组记录当前软件 PASS/GAP/FAIL、对应 F/R evidence 及保留 physical/deploy GAP；另写修复报告并引用原报告，不改写原报告历史事实。确认工作区仅授权变更、每批提交完成，无 NAS/部署/刷写。若尚有缺口，列出对应批次与原因、回相应批次；不能因为全量通过就自动核销无证据合同。
+- [x] R11.5 总报告并本地提交。R11 不标 P6.8 总完成，不执行 B9/T09 或 B10/T10；硬件到齐且用户授权后按原计划必要 gate 及实际配置/服务/声学验收，之后才允许 B9 条件清理，最后 B10 逐行核销49新合同、192历史ID、19遗留项。
 
 ## F 项与源审查完整追踪（主责唯一）
 
@@ -228,4 +228,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R10 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过，R09/R10 HA 全量通过，F17 已获用户裁决）；R11 未实施/未勾选，仍须总复验及核销，不改变已有软件 PASS 的历史事实或硬件 GAP。
+R01–R10 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过，R09/R10 HA 全量通过，F17 已获用户裁决）；R11 软件总复验 PASS（850 passed、两 target clean build/manifest PASS、34/34 原审查编号及 18 F 软件核销/补证）；详见 [R11 总复验报告](../reports/2026-11-19-p6-8-r11-repair-acceptance.md)。保留历史证据、全部实物/生产 GAP；不解除 B9 前置、不执行 B9/B10、不标 P6.8 总完成。

@@ -115,3 +115,7 @@
 - [ ] 延迟：固定说话距离、词、声源音量和命令；记录外部录音与独立设备/HA 单调时间轴，不减异机 uptime。报告词尾→WakeNet确认、词尾→真实提示首声、实际命令人声尾→STT_END（另记 VAD speech_end→STT_END）、实际命令结束→HA实际执行/回答首声、wake确认→旧声停止（目标见路线：300ms/1.2s/1.5s/100ms；非保证）；LLM、TTS 独立分解。每组记录 count/P50/P95、失败样本、旧基线缺测；未达目标列 GAP/FAIL 并定位，不能以日志代替物理结果。
 - [ ] 压力：长回复/连续电视与常驻监听/控制 GIF 同时，记录时长/次数、两核 CPU、IRAM/DRAM/PSRAM 最低和 contiguous/DMA、stack、AFE feed/fetch、UART/队列水位、CRC/drop/underrun、watchdog、长期资源变化；统计正负样本，不承诺电视同词可区分。
 - [ ] 逐项填写新合同49行和迁移索引192+19行：适用原断言+新证据+对应 test node/report path；未测/失败不标 PASS；独立延后明确理由。只有实际合格才宣布 P6.8 完成。报告、本地提交；用户另授权才集成/推送。
+
+## R11 软件总复验状态（2026-11-19）
+
+[R11 修复总复验报告](../reports/2026-11-19-p6-8-r11-repair-acceptance.md)：R01–R11 软件修复阶段已验收，ESP host 118、HA 592、Sherpa 140 项通过，两个 target 独立 clean build/产物复核通过。T01–T08 当前软件证据和保留的物理/生产 GAP 见报告。不覆写原历史 PASS；T09/B9 必要硬件/生产 gate 和 T10/B10 最终核销仍待另获授权执行，P6.8 尚未总体完成。
