@@ -100,6 +100,8 @@
 
 软件验收报告：[b8 display acceptance](../reports/2026-11-18-p6-8-b8-display-acceptance.md)。HA 独立全量 545 passed（追加 reload 用例前，生产代码相同）；B8 最终专项 13 passed、T02/T07 ESP32 host 27 passed。未部署、未刷写；保留真实屏幕及两板验收。
 
+> **B1–B8 审查修复插入步骤（2026-11-19）：** B8 完成后，先按 [P6.8 审查修复 R01–R11 执行计划](2026-11-19-p6-8-review-repair-execution-plan.md) 分批修复并复验软件合同。此前各批 PASS 为历史证据，现有审查缺口在 R 批重新核销；R11 软件复验不能替代 b4–b8 必要实物/生产 gate，不解除 b9 条件清理或 b10 综合验收要求。
+
 ## b9 — 条件清理和部署说明
 
 **Consumes:** b4–b8 真实本地模式已通过必要 gate（特别确认正/负样本、语音链、打断与显示）；**Produces:** Tivoo 单一本地唤醒，非 Tivoo 服务兼容。
