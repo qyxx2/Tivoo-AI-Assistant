@@ -157,6 +157,89 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static tivoo_output_queue_t s_queue;
 static tivoo_tx_reference_t s_reference;
 static uint64_t s_completed;
+static bool s_fault;
+static uint32_t s_failed_generation, s_fault_serial;
+static uint64_t s_recovery_boundary;
+
+/* Caller holds s_lock, including from RX or TX ISR. Do not write any
+ * skipped DMA descriptor: only the actual EOF slot is safe to refill. */
+static void IRAM_ATTR fault_locked(void)
+{
+    if (!s_fault) ++s_fault_serial;
+    s_fault = true;
+    if (s_queue.generation) {
+        s_failed_generation = s_queue.generation;
+        s_queue.stopped = true;
+        s_queue.count = 0;
+    }
+}
+void tivoo_audio_output_request_recovery(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    fault_locked();
+    portEXIT_CRITICAL(&s_lock);
+}
+void IRAM_ATTR tivoo_audio_output_fault_from_isr(void)
+{
+    portENTER_CRITICAL_ISR(&s_lock);
+    fault_locked();
+    portEXIT_CRITICAL_ISR(&s_lock);
+}
+bool tivoo_audio_output_faulted(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool fault = s_fault;
+    portEXIT_CRITICAL(&s_lock);
+    return fault;
+}
+bool tivoo_audio_output_failed(uint32_t generation)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool failed = generation && generation == s_failed_generation;
+    portEXIT_CRITICAL(&s_lock);
+    return failed;
+}
+bool tivoo_audio_output_available(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool available = tivoo_audio_capture_running() && !s_fault;
+    portEXIT_CRITICAL(&s_lock);
+    return available;
+}
+uint32_t tivoo_audio_output_fault_serial(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    uint32_t serial = s_fault_serial;
+    portEXIT_CRITICAL(&s_lock);
+    return serial;
+}
+uint64_t tivoo_audio_output_recovery_boundary(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    uint64_t boundary = s_recovery_boundary;
+    portEXIT_CRITICAL(&s_lock);
+    return boundary;
+}
+uint64_t tivoo_audio_output_clock_blocks(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    uint64_t clock = s_completed;
+    portEXIT_CRITICAL(&s_lock);
+    return clock;
+}
+
+/* Called only after both old channels have stopped and been deleted.
+ * Keep the failed owner until its actual parent acknowledges discard. */
+void tivoo_audio_output_restart_clock(uint64_t base)
+{
+    portENTER_CRITICAL(&s_lock);
+    memset(&s_reference, 0, sizeof(s_reference));
+    s_completed = base;
+    s_recovery_boundary = base*(TIVOO_OUTPUT_BLOCK/2);
+    tivoo_dma_eof_tracker_reset(&s_tracker, s_dma, TIVOO_OUTPUT_DMA_BLOCKS);
+    s_fault = false;
+    portEXIT_CRITICAL(&s_lock);
+}
 static unsigned s_underruns;
 static unsigned s_high_water;
 
@@ -166,6 +249,9 @@ void tivoo_audio_output_reset(void)
     memset(&s_queue, 0, sizeof(s_queue));
     memset(&s_reference, 0, sizeof(s_reference));
     s_completed = 0;
+    s_fault = false;
+    s_failed_generation = s_fault_serial = 0;
+    s_recovery_boundary = 0;
     s_missed_eofs = 0;
     tivoo_dma_eof_tracker_reset(&s_tracker, s_dma, TIVOO_OUTPUT_DMA_BLOCKS);
     portEXIT_CRITICAL(&s_lock);
@@ -177,7 +263,8 @@ bool tivoo_audio_output_begin(uint32_t generation)
         return false;
     }
     portENTER_CRITICAL(&s_lock);
-    const bool started = tivoo_output_begin(&s_queue, generation);
+    const bool started = tivoo_audio_capture_running() && !s_fault &&
+        tivoo_output_begin(&s_queue, generation);
     if (started) {
         s_underruns = 0;
         s_high_water = 0;
@@ -191,7 +278,8 @@ bool tivoo_audio_output_begin_prompt(uint32_t generation)
 {
     if (CONFIG_TIVOO_I2S_DOUT_GPIO < 0 || !tivoo_audio_capture_running()) return false;
     portENTER_CRITICAL(&s_lock);
-    const bool started=tivoo_output_begin_prompt(&s_queue,generation);
+    const bool started=tivoo_audio_capture_running() && !s_fault &&
+        tivoo_output_begin_prompt(&s_queue,generation);
     if (started) s_underruns=s_high_water=s_reference_peak=0;
     portEXIT_CRITICAL(&s_lock);
     return started;
@@ -214,19 +302,27 @@ size_t tivoo_audio_output_try_write(uint32_t generation, const int16_t *pcm, siz
     return total;
 }
 
-bool tivoo_audio_output_prompt_drain(uint32_t generation, uint64_t *end, uint64_t *clock)
+/* Every completion/release uses the SAME trusted generation and clock. */
+static bool drain_locked(uint32_t generation, uint64_t *end)
 {
-    portENTER_CRITICAL(&s_lock);
-    const bool drained=tivoo_output_drained(&s_queue,generation,s_completed);
-    *clock=s_completed*(TIVOO_OUTPUT_BLOCK/2);
-    if (drained) {
-        /* Reconstruct the exact wrap-safe completion index from the due block.
-         * The queue already includes one more descriptor for FIFO drain. */
+    if (!tivoo_audio_capture_running() || s_fault || generation==s_failed_generation ||
+        !tivoo_output_drained(&s_queue,generation,s_completed)) return false;
+    if (end) {
+        /* Reconstruct the exact wrap-safe completion index, including the
+         * existing additional descriptor interval for FIFO drain. */
         uint64_t block=s_completed;
         if (s_queue.in_dma)
             block-=(uint32_t)s_completed-(s_queue.last_due+1U);
         *end=block*(TIVOO_OUTPUT_BLOCK/2);
     }
+    return true;
+}
+
+bool tivoo_audio_output_prompt_drain(uint32_t generation, uint64_t *end, uint64_t *clock)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool drained=drain_locked(generation,end);
+    *clock=s_completed*(TIVOO_OUTPUT_BLOCK/2);
     portEXIT_CRITICAL(&s_lock);
     return drained;
 }
@@ -279,31 +375,62 @@ void tivoo_audio_output_finish_input(uint32_t generation)
 bool tivoo_audio_output_drained(uint32_t generation)
 {
     portENTER_CRITICAL(&s_lock);
-    const bool drained = tivoo_output_drained(&s_queue, generation, s_completed);
+    const bool drained=drain_locked(generation,NULL);
     portEXIT_CRITICAL(&s_lock);
+    return drained;
+}
+
+typedef struct {
+    unsigned underruns, high_water, missed_eofs, reference_peak;
+} output_stats_t;
+
+static output_stats_t end_locked(uint32_t generation)
+{
+    output_stats_t stats={s_underruns,s_high_water,s_missed_eofs,s_reference_peak};
+    tivoo_output_end(&s_queue,generation);
+    return stats;
+}
+
+static void log_end(uint32_t generation, output_stats_t stats, bool drained)
+{
+    ESP_LOGI("audio_output", "generation=%lu TX drained=%d underruns=%u queue_high_water=%u "
+        "missed_eofs=%u reference_peak=%u", (unsigned long)generation, drained, stats.underruns,
+        stats.high_water, stats.missed_eofs, stats.reference_peak);
+}
+
+bool tivoo_audio_output_release_drained(uint32_t generation, uint64_t *end)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool drained=drain_locked(generation,end);
+    output_stats_t stats={0};
+    if (drained) stats=end_locked(generation);
+    portEXIT_CRITICAL(&s_lock);
+    if (drained) log_end(generation,stats,true);
     return drained;
 }
 
 void tivoo_audio_output_end(uint32_t generation)
 {
     portENTER_CRITICAL(&s_lock);
-    const unsigned underruns = s_underruns;
-    const unsigned high_water = s_high_water;
-    const unsigned missed_eofs = s_missed_eofs;
-    const unsigned reference_peak = s_reference_peak;
-    tivoo_output_end(&s_queue, generation);
+    bool drained=drain_locked(generation,NULL);
+    output_stats_t stats=end_locked(generation);
     portEXIT_CRITICAL(&s_lock);
-    ESP_LOGI("audio_output", "generation=%lu TX underruns=%u queue_high_water=%u "
-        "missed_eofs=%u reference_peak=%u", (unsigned long)generation, underruns,
-        high_water, missed_eofs, reference_peak);
+    log_end(generation,stats,drained);
 }
 
 void IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
 {
     portENTER_CRITICAL_ISR(&s_lock);
     const size_t missed = tivoo_dma_eof_tracker_observe(&s_tracker, slots);
-    s_completed += missed;
     s_missed_eofs += missed;
+    if (missed || s_tracker.order_uncertain) fault_locked();
+    if (s_fault) {
+        /* Only this EOF buffer is known writable. Quarantine the rest
+         * until the driver destroys the stopped ring. */
+        tivoo_output_refill(&s_queue, slots, 0);
+        portEXIT_CRITICAL_ISR(&s_lock);
+        return;
+    }
     tivoo_tx_reference_record(&s_reference, s_completed, slots);
     /* GDMA EOF can precede actual FIFO output. Preserve one more descriptor
      * interval for drain, as in the previous output manager. */
@@ -318,7 +445,8 @@ bool tivoo_audio_output_reference_raw(uint64_t first_sample, int16_t *pcm, size_
 {
     portENTER_CRITICAL(&s_lock);
     bool valid = tivoo_tx_reference_read(&s_reference, first_sample, pcm, samples) &&
-        !s_tracker.order_uncertain;
+        !s_fault && !s_tracker.order_uncertain;
+    if (!valid && s_fault) memset(pcm, 0, samples*sizeof(*pcm));
     for (size_t i=0;i<samples;i++) {
         const unsigned amplitude = pcm[i] < 0 ? -(int)pcm[i] : pcm[i];
         if (amplitude > s_reference_peak) s_reference_peak = amplitude;

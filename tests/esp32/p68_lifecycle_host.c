@@ -11,6 +11,9 @@
 static uint32_t connection=1;
 static uint64_t ms=100;
 static bool drained=true, gate_open;
+static bool prompt_mode, prompt_failed, prompt_owned, output_available=true;
+static unsigned recoveries, discards;
+static uint32_t prompt_owner;
 static unsigned starts, gates, retired, pcm_frames, ends;
 static char sid[37], parent[37], retired_id[37];
 static const char playback[]="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -44,19 +47,25 @@ bool tivoo_diagnostics_send_mic(uint32_t e,uint8_t type,const void *data,size_t 
 const char *tivoo_s3_afe_wake_word(int n) { return n==1?"wake":NULL; }
 bool tivoo_s3_afe_open_test_gate(void) { assert(drained); gate_open=true; return true; }
 void tivoo_s3_afe_close_local_gate(void) { gate_open=false; }
-void tivoo_s3_afe_begin_prompt(void) { assert(0); }
-bool tivoo_s3_afe_finish_prompt(uint64_t b,bool o) { (void)b; (void)o; assert(0); return false; }
-bool tivoo_audio_resource_prompt_ready(unsigned tail) { (void)tail; return drained; }
+void tivoo_s3_afe_begin_prompt(void) { assert(prompt_mode); }
+bool tivoo_s3_afe_finish_prompt(uint64_t b,bool o) { (void)b; assert(prompt_mode); gate_open=o; return o; }
+bool tivoo_audio_resource_prompt_ready(unsigned tail) { (void)tail; return prompt_mode ? output_available && !prompt_owned : drained; }
 void tivoo_audio_resource_retire_local(const char *id,uint32_t e)
 { assert(e); strcpy(retired_id,id); ++retired; }
-uint32_t tivoo_audio_resource_prompt_begin(void) { assert(0); return 0; }
-bool tivoo_audio_resource_prompt_end(uint32_t g) { (void)g; assert(0); return false; }
+uint32_t tivoo_audio_resource_prompt_begin(void) { assert(prompt_mode && !prompt_owned); prompt_owned=true; prompt_failed=false; return ++prompt_owner; }
+bool tivoo_audio_resource_prompt_end(uint32_t g) { assert(prompt_mode && g==prompt_owner && !prompt_failed && drained); prompt_owned=false; return true; }
+bool tivoo_audio_resource_prompt_discard(uint32_t g) { assert(prompt_mode && g==prompt_owner && prompt_failed); prompt_owned=false; ++discards; return true; }
+bool tivoo_audio_output_failed(uint32_t g) { return prompt_failed && g==prompt_owner; }
+bool tivoo_audio_output_available(void) {return output_available;}
+uint32_t tivoo_audio_output_fault_serial(void) {return recoveries;}
+uint64_t tivoo_audio_output_recovery_boundary(void) {return ms*16;}
+void tivoo_audio_output_request_recovery(void) { ++recoveries; prompt_failed=true; output_available=false; }
 size_t tivoo_audio_output_try_write(uint32_t g,const int16_t *p,size_t n)
-{ (void)g; (void)p; (void)n; assert(0); return 0; }
-void tivoo_audio_output_finish_input(uint32_t g) { (void)g; assert(0); }
-void tivoo_audio_output_stop(uint32_t g) { (void)g; assert(0); }
+{ (void)p; assert(prompt_mode && g==prompt_owner); return n; }
+void tivoo_audio_output_finish_input(uint32_t g) { assert(prompt_mode && g==prompt_owner); }
+void tivoo_audio_output_stop(uint32_t g) { assert(prompt_mode && g==prompt_owner); }
 bool tivoo_audio_output_prompt_drain(uint32_t g,uint64_t *e,uint64_t *c)
-{ (void)g; (void)e; (void)c; assert(0); return false; }
+{ assert(prompt_mode && g==prompt_owner); *e=*c=ms*16; return drained && !prompt_failed; }
 
 static void wake(void) {
     ++ms;
@@ -75,7 +84,27 @@ static void command(void) {
     tivoo_s3_local_turn_event(NULL,&(tivoo_afe_event_t){.type=TIVOO_AFE_PCM,.index=0,.pcm=pcm,.count=320});
     tivoo_s3_local_turn_event(NULL,&(tivoo_afe_event_t){.type=TIVOO_AFE_END,.index=320});
 }
-int main(void) {
+int main(int argc, char **argv) {
+    if(argc==2 && strcmp(argv[1],"stale_fault")==0) {
+        assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
+        wake(); command();
+        assert(tivoo_s3_local_turn_bind_playback(sid,playback));
+        ++recoveries; /* Already recovered, but fetch has not ticked yet. */
+        assert(!tivoo_s3_local_turn_bind_playback(sid,playback));
+        return 0;
+    }
+    if(argc==2) {
+        prompt_mode=true; drained=false;
+        assert(tivoo_s3_local_turn_init(false,true,0,0)==ESP_OK);
+        wake(); assert(starts==1 && gates==0 && prompt_owned);
+        ms+=5001; tivoo_s3_local_turn_tick(); tivoo_s3_local_turn_tick();
+        assert(recoveries==1 && discards==1 && !prompt_owned && !gate_open && !gates);
+        wake(); assert(starts==1 && !gates);
+        output_available=true; drained=true;
+        wake(); tivoo_s3_local_turn_tick();
+        assert(starts==2 && gates==1 && !prompt_owned && prompt_owner==2);
+        return 0;
+    }
     assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
     wake(); assert(starts==1 && gates==1);
     char first[37]; strcpy(first,sid);

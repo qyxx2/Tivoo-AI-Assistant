@@ -81,11 +81,13 @@ R01 是构建证据；R02 控制链；R03 是独立且最重的音频底层；R0
 **Files:** `esp32/firmware/main/{audio_capture,audio_output_manager,p68_prompt,s3_local_turn,audio_resource}.c` 与相关 headers；`tests/esp32/{p68_audio_host,p68_prompt_host,p68_lifecycle_host}.c`、`test_p68_audio.py,test_p68_prompt.py,test_p68_turn.py,test_p65b10_output.py,test_audio_rx_timeline.py`。仅 owner/状态接缝需要动其他文件。
 **Interfaces:** tivoo_dma_eof_tracker_reset/observe、tivoo_audio_capture_start/close/next、tivoo_audio_output_dma_sent/output_reference_raw/output_prompt_drain/output_drained、现 generation/owner 与 s3_local_turn prompt mask；由实际 IDF driver 生命周期决定恢复入口，不在计划中猜 ISR API。
 
-- [ ] R03.1 首先核对锁定 IDF i2s_common.c 的循环描述符、disable/enable/delete/reset 与回调可调用上下文；确认 RX/TX 共享时钟、DMA 槽安全写入及重建 epoch 时谁停/启、如何禁止旧 callback；记录最小方案及父子 owner 顺序。只处理已检测到的单漏/uncertain，不声称识别不可观测整圈丢失。
-- [ ] R03.2 RED：模拟真实 12 槽非零 PCM，startup 学序单漏→发 gap/invalid→受控恢复后重新给出有效同轴 frame；正常 STOP 不重置 RX。运行时 TX 单跳槽→旧 PCM 不得跨 generation、reference/drain 不可被信任；不得只凭 s_completed/last_due 算安全结束。使用现 host tracker/queue，必要时引入小型 DMA seam 运行实际调度路由。
-- [ ] R03.3 最小实现：检测 fault 后失效当前 reference、generation 及 drain，取消相关 turn；受控清理安全槽并重同步 RX/TX 共 epoch。禁止写 DMA 正在读的槽；正常 stop 保持常驻 RX；不能以重置计数或仅清 prompt_generation 伪报完成。恢复有界、失败保留明确安全隔离/不可用及原因；若只能人工重启且与规格恢复要求冲突，先确认合同变更。GREEN R03.2。
-- [ ] R03.4 RED/GREEN：5s 后当前轮取消且不能 drain 时不得开 gate、不得无限静默占 owner；受控恢复后仅新轮能开始，无 canceled turn completed gate，真实故障保留显式 fault（F06 对外能力由 R04）；正常短提示音、普通 TTS 无间隙截断、stop/drain/下一 owner 回归。检查所有依赖 drain 的 owner release，不允许 prompt 与普通路径各有一套恢复。
-- [ ] R03.5 运行上述 ESP 测试 + test_p6_audio_resource.py；S3 build，核对 12 槽/gap/fault 状态的实际测试，不将模拟当声学。报告 R04 所需真实时间轴/故障接口及未证实物理恢复，审查、提交。
+- [x] R03.1 首先核对锁定 IDF i2s_common.c 的循环描述符、disable/enable/delete/reset 与回调可调用上下文；确认 RX/TX 共享时钟、DMA 槽安全写入及重建 epoch 时谁停/启、如何禁止旧 callback；记录最小方案及父子 owner 顺序。只处理已检测到的单漏/uncertain，不声称识别不可观测整圈丢失。
+- [x] R03.2 RED：模拟真实 12 槽非零 PCM，startup 学序单漏→发 gap/invalid→受控恢复后重新给出有效同轴 frame；正常 STOP 不重置 RX。运行时 TX 单跳槽→旧 PCM 不得跨 generation、reference/drain 不可被信任；不得只凭 s_completed/last_due 算安全结束。使用现 host tracker/queue，必要时引入小型 DMA seam 运行实际调度路由。
+- [x] R03.3 最小实现：检测 fault 后失效当前 reference、generation 及 drain，取消相关 turn；受控清理安全槽并重同步 RX/TX 共 epoch。禁止写 DMA 正在读的槽；正常 stop 保持常驻 RX；不能以重置计数或仅清 prompt_generation 伪报完成。恢复有界、失败保留明确安全隔离/不可用及原因；若只能人工重启且与规格恢复要求冲突，先确认合同变更。GREEN R03.2。
+- [x] R03.4 RED/GREEN：5s 后当前轮取消且不能 drain 时不得开 gate、不得无限静默占 owner；受控恢复后仅新轮能开始，无 canceled turn completed gate，真实故障保留显式 fault（F06 对外能力由 R04）；正常短提示音、普通 TTS 无间隙截断、stop/drain/下一 owner 回归。检查所有依赖 drain 的 owner release，不允许 prompt 与普通路径各有一套恢复。
+- [x] R03.5 运行上述 ESP 测试 + test_p6_audio_resource.py；S3 build，核对 12 槽/gap/fault 状态的实际测试，不将模拟当声学。报告 R04 所需真实时间轴/故障接口及未证实物理恢复，审查、提交。
+
+R03 软件验收完成（F05）：[R03 报告](../reports/2026-11-19-p6-8-r03-repair-acceptance.md)，保留真实 DMA/声学、R04/R05/R08 关联证据及 R11 总复验。
 
 ## R04 — AFE 状态真实性与 VAD 跨 gate 隔离
 
@@ -210,4 +212,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R02 已完成软件修复验收；R03–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R03 已完成软件修复验收；R04–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

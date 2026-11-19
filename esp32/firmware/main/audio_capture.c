@@ -149,6 +149,10 @@ static i2s_chan_handle_t s_rx;
 static i2s_chan_handle_t s_tx;
 static bool s_tx_enabled;
 static bool s_rx_enabled;
+static atomic_bool s_running, s_accept_callbacks, s_recovering, s_unavailable;
+static bool s_recovery_attempted;
+static int s_driver_core;
+static uint64_t s_epoch_base;
 static void *s_rx_dma[TIVOO_OUTPUT_DMA_BLOCKS];
 static tivoo_dma_eof_tracker_t s_rx_dma_tracker;
 static atomic_uint s_rx_overruns;
@@ -178,13 +182,17 @@ static bool IRAM_ATTR rx_received(i2s_chan_handle_t handle, i2s_event_data_t *ev
 {
     (void)handle;
     (void)context;
+    if (!atomic_load_explicit(&s_accept_callbacks,memory_order_relaxed)) return false;
     const size_t missed = tivoo_dma_eof_tracker_observe(&s_rx_dma_tracker, event->dma_buf);
     if (s_rx_dma_tracker.order_uncertain)
         atomic_store_explicit(&s_rx_order_uncertain, true, memory_order_relaxed);
     if (missed) atomic_fetch_add_explicit(&s_rx_missed_eofs, missed, memory_order_relaxed);
+    if (missed || s_rx_dma_tracker.order_uncertain || event->size != sizeof(s_isr_block.slots)) {
+        tivoo_audio_output_fault_from_isr();
+        return false;
+    }
     s_next_block += missed;
     s_isr_block.block = s_next_block++;
-    if (event->size != sizeof(s_isr_block.slots)) return false;
     const volatile uint32_t *source = event->dma_buf;
     for (size_t i = 0; i < 2 * TIVOO_OUTPUT_BLOCK; ++i) s_isr_block.slots[i] = source[i];
     BaseType_t wake = pdFALSE;
@@ -198,36 +206,57 @@ static bool IRAM_ATTR tx_sent(i2s_chan_handle_t handle, i2s_event_data_t *event,
 {
     (void)handle;
     (void)context;
-    tivoo_audio_output_dma_sent(event->dma_buf);
+    if (atomic_load_explicit(&s_accept_callbacks,memory_order_relaxed)) {
+        if (event->size != 2*TIVOO_OUTPUT_BLOCK*sizeof(uint32_t))
+            tivoo_audio_output_fault_from_isr();
+        else
+            tivoo_audio_output_dma_sent(event->dma_buf);
+    }
     return false;
 }
 
 bool tivoo_audio_capture_running(void)
 {
-    return s_rx_enabled && s_tx_enabled;
+    return atomic_load(&s_running);
+}
+
+/* Stop BOTH sides before deleting either side. The recovery worker is pinned
+ * to the original IDF allocation core; no concurrent old ISR can traverse
+ * a descriptor we free. GDMA deletion disables/clears pending interrupts. */
+static esp_err_t close_channels(void)
+{
+    atomic_store(&s_running,false);
+    atomic_store(&s_accept_callbacks,false);
+    esp_err_t rx_err=ESP_OK, tx_err=ESP_OK;
+    if (s_rx_enabled) {
+        rx_err=i2s_channel_disable(s_rx);
+        if (rx_err==ESP_OK) s_rx_enabled=false;
+    }
+    if (s_tx_enabled) {
+        tx_err=i2s_channel_disable(s_tx);
+        if (tx_err==ESP_OK) s_tx_enabled=false;
+    }
+    if (rx_err!=ESP_OK || tx_err!=ESP_OK) return rx_err!=ESP_OK ? rx_err : tx_err;
+    /* Let any already pending IRQ finish on this same core before freeing
+     * its driver descriptors. User callbacks are disabled above. */
+    if (s_rx || s_tx) vTaskDelay(1);
+    if (s_rx) {
+        rx_err=i2s_del_channel(s_rx);
+        if (rx_err==ESP_OK) s_rx=NULL;
+    }
+    if (s_tx) {
+        tx_err=i2s_del_channel(s_tx);
+        if (tx_err==ESP_OK) s_tx=NULL;
+    }
+    return rx_err!=ESP_OK ? rx_err : tx_err;
 }
 
 void tivoo_audio_capture_close(void)
 {
-    if (s_rx != NULL) {
-        if (s_rx_enabled) {
-            i2s_channel_disable(s_rx);
-        }
-        i2s_del_channel(s_rx);
-        s_rx = NULL;
-        s_rx_enabled = false;
-    }
-    if (s_tx != NULL) {
-        if (s_tx_enabled) {
-            i2s_channel_disable(s_tx);
-        }
-        i2s_del_channel(s_tx);
-        s_tx = NULL;
-        s_tx_enabled = false;
-    }
+    (void)close_channels();
 }
 
-esp_err_t tivoo_audio_capture_start(void)
+static esp_err_t start_channels(uint64_t base, bool initial)
 {
     i2s_chan_config_t channels = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     channels.dma_desc_num = TIVOO_OUTPUT_DMA_BLOCKS;
@@ -248,22 +277,29 @@ esp_err_t tivoo_audio_capture_start(void)
         .on_recv = rx_received,
     };
 
-    atomic_store_explicit(&s_rx_overruns, 0, memory_order_relaxed);
+    if (initial) {
+        atomic_store_explicit(&s_rx_overruns, 0, memory_order_relaxed);
+        atomic_store_explicit(&s_rx_missed_eofs, 0, memory_order_relaxed);
+    }
     atomic_store_explicit(&s_rx_order_uncertain, false, memory_order_relaxed);
-    atomic_store_explicit(&s_rx_missed_eofs, 0, memory_order_relaxed);
     tivoo_dma_eof_tracker_reset(&s_rx_dma_tracker, s_rx_dma, TIVOO_OUTPUT_DMA_BLOCKS);
 
-    if (tivoo_audio_capture_running()) return ESP_ERR_INVALID_STATE;
-    s_blocks = xQueueCreateStatic(TIVOO_OUTPUT_DMA_BLOCKS, sizeof(rx_block_t),
+    if (!s_blocks) s_blocks = xQueueCreateStatic(TIVOO_OUTPUT_DMA_BLOCKS, sizeof(rx_block_t),
         s_block_storage, &s_block_queue);
     if (!s_blocks) return ESP_ERR_NO_MEM;
-    s_next_block = 0;
-    s_timeline = (tivoo_rx_timeline_t){0};
+    xQueueReset(s_blocks);
+    s_epoch_base = s_next_block = base;
+    s_timeline.next_block = base + TIVOO_RX_SETTLE_BLOCKS;
+    if (initial) s_timeline.lost_blocks = 0;
     s_filter = (tivoo_stereo_decimator_t){0};
     s_tx_filter = (tivoo_decimator_t){0};
-    s_pending_gap = false;
-    s_queue_peak = 0;
-    tivoo_audio_output_reset();
+    s_pending_gap = !initial;
+    if (initial) {
+        s_queue_peak = 0;
+        tivoo_audio_output_reset();
+    } else {
+        tivoo_audio_output_restart_clock(base);
+    }
     channels.auto_clear_before_cb = false;
     channels.auto_clear_after_cb = false;
 
@@ -282,6 +318,7 @@ esp_err_t tivoo_audio_capture_start(void)
         err = i2s_channel_register_event_callback(s_tx, &tx_callbacks, NULL);
     }
     if (err == ESP_OK) {
+        atomic_store(&s_accept_callbacks,true);
         err = i2s_channel_enable(s_rx);
         s_rx_enabled = err == ESP_OK;
     }
@@ -290,19 +327,75 @@ esp_err_t tivoo_audio_capture_start(void)
         s_tx_enabled = err == ESP_OK;
     }
     if (err != ESP_OK) {
-        tivoo_audio_capture_close();
+        (void)close_channels();
+        tivoo_audio_output_request_recovery();
+    } else if (initial) {
+        atomic_store(&s_running,true);
     }
     return err;
+}
+
+esp_err_t tivoo_audio_capture_start(void)
+{
+    if (s_rx || s_tx || atomic_load(&s_recovering)) return ESP_ERR_INVALID_STATE;
+    s_driver_core=xPortGetCoreID();
+    s_recovery_attempted=false;
+    atomic_store(&s_unavailable,false);
+    return start_channels(0,true);
+}
+
+static void recover_capture(void *arg)
+{
+    const bool stop_only = arg != NULL;
+    esp_err_t err=close_channels();
+    /* The old callbacks are gone. Rebase both clocks monotonically; the
+     * discontinuity is explicit, not a fabricated run of silent samples. */
+    uint64_t base=tivoo_audio_output_clock_blocks();
+    if (s_next_block>base) base=s_next_block;
+    if (err==ESP_OK && !stop_only) err=start_channels(base+1,false);
+    if (err!=ESP_OK || stop_only) {
+        tivoo_audio_output_request_recovery();
+        atomic_store(&s_unavailable,true);
+        ESP_LOGE("audio_capture","DMA recovery unavailable (err=%d, repeated=%d)",err,stop_only);
+    } else {
+        ESP_LOGW("audio_capture","DMA restarted at block=%llu; old owner invalidated",
+            (unsigned long long)(base+1));
+    }
+    atomic_store(&s_recovering,false);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t schedule_recovery(void)
+{
+    atomic_store(&s_running,false);
+    atomic_store(&s_recovering,true);
+    bool stop_only=s_recovery_attempted;
+    s_recovery_attempted=true;
+    if (xTaskCreatePinnedToCore(recover_capture,"dma_recover",4096,
+            stop_only ? (void *)1 : NULL, 6,NULL,s_driver_core)!=pdPASS) {
+        atomic_store(&s_unavailable,true);
+        atomic_store(&s_recovering,false);
+        ESP_LOGE("audio_capture","DMA recovery task unavailable");
+    }
+    return ESP_ERR_INVALID_STATE;
 }
 
 esp_err_t tivoo_audio_capture_next(tivoo_capture_frame_t *frame)
 {
     if (!frame || !s_blocks) return ESP_ERR_INVALID_ARG;
     for (;;) {
+        if (atomic_load(&s_recovering) || atomic_load(&s_unavailable)) {
+            vTaskDelay(1);
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (tivoo_audio_output_faulted()) return schedule_recovery();
         if (xQueueReceive(s_blocks, &s_task_block, pdMS_TO_TICKS(100)) != pdTRUE) {
             s_pending_gap = true;
-            return ESP_ERR_TIMEOUT;
+            tivoo_audio_output_request_recovery();
+            return schedule_recovery();
         }
+        if (tivoo_audio_output_faulted()) return schedule_recovery();
+        if (s_task_block.block < s_epoch_base + TIVOO_RX_SETTLE_BLOCKS) continue;
         const size_t depth = uxQueueMessagesWaiting(s_blocks) + 1;
         if (depth > s_queue_peak) s_queue_peak = depth;
         bool gap;
@@ -321,8 +414,18 @@ esp_err_t tivoo_audio_capture_next(tivoo_capture_frame_t *frame)
             frame->reference_valid = tivoo_audio_output_reference_raw(
                 tx_sample, s_tx_raw, TIVOO_OUTPUT_BLOCK);
         }
+        if (tivoo_audio_output_faulted()) return schedule_recovery();
         frame->reference_valid &= !atomic_load_explicit(&s_rx_order_uncertain, memory_order_relaxed);
         frame->gap = gap || s_pending_gap || !frame->reference_valid;
+        /* A recreated driver is not yet a usable epoch. Once settle has
+         * elapsed allow one DMA ring to obtain a continuous, aligned frame;
+         * then stop rather than repeatedly restart an unproven stream. */
+        if (s_recovery_attempted && frame->gap &&
+            s_task_block.block >= s_epoch_base+TIVOO_RX_SETTLE_BLOCKS+TIVOO_OUTPUT_DMA_BLOCKS) {
+            ESP_LOGE("audio_capture","DMA recovery did not produce aligned reference");
+            tivoo_audio_output_request_recovery();
+            return schedule_recovery();
+        }
         if (frame->gap) {
             s_filter = (tivoo_stereo_decimator_t){0};
             s_tx_filter = (tivoo_decimator_t){0};
@@ -332,6 +435,12 @@ esp_err_t tivoo_audio_capture_next(tivoo_capture_frame_t *frame)
         tivoo_audio_decimate_pcm16(&s_tx_filter, s_tx_raw,
             TIVOO_OUTPUT_BLOCK, frame->reference);
         s_pending_gap = !frame->reference_valid;
+        if (frame->reference_valid && !frame->gap && s_recovery_attempted) {
+            s_recovery_attempted=false;
+            atomic_store(&s_running,true);
+            ESP_LOGI("audio_capture","DMA recovery valid sample=%llu",
+                (unsigned long long)frame->first_sample);
+        }
         return ESP_OK;
     }
 }

@@ -49,6 +49,17 @@ bool tivoo_tx_reference_read(const tivoo_tx_reference_t *reference, uint64_t fir
 #ifdef ESP_PLATFORM
 #include "audio_frontend.h"
 void tivoo_audio_output_reset(void);
+/* Fault is distinct from drain: failed generations can be discarded but
+ * must never report completion, even after a successful hardware restart. */
+bool tivoo_audio_output_available(void);
+bool tivoo_audio_output_faulted(void);
+bool tivoo_audio_output_failed(uint32_t generation);
+uint32_t tivoo_audio_output_fault_serial(void);
+uint64_t tivoo_audio_output_recovery_boundary(void);
+void tivoo_audio_output_request_recovery(void);
+void tivoo_audio_output_fault_from_isr(void);
+uint64_t tivoo_audio_output_clock_blocks(void);
+void tivoo_audio_output_restart_clock(uint64_t base);
 bool tivoo_audio_output_reference_raw(uint64_t first_sample, int16_t *pcm, size_t samples);
 
 bool tivoo_audio_output_begin(uint32_t generation);
@@ -59,6 +70,7 @@ esp_err_t tivoo_audio_output_write(uint32_t generation, const int16_t *pcm, size
 void tivoo_audio_output_stop(uint32_t generation);
 void tivoo_audio_output_finish_input(uint32_t generation);
 bool tivoo_audio_output_drained(uint32_t generation);
+bool tivoo_audio_output_release_drained(uint32_t generation, uint64_t *end);
 void tivoo_audio_output_end(uint32_t generation);
 void tivoo_audio_output_dma_sent(uint32_t *slots);
 tivoo_audio_reference_status_t tivoo_audio_output_reference(

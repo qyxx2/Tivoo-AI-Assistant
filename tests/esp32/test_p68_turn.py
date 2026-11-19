@@ -36,3 +36,5 @@ def test_local_lifecycle_adapter(tmp_path):
                     str(MAIN / "p68_prompt.c"), str(cjson / "cJSON.c"),
                     "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
+    subprocess.run([str(exe), "prompt_fault"], check=True)
+    subprocess.run([str(exe), "stale_fault"], check=True)

@@ -297,7 +297,11 @@ static atomic_bool s_output_claimed;
 
 bool tivoo_audio_resource_test_silent(void)
 {
-    return s_mutex != NULL && !atomic_load(&s_output_claimed);
+    return s_mutex != NULL && !atomic_load(&s_output_claimed)
+#ifdef TIVOO_P68_B5_LOCAL
+        && tivoo_audio_output_available()
+#endif
+        ;
 }
 
 static esp_err_t stop_request(const char *request_id, const char *expected_audio_id, const char *reason, const char *session_id);
@@ -306,25 +310,20 @@ static audio_request_t *s_pending_request;
 static uint32_t s_generation;
 #ifdef TIVOO_P68_B5_LOCAL
 static uint32_t s_prompt_generation;
-static uint32_t s_quarantined_generation;
 static uint64_t s_last_drain;
 
-/* A timed-out DMA drain is not silence. Keep its owner quarantined until
- * actual completed samples prove drain, then apply the calibrated tail. */
+/* A successful restart has a new digital clock boundary, not a completed
+ * old generation. Require the same calibrated tail for the next prompt. */
 bool tivoo_audio_resource_prompt_ready(unsigned acoustic_tail)
 {
     if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return false;
     uint64_t end=0, clock=0;
-    if (s_quarantined_generation &&
-        tivoo_audio_output_prompt_drain(s_quarantined_generation,&end,&clock)) {
-        s_last_drain=end;
-        tivoo_audio_output_end(s_quarantined_generation);
-        s_quarantined_generation=0;
-        atomic_store(&s_output_claimed,false);
-    }
     (void)tivoo_audio_output_prompt_drain(0,&end,&clock);
-    const bool ready=!s_active_request && !s_pending_request && !s_prompt_generation &&
-        !s_quarantined_generation && clock>=s_last_drain+acoustic_tail;
+    uint64_t boundary=tivoo_audio_output_recovery_boundary();
+    if (s_last_drain>boundary) boundary=s_last_drain;
+    const bool ready=tivoo_audio_output_available() &&
+        !s_active_request && !s_pending_request && !s_prompt_generation &&
+        clock>=boundary+acoustic_tail;
     xSemaphoreGive(s_mutex);
     return ready;
 }
@@ -349,7 +348,7 @@ uint32_t tivoo_audio_resource_prompt_begin(void)
 {
     if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return 0;
     uint32_t generation=0;
-    if (!s_active_request && !s_pending_request && !s_prompt_generation && !s_quarantined_generation) {
+    if (!s_active_request && !s_pending_request && !s_prompt_generation) {
         if (++s_generation==0) ++s_generation;
         if (tivoo_audio_output_begin_prompt(s_generation)) {
             generation=s_prompt_generation=s_generation;
@@ -363,8 +362,23 @@ uint32_t tivoo_audio_resource_prompt_begin(void)
 bool tivoo_audio_resource_prompt_end(uint32_t generation)
 {
     if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return false;
+    uint64_t end=0;
     const bool valid=generation && generation==s_prompt_generation &&
-        tivoo_audio_output_drained(generation);
+        tivoo_audio_output_release_drained(generation,&end);
+    if (valid) {
+        s_prompt_generation=0;
+        atomic_store(&s_output_claimed,false);
+    }
+    xSemaphoreGive(s_mutex);
+    return valid;
+}
+/* Faulted owner releases only its logical claim. The manager remains
+ * unavailable until both hardware channels have been rebuilt. */
+bool tivoo_audio_resource_prompt_discard(uint32_t generation)
+{
+    if (!s_mutex || xSemaphoreTake(s_mutex,0)!=pdTRUE) return false;
+    bool valid=generation && generation==s_prompt_generation &&
+        tivoo_audio_output_failed(generation);
     if (valid) {
         tivoo_audio_output_end(generation);
         s_prompt_generation=0;
@@ -598,6 +612,12 @@ static audio_request_t *run_request(audio_request_t *request)
         }
         const int64_t deadline = esp_timer_get_time() + DMA_DRAIN_TIMEOUT_US;
         while (!tivoo_audio_output_drained(request->generation)) {
+#ifdef TIVOO_P68_B5_LOCAL
+            if (tivoo_audio_output_failed(request->generation)) {
+                error="audio_dma_fault";
+                break;
+            }
+#endif
             if (esp_timer_get_time() >= deadline) {
                 tivoo_audio_output_stop(request->generation);
                 error = "audio_output_timeout";
@@ -606,14 +626,17 @@ static audio_request_t *run_request(audio_request_t *request)
             vTaskDelay(1);
         }
 #ifdef TIVOO_P68_B5_LOCAL
-        uint64_t end,clock;
+        uint64_t end;
         (void)xSemaphoreTake(s_mutex,portMAX_DELAY);
-        if (tivoo_audio_output_prompt_drain(request->generation,&end,&clock)) {
+        if (tivoo_audio_output_release_drained(request->generation,&end)) {
             s_last_drain=end;
-            tivoo_audio_output_end(request->generation);
         } else {
-            s_quarantined_generation=request->generation;
-            error="audio_output_timeout";
+            /* The ordinary TTS and prompt timeout use the same recovery.
+             * Never turn this discard into an ordinary completed terminal. */
+            if (!tivoo_audio_output_failed(request->generation))
+                tivoo_audio_output_request_recovery();
+            tivoo_audio_output_end(request->generation);
+            error="audio_dma_fault";
         }
         xSemaphoreGive(s_mutex);
 #else
@@ -648,7 +671,7 @@ static audio_request_t *run_request(audio_request_t *request)
     s_active_request = next;
     s_pending_request = NULL;
 #ifdef TIVOO_P68_B5_LOCAL
-    atomic_store(&s_output_claimed,next || s_quarantined_generation);
+    atomic_store(&s_output_claimed,next!=NULL);
     tivoo_s3_local_turn_playback_finished(request->session_id,request->playback_id,
         request->peer_generation,!stopped && !error);
 #else
@@ -679,7 +702,7 @@ static esp_err_t start_request(audio_request_t *request)
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     request->peer_generation = tivoo_diagnostics_mic_generation();
 #ifdef TIVOO_P68_B5_LOCAL
-    if (s_prompt_generation || s_quarantined_generation || !tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
+    if (s_prompt_generation || !tivoo_audio_output_available() || !tivoo_s3_local_turn_bind_playback(request->session_id,request->playback_id)) {
         (void)xSemaphoreGive(s_mutex);
         free(request);
         return ESP_ERR_INVALID_STATE;

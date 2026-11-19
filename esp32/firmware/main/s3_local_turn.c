@@ -21,7 +21,8 @@ static tivoo_local_turn_t *turn;
 static bool test_gate_enabled, prompt_calibrated;
 static unsigned prompt_tail;
 static int prompt_offset;
-static uint32_t prompt_generation;
+static uint32_t prompt_generation, turn_fault_serial;
+static bool prompt_fault_mask;
 static tivoo_prompt_t prompt;
 static int last_ready=-1;
 static const char *gate_result;
@@ -48,7 +49,7 @@ static char uuid[37];
 static const char *phrase;
 static portMUX_TYPE lock=portMUX_INITIALIZER_UNLOCKED;
 static struct {
-    uint32_t epoch;
+    uint32_t epoch, fault_serial;
     char uuid[37], playback[37];
     uint64_t ready_ms;
     bool ready, stop, reply_allowed, followup_requested, playback_completed;
@@ -146,17 +147,37 @@ esp_err_t tivoo_s3_local_turn_init(bool test_gate, bool calibrated, unsigned tai
 }
 static void poll_prompt(void)
 {
+    if (prompt_fault_mask && tivoo_audio_output_available()) {
+        /* Release the failed prompt mask against the NEW clock, never the
+         * canceled prompt's last_due. No COMMAND_GATE on this path. */
+        int64_t boundary=(int64_t)tivoo_audio_output_recovery_boundary()+prompt_tail+prompt_offset;
+        tivoo_s3_afe_finish_prompt(boundary<0 ? 0 : (uint64_t)boundary,false);
+        prompt_fault_mask=false;
+    }
     if (!prompt_generation) return;
+    if (tivoo_audio_output_failed(prompt_generation)) {
+        if (turn->active && !turn->abort_reason) abort_turn("audio_dma_fault");
+        if (tivoo_audio_resource_prompt_discard(prompt_generation)) {
+            prompt_generation=0;
+            prompt_fault_mask=true;
+        }
+        return;
+    }
     const tivoo_prompt_status_t status=tivoo_prompt_poll(&prompt,&prompt_io,NULL,now_ms());
     if (status==TIVOO_PROMPT_UNSAFE) {
         if (turn->active && !turn->abort_reason) abort_turn("prompt_drain_timeout");
-        return; /* keep the owner/mask until hardware confirms safe drain */
+        /* Cancellation can precede the watchdog. Give a normal stop its
+         * existing drain window; only a watchdog fault restarts DMA. */
+        if (now_ms()-prompt.started_ms>=5000)
+            tivoo_audio_output_request_recovery();
+        return;
     }
     if (status!=TIVOO_PROMPT_SAFE ||
         !tivoo_audio_resource_prompt_end(prompt_generation)) return;
     prompt_generation=0;
     if (prompt.cancelled && turn->active && !turn->abort_reason) abort_turn("prompt_drain_timeout");
-    const bool open=turn->active && !turn->abort_reason && !prompt.cancelled;
+    const bool open=turn->active && !turn->abort_reason && !prompt.cancelled &&
+        tivoo_audio_output_available() && turn_fault_serial==tivoo_audio_output_fault_serial();
     const bool opened=tivoo_s3_afe_finish_prompt(prompt.gate_sample,open);
     if (opened) {
         gate_result=prompt.skipped ? "skipped" : "completed";
@@ -212,6 +233,7 @@ static void begin_turn(uint32_t current, const char *wake_phrase, bool followup,
     if (followup) memcpy(parent_uuid,uuid,sizeof(parent_uuid));
     is_followup=followup;
     epoch=current;
+    turn_fault_serial=tivoo_audio_output_fault_serial();
     phrase=wake_phrase;
     new_uuid(uuid);
     if (followup) tivoo_turn_begin_followup(turn,now);
@@ -219,6 +241,7 @@ static void begin_turn(uint32_t current, const char *wake_phrase, bool followup,
     pending_prompt=true;
     portENTER_CRITICAL(&lock);
     shared.epoch=epoch;
+    shared.fault_serial=turn_fault_serial;
     memcpy(shared.uuid,uuid,sizeof(uuid));
     portEXIT_CRITICAL(&lock);
 }
@@ -238,6 +261,8 @@ void tivoo_s3_local_turn_tick(void)
         poll_prompt();
         return;
     }
+    if (turn_fault_serial!=tivoo_audio_output_fault_serial())
+        abort_turn("audio_dma_fault");
     bool ready,stop,followup;
     uint64_t ready_ms;
     portENTER_CRITICAL(&lock);
@@ -255,6 +280,7 @@ void tivoo_s3_local_turn_tick(void)
         else start_prompt(now_ms());
     }
     poll_prompt();
+    if (turn_fault_serial!=tivoo_audio_output_fault_serial()) abort_turn("audio_dma_fault");
     tivoo_turn_tick(turn,now_ms(),send_event,NULL);
     if(turn->abort_reason) abort_turn(turn->abort_reason);
     if(!turn->active) invalidate();
@@ -265,7 +291,8 @@ void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
     if(!turn) return;
     const uint64_t now=now_ms();
     if(event->type==TIVOO_AFE_WAKE) {
-        if(prompt_generation) return;
+        if(prompt_fault_mask) poll_prompt();
+        if(prompt_generation || prompt_fault_mask || !tivoo_audio_output_available()) return;
         const uint32_t current=tivoo_diagnostics_local_wake_generation();
         const char *wake_phrase=tivoo_s3_afe_wake_word(event->word);
         if(!current || !wake_phrase) return;
@@ -311,10 +338,11 @@ void tivoo_s3_local_turn_stop(const char *id, const char *reason)
 bool tivoo_s3_local_turn_bind_playback(const char *id, const char *playback)
 {
     const uint32_t current=tivoo_diagnostics_local_wake_generation();
+    const uint32_t fault=tivoo_audio_output_fault_serial();
     bool ok=false;
     if(!id || !playback || strlen(playback)!=36) return false;
     portENTER_CRITICAL(&lock);
-    if(current && current==shared.epoch && shared.reply_allowed && !shared.stop && !shared.followup_requested &&
+    if(current && current==shared.epoch && fault==shared.fault_serial && shared.reply_allowed && !shared.stop && !shared.followup_requested &&
        strcmp(id,shared.uuid)==0 && (!shared.playback[0] || strcmp(playback,shared.playback)==0)) {
         memcpy(shared.playback,playback,37);
         ok=true;
@@ -328,8 +356,9 @@ bool tivoo_s3_local_turn_followup_message(const uint8_t *payload, size_t size)
     cJSON *root=cJSON_ParseWithLength((const char *)payload,size);
     const char *id=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root,"session_id"));
     const uint32_t current=tivoo_diagnostics_local_wake_generation();
+    const uint32_t fault=tivoo_audio_output_fault_serial();
     portENTER_CRITICAL(&lock);
-    if(tivoo_turn_followup_allowed(id && current && current==shared.epoch && strcmp(id,shared.uuid)==0,
+    if(tivoo_turn_followup_allowed(id && current && current==shared.epoch && fault==shared.fault_serial && strcmp(id,shared.uuid)==0,
         shared.reply_allowed && !shared.stop, !shared.playback[0] || shared.playback_completed,
         shared.followup_requested)) shared.followup_requested=true;
     portEXIT_CRITICAL(&lock);
