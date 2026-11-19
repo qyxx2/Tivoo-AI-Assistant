@@ -50,6 +50,13 @@ async def speech(entity, manager, session=SESSION_1):
 async def endpoint(manager, session=SESSION_1):
     await manager.async_push_pcm(session, b"x"*640)
     await manager.async_handle_activity(activity("speech_end", session, pcm_samples=320))
+    # A provider's STT_END is legal only after the consumer reaches EOF.
+    # Wait for the real iterator, not just the wire speech_end.
+    for _ in range(100):
+        if manager.local_input_drained(session):
+            return
+        await asyncio.sleep(0)
+    pytest.fail("local audio iterator did not drain")
 
 
 @pytest.mark.parametrize("text", ["command", " "])

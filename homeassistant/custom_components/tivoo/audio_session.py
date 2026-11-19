@@ -35,6 +35,7 @@ class _MicSession:
     speech_uptime: int | None = None
     ready: bool = False
     input_finished: bool = False
+    input_drained: bool = False
     aborted: bool = False
 
 
@@ -269,6 +270,12 @@ class AudioSessionManager:
         session = self._active_session
         return bool(session and session.session_id == session_id and session.local_mode and session.input_finished)
 
+    def local_input_drained(self, session_id: str) -> bool:
+        """True only after the matching local consumer exhausted the PCM stream."""
+        session = self._active_session
+        return bool(session and session.session_id == session_id and session.local_mode
+                    and session.input_drained and not session.aborted)
+
     async def async_handle_gate(self, payload: dict) -> None:
         session_id = _require_uuid(payload, "session_id")
         session = self._active_session
@@ -395,6 +402,7 @@ class AudioSessionManager:
         start: int | None = None,
         consumer: object | None = None,
         on_pull: Callable[[], Awaitable[None]] | None = None,
+        on_eof: Callable[[], None] | None = None,
     ) -> AsyncIterator[AsyncIterator[bytes]]:
         """Open an independently closable PCM cursor."""
         session = self._ingress(session_id)
@@ -406,7 +414,7 @@ class AudioSessionManager:
             raise ValueError("MIC ingress offset outside the retained window")
         cursor = object() if consumer is None else consumer
         session.cursors[cursor] = offset
-        stream = self._iterate_ingress(session, cursor, on_pull)
+        stream = self._iterate_ingress(session, cursor, on_pull, on_eof)
         try:
             yield stream
         finally:
@@ -424,6 +432,7 @@ class AudioSessionManager:
     async def _iterate_ingress(
         session: _MicSession, cursor: object,
         on_pull: Callable[[], Awaitable[None]] | None,
+        on_eof: Callable[[], None] | None,
     ) -> AsyncIterator[bytes]:
         if session.local_mode:
             if session.aborted or on_pull is None or session.ready:
@@ -441,6 +450,12 @@ class AudioSessionManager:
                     break
             else:
                 if session.input_finished or session.ended.is_set():
+                    if session.local_mode and session.input_finished and offset == session.tail:
+                        # Only the natural exhaustion path counts. Receiving
+                        # speech_end or closing a partially read cursor does not.
+                        session.input_drained = True
+                        if on_eof is not None:
+                            on_eof()
                     return
                 session.data_ready.clear()
                 await session.data_ready.wait()

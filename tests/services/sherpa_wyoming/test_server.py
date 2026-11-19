@@ -496,7 +496,25 @@ def test_device_endpoint_shares_models_and_rejects_other_providers():
         legacy, device = _free_port(), _free_port()
         assert legacy != device
         calls, handlers = [], []
-        bundle = ModelBundle(FakeKeywordSpotter(), FakeRecognizer(), FakeTts())
+        first_decode = threading.Event()
+        release_decode = threading.Event()
+        decoded = []
+
+        class DistinctRecognizer(FakeRecognizer):
+            def decode_stream(self, stream):
+                # Verify the PCM carried by this actual request, not a reply
+                # assigned by the client's socket/order.
+                samples = np.concatenate([audio for _, audio in stream.audio])
+                assert all(rate == 16000 for rate, _ in stream.audio)
+                assert len(samples) == 320
+                assert np.all(samples == samples[0])
+                decoded.append((stream, float(samples[0])))
+                if len(decoded) == 1:
+                    first_decode.set()
+                    assert release_decode.wait(2)
+                stream.result.text = "positive" if samples[0] > 0 else "negative"
+
+        bundle = ModelBundle(FakeKeywordSpotter(), DistinctRecognizer(), FakeTts())
 
         class RecordingServer(AsyncTcpServer):
             def record(self, factory):
@@ -541,15 +559,39 @@ def test_device_endpoint_shares_models_and_rejects_other_providers():
             for event in (Detect(names=["tivoo-wake"]), Synthesize(text="test"), SynthesizeStart()):
                 await _send(writer, event)
                 await _receive(reader, "error")
-            for reader, writer in readers_writers:
+            async def upload(writer, sample):
                 await _send(writer, Transcribe(language="zh-CN"))
                 await _send(writer, AudioStart(rate=16000, width=2, channels=1))
-                await _send(writer, AudioChunk(rate=16000, width=2, channels=1, audio=b"\\0" * 640))
-                await _send(writer, AudioStop())
-                await _receive(reader, "transcript")
+                await _send(writer, AudioChunk(rate=16000, width=2, channels=1,
+                                              audio=sample.to_bytes(2, "little", signed=True) * 320))
+
+            # Both connections own a Transcribe before either AudioStop, then
+            # compete for the same worker while the first decode is held.
+            await asyncio.gather(*(upload(writer, sample) for (_, writer), sample
+                                   in zip(readers_writers, (8192, -16384))))
+            await asyncio.gather(*(_send(writer, AudioStop()) for _, writer in readers_writers))
+            assert await asyncio.to_thread(first_decode.wait, 1)
+            # The second request is still active and awaiting the same STT
+            # executor; do not release the first until both sessions have input.
+            for _ in range(100):
+                if all(handler._stt_session is not None and handler._audio_bytes == 640
+                       for handler in handlers[-2:]):
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail("both clients did not upload concurrently")
+            assert len(decoded) == 1
+            release_decode.set()
+            results = await asyncio.gather(*(_receive(reader, "transcript") for reader, _ in readers_writers))
+            assert [result.data["text"] for result in results] == ["positive", "negative"]
+            assert len(decoded) == 2
+            assert decoded[0][0] is not decoded[1][0]
+            assert sorted(value for _, value in decoded) == [-0.5, 0.25]
+            for _, writer in readers_writers:
                 writer.close()
                 await writer.wait_closed()
         finally:
+            release_decode.set()
             if task.done():
                 task.result()
             else:
@@ -562,4 +604,48 @@ def test_device_endpoint_shares_models_and_rejects_other_providers():
             writer.close()
             await writer.wait_closed()
             raise AssertionError("listener not closed")
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failed_listener", ["legacy", "device"])
+def test_dual_endpoint_start_failure_closes_listeners_and_executors(monkeypatch, failed_listener):
+    from sherpa_wyoming import run
+
+    async def scenario():
+        legacy, device = _free_port(), _free_port()
+        assert legacy != device
+        stopped = []
+        shutdowns = []
+        real_shutdown = run.ModelExecutors.shutdown
+
+        def shutdown(self):
+            shutdowns.append(self)
+            real_shutdown(self)
+
+        monkeypatch.setattr(run.ModelExecutors, "shutdown", shutdown)
+
+        class RecordingServer(AsyncTcpServer):
+            async def stop(self):
+                stopped.append(self.port)
+                await super().stop()
+
+        config = ServiceConfig(wake_word_phrase="test", host="127.0.0.1",
+                               port=legacy, device_stt_port=device)
+        failed = legacy if failed_listener == "legacy" else device
+        other = device if failed_listener == "legacy" else legacy
+        # Bind a real conflicting port; no fake server failure path.
+        conflict = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", failed)
+        try:
+            with pytest.raises(OSError):
+                await run_server(config, keyword_generator=lambda *_: None,
+                                 model_loader=lambda _: ModelBundle(FakeKeywordSpotter(), FakeRecognizer(), FakeTts()),
+                                 server_factory=RecordingServer)
+            assert set(stopped) == {legacy, device}
+            assert len(shutdowns) == 1
+            with pytest.raises(OSError):
+                await _connect(other)
+        finally:
+            conflict.close()
+            await conflict.wait_closed()
+
     asyncio.run(scenario())

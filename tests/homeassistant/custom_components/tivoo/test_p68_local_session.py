@@ -47,7 +47,10 @@ async def test_local_ready_and_gate_then_ordered_tail_eof(gate_first, prompt_res
             await manager.async_push_pcm(SESSION_1, frame)
         await manager.async_handle_activity(activity("speech_end", pcm_samples=960))
         assert await first == frames[0]
+        assert manager.local_input_finished(SESSION_1)
+        assert not manager.local_input_drained(SESSION_1)
         assert [part async for part in audio] == frames[1:]
+        assert manager.local_input_drained(SESSION_1)
         assert manager.active_session_id == SESSION_1
         ended.assert_not_called()
         stop.assert_not_awaited()

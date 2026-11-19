@@ -228,3 +228,52 @@ def test_device_endpoint_health_requires_asr_only_and_device_vad():
     local.asr[0].requires_external_vad = True
     with pytest.raises(healthcheck.HealthcheckError):
         healthcheck.validate_info(local, device_endpoint=True)
+
+
+@pytest.mark.parametrize("missing", [None, "legacy", "device"])
+def test_combined_health_uses_both_real_tcp_endpoints(missing):
+    from sherpa_wyoming.config import ServiceConfig
+    from sherpa_wyoming.run import build_wyoming_info
+    from wyoming.event import async_read_event, async_write_event
+    import socket
+
+    ports = []
+    for _ in range(2):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            ports.append(sock.getsockname()[1])
+    assert ports[0] != ports[1]
+    checked = []
+
+    async def scenario():
+        async def handler(reader, writer, name):
+            try:
+                event = await async_read_event(reader)
+                assert event.type == "describe"
+                checked.append(name)
+                info = build_wyoming_info(ServiceConfig(wake_word_phrase="test"),
+                                          device_endpoint=name == "device")
+                await async_write_event(info.event(), writer)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        servers = []
+        for name, port in zip(("legacy", "device"), ports):
+            if name != missing:
+                servers.append(await asyncio.start_server(
+                    lambda r, w, name=name: handler(r, w, name), "127.0.0.1", port))
+        try:
+            # main owns its own event loop, so run it off this server loop.
+            result = await asyncio.to_thread(healthcheck.main,
+                ["--host", "127.0.0.1", "--port", str(ports[0]),
+                 "--device-stt-port", str(ports[1]), "--timeout", "1"])
+            assert result == (0 if missing is None else 1)
+            if missing is None:
+                assert sorted(checked) == ["device", "legacy"]
+        finally:
+            for server in servers:
+                server.close()
+                await server.wait_closed()
+
+    asyncio.run(scenario())

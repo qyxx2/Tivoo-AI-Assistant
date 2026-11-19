@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from homeassistant.components import stt, wake_word
 from homeassistant.components.assist_pipeline import async_get_pipeline, async_get_pipelines
 from homeassistant.components.assist_pipeline.const import OPTION_PREFERRED
+from homeassistant.components.assist_pipeline.error import SpeechToTextError
 from homeassistant.components.assist_pipeline.models import (
     PipelineEvent,
     PipelineEventType,
@@ -37,6 +38,10 @@ from .transport import Esp32ConnectionAdapter
 
 _LOGGER = logging.getLogger(__name__)
 _WAKE_WORD_ID = "tivoo-wake"
+# P7A measured NAS RTF <= 0.099. The shared single worker can be
+# decoding one legacy request (service cap 300 s) ahead of a 15 s
+# command: ~31.2 s extrapolated, plus headroom for load and transport.
+_LOCAL_STT_FINALIZE_SECONDS = 45
 # Listen by event name without making Tivoo depend on the AstrBot installation.
 _ASTRBOT_PHASE_EVENT = "astrbot_phase"
 
@@ -232,7 +237,7 @@ class AudioSessionCoordinator:
                     state=DisplayState.ACTIVE_LISTENING, preset="standby",
                 )
             else:
-                self._cancel_timer("local_speech_timeout")
+                # Keep the upload deadline until the consumer actually drains.
                 self.display.update_voice(
                     turn.context.id, clear=(DisplayState.ACTIVE_LISTENING,)
                 )
@@ -362,9 +367,15 @@ class AudioSessionCoordinator:
                     TYPE_STT_READY, json.dumps({"session_id": turn.session_id}).encode()
                 )
 
+            def input_drained() -> None:
+                if self._turn is turn:
+                    self._cancel_timer("local_speech_timeout")
+                    self._arm(_LOCAL_STT_FINALIZE_SECONDS, "stt_finalize_timeout")
+
             async with self.ingress.audio_subscription(
                 turn.session_id, start=start, consumer=turn,
                 on_pull=ready if turn.local_mode else None,
+                on_eof=input_drained if turn.local_mode else None,
             ) as audio:
                 if cleanup is not None:
                     await asyncio.shield(cleanup)
@@ -587,7 +598,11 @@ class AudioSessionCoordinator:
     def on_pipeline_event(self, event: PipelineEvent) -> None:
         """Track command-start timers and route TTS through the run owner."""
         turn = self._event_turn
-        if turn is None or turn is not self._turn:
+        if turn is None:
+            return
+        if turn is not self._turn:
+            if turn.local_mode and event.type is PipelineEventType.STT_END:
+                raise SpeechToTextError("stt-stream-failed", "Tivoo local turn superseded")
             return
         turn.tts(event)
         match event.type:
@@ -631,8 +646,9 @@ class AudioSessionCoordinator:
             case PipelineEventType.STT_VAD_START:
                 if turn.local_mode:
                     turn.error = True
-                    self._arm(0, "unexpected_ha_vad")
-                    return
+                    # HA invokes this public callback synchronously while
+                    # consuming audio. Raising aborts STT before normal EOF.
+                    raise SpeechToTextError("stt-stream-failed", "Unexpected HA VAD in Tivoo local STT")
                 turn.command_started = True
                 self._cancel_timer("command_timeout")
                 self._cancel_prompt()
@@ -662,10 +678,13 @@ class AudioSessionCoordinator:
                     turn.tts_attempted = True
             case PipelineEventType.STT_VAD_END | PipelineEventType.STT_END:
                 if turn.local_mode:
-                    if event.type is PipelineEventType.STT_VAD_END or not self.ingress.local_input_finished(turn.session_id):
+                    if event.type is PipelineEventType.STT_VAD_END or not self.ingress.local_input_drained(turn.session_id):
                         turn.error = True
-                        self._arm(0, "unexpected_stt_endpoint")
-                        return
+                        # Core calls STT_END synchronously before recognizing
+                        # Intent. A PipelineError enters its existing error
+                        # cleanup; scheduling a stop task here is too late.
+                        raise SpeechToTextError("stt-stream-failed", "Tivoo STT ended before normal input EOF")
+                    self._cancel_timer("stt_finalize_timeout")
                 else:
                     self.ingress.release_subscription(turn.session_id, turn)
                 if event.type is PipelineEventType.STT_END:
@@ -701,6 +720,7 @@ class AudioSessionCoordinator:
                         )
             case PipelineEventType.ERROR:
                 turn.error = True
+                self._cancel_timer("stt_finalize_timeout")
                 data = event.data or {}
                 _LOGGER.warning(
                     "Tivoo Assist Pipeline error code=%s message=%s",

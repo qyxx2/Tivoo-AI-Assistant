@@ -121,11 +121,13 @@ R05 软件专项验收完成（F07/F13）：[R05 报告](../reports/2026-11-19-p
 **Files:** `homeassistant/custom_components/tivoo/{audio_session,assist_satellite}.py`；`tests/homeassistant/custom_components/tivoo/{test_p68_real_pipeline,test_p68_local_session,test_assist_satellite,test_audio_session}.py`；`services/sherpa_wyoming/{run,healthcheck}.py`（仅暴露失败才最小改）、`tests/services/sherpa_wyoming/{test_server,test_healthcheck}.py`。
 **Interfaces:** AudioSessionManager.local_input_finished(session_id)、实际 audio iterator 正常 EOF/drain、AssistSatellite on_pipeline_event(STT_END/ERROR)、原 public run/cleanup；10400 原 Provider、10401 ASR-only 共享 provider/executor。
 
-- [ ] R06.1 RED 真实 HA fixture：fake Wyoming 第一 audio-chunk 后直接 Transcript，无 speech_end；合法 speech_end 已入队但迭代器未 drain；unexpected VAD/取消/断连。断言不出现 INTENT_START、不执行本地命令/不增加 fake AstrBot 请求；正常 endpoint 全 PCM、一次 AudioStop 与合法 Intent 仍成立。用真实 public API，不造成真实设备动作。
-- [ ] R06.2 核对当前安装 HA 2026.11.0 wyoming/stt.py、assist_pipeline/default_pipeline.py STT_END 回调和 public cancellation 边界；确认何处可同步阻断后续 Intent。仅收到 end 不是 drain，增加可校验正常 EOF 判据，禁止仅缩短 _arm(0) 或异步竞速。不 patch Core；若 public API 无合法实现路径，记录证据停本子任务、提交合同裁决，不臆造接口。GREEN R06.1。
-- [ ] R06.3 RED：正常 EOF/AudioStop 后 peer 不回 Transcript，轮次自动释放；新轮不受旧 timer，正常慢结果不被误杀。根据现有合同/实际服务数据确认独立 STT finalize timeout、起点（正常 EOF 后等待结果）、取消条件（STT_END/ERROR/stop/换代/断线）；按 UUID/epoch 进入现 cleanup。不得用采集15s/播放固定短限替代。GREEN；记录阈值依据。
-- [ ] R06.4 Sherpa test_server 双客户端并发 Transcribe、各自输入/输出匹配且各 decode 一次、任一 listener 启动失败时另一端清理、组合 health 一端失败即不通过。先核对实际 run finally/healthcheck，测试若已通过仅补证；不重复加载模型或改 10400 原用途。
-- [ ] R06.5 运行上述 HA 四文件、Sherpa test_server/test_healthcheck 及服务全套；保存真实 Core 事件/帧日志供 R09 复用。无生产服务/设备部署，报告、审查、提交。
+- [x] R06.1 RED 真实 HA fixture：fake Wyoming 第一 audio-chunk 后直接 Transcript，无 speech_end；合法 speech_end 已入队但迭代器未 drain；unexpected VAD/取消/断连。断言不出现 INTENT_START、不执行本地命令/不增加 fake AstrBot 请求；正常 endpoint 全 PCM、一次 AudioStop 与合法 Intent 仍成立。用真实 public API，不造成真实设备动作。
+- [x] R06.2 核对当前安装 HA 2026.11.0 wyoming/stt.py、assist_pipeline/default_pipeline.py STT_END 回调和 public cancellation 边界；确认何处可同步阻断后续 Intent。仅收到 end 不是 drain，增加可校验正常 EOF 判据，禁止仅缩短 _arm(0) 或异步竞速。不 patch Core；若 public API 无合法实现路径，记录证据停本子任务、提交合同裁决，不臆造接口。GREEN R06.1。
+- [x] R06.3 RED：正常 EOF/AudioStop 后 peer 不回 Transcript，轮次自动释放；新轮不受旧 timer，正常慢结果不被误杀。根据现有合同/实际服务数据确认独立 STT finalize timeout、起点（正常 EOF 后等待结果）、取消条件（STT_END/ERROR/stop/换代/断线）；按 UUID/epoch 进入现 cleanup。不得用采集15s/播放固定短限替代。GREEN；记录阈值依据。
+- [x] R06.4 Sherpa test_server 双客户端并发 Transcribe、各自输入/输出匹配且各 decode 一次、任一 listener 启动失败时另一端清理、组合 health 一端失败即不通过。先核对实际 run finally/healthcheck，测试若已通过仅补证；不重复加载模型或改 10400 原用途。
+- [x] R06.5 运行上述 HA 四文件、Sherpa test_server/test_healthcheck 及服务全套；保存真实 Core 事件/帧日志供 R09 复用。无生产服务/设备部署，报告、审查、提交。
+
+R06 软件专项验收完成（F09/F10/F15）：[R06 报告](../reports/2026-11-19-p6-8-r06-repair-acceptance.md)，指定 HA 82 passed、额外 HA 全量 561 passed、Sherpa 专项 20 passed/全量 140 passed；真实 public Core/帧证据已归档供 R09，45s finalize 阈值依据与主动问答边界已记录；生产及硬件门禁不解除。
 
 ## R07 — 轮次身份、拒绝发送、超时与诊断
 
@@ -216,4 +218,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R05 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动）；R06–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R06 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动）；R07–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
