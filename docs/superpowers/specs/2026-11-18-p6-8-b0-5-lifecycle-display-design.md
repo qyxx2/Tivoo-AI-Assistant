@@ -51,16 +51,18 @@
 | DisplayState（原优先级不变） | 新本地模式置位与退出；原 preset |
 |---|---|
 | wake_confirmed | 合法 local_wake START 100%，question；有效 gate/prompt 期间保持，到真实 command speech_start 时清除并进入 listening；取消/失败/换代清除。 |
-| speaking | 当前普通 TTS AUDIO_STATE=playing，music；终态退出。buffering、TTS_START/END、prompt 不置位。 |
+| speaking | 当前普通 TTS AUDIO_STATE=playing，默认 music；当前有效 reply 调用 SetMood 则用最新白名单 mood 替代 music，仍是 speaking 状态；终态退出。buffering、TTS_START/END、prompt 不置位。 |
 | tooluse | 当前 satellite_id + Context.id 的 astrbot_phase tool_call/tool_call_result，原 tooluse；退出/旧轮/错误清除。 |
 | thinking | 仅有效命令的非空 STT_END，thinking；清 wake/listening/followup；后由更高优先级 speaking/tooluse 覆盖，完成清除。 |
 | active_listening | gate 后真实 command speech_start，standby；清 wake 或 followup；speech_end 清 listening，STT_END 才进入 thinking，不从待机 VAD、STT_START 或 prompt 触发。 |
 | explicit_content | 用户/自动化明确要求的既有内容；被高优先会话覆盖后仍有效则恢复。 |
-| ai_mood | 现白名单/5s TTL/active voice generation，保留 SetMood；不能由回答文本自动分类。 |
+| ai_mood | legacy 共存模式保留白名单/5s TTL 独立 intent。本地模式 SetMood 只设置当前 generation 的 speaking 内容，不独立参与优先级。不能由回答文本自动分类。 |
 | followup_wait | 仅已授权且新 local_followup 的 COMMAND_GATE 安全开放后，standby；beep 内不置 followup_wait、不计4s；speech_start/超时/换代退出，不发 wake_confirmed。 |
 | idle | standby/smiley/sleepy/sun/fish 原 30–90s 随机轮换，无候选显示概率/700ms/10s cooldown（legacy 共存可保留旧路径至 b9）。 |
 
 所有显示更新只经 ExpressionCoordinator，begin_generation 原子清旧 session intents（含 mood/TTL），async_end_generation/异步回调按捕获 generation 检查。wake→listening、listening→thinking、followup→listening 通过同协调器一次状态转移/recompute，防止旧 wake_confirmed 优先级遮盖 listening。speech_end 到 STT_END 的短阶段不伪造 thinking；按现剩余 intent/idle 仲裁。旧候选/旧终态不能起屏，提示音不生成 speaking。HA 公开 Satellite state 仍由 Core 管理，不拿其 LISTENING 当真实听音要求。SPP 发送慢不阻塞诊断 reader/音频；显示任务复核 generation/gate，由现 lock 串行重算最新赢家，不回放每个过期画面。
+
+**R10 产品裁决（2026-11-19，用户明确选择 TTS 输出区间替换默认图像）：** 本地模式有效非空 STT 后可接受 SetMood，最新一次覆盖旧值；从真实 matching playing 到终态使用该表情，不设 5s 截断，不新增 response-tail/timer/owner。播放前仅缓存，晚于 playing 的合法调用更新当前 speaking 内容；无 TTS、失败/取消、新 wake 或 followup、断线/unload 均清除；播放终态后拒绝提交，不补播。无 mood 时仍是 music，ESM-C09 优先级、硬 OFF、显式恢复、音频事件与 legacy 5s TTL 不变。
 
 MCP/service schema 原样（name 等）；已有可信 HA voice context 的 mood 调用须通过捕获的 context→generation 校验，旧 context 拒绝。独立 MCP/手动调用无 voice context 时仅按当下有效 voice reply generation 提交（无 active reply 拒绝），明确不能识别所有上游无关联 ID 的延迟 MCP 请求；b8 验证边界，不编造 AstrBot→MCP 上游字段，不增加强制公共参数。旧 voice task 本地排队的 mood/phase 仍须捕获原 generation，不重绑定新轮。显式用户内容/实际工具副作用不是旧展示事件，不能假装已回滚。
 
@@ -93,7 +95,7 @@ HA/设备双方失联清理不依赖对端再发 terminal；新握手前设备�
 | LIFE-C08 | 失联/unload/S3 reset 定向关旧语音，身份不跨连接；经典 ESP32/SPP/7777 状态不重置语音 | b7 双端 disconnect/timeout/reload/旧消息，b2桥独立，b8重连表情，b10独立重启 | P65-A06/A16、VOICE-C01/C07/C10、P68-HB15 |
 | VIEW-C01 | 复用原优先级、idle/显式内容；wake、listening、thinking 按真实事件；移除本地模式候选随机显示 | b8 fake clock/事件序列、idle 30–90s、wake 100%、gate/speech/STT成功/空/错误/结束、覆盖恢复；b10 | ESM-C01–C05/C09/C14/C21/C23 |
 | VIEW-C02 | tooluse/speaking/followup 只接收当前 generation 的真实事件，prompt 不作 ordinary TTS；旧事件/TTL/stop 不恢复旧 | b8 context/satellite/playback/UUID、乱序/重复/迟到、取消/新轮/续聊，b10 | ESM-C06–C10/C23、PR-C12–C14/C20 |
-| VIEW-C03 | mood 白名单/TTL/上下文、显式内容、同一 gate/owner 与已有 schema；无 context 调用边界明示 | b8 原工具服务 schema 回归、已知旧 context/mood TTL、显式恢复、外部无 context 负样本；b10 | ESM-C11–C18/C22（未来功能仍后置）、P4-C01/C04/C05/C07–C14 |
+| VIEW-C03 | mood 白名单/本地 speaking 内容生命周期（legacy TTL）/上下文、显式内容、同一 gate/owner 与已有 schema；无 context 调用边界明示 | b8 原工具服务 schema 回归、已知旧 context/mood TTL、显式恢复、外部无 context 负样本；b10 | ESM-C11–C18/C22（未来功能仍后置）、P4-C01/C04/C05/C07–C14 |
 | VIEW-C04 | OFF 硬门控，SPP 重连 OFF/当前赢家，真实 status 和 stale 7777 处理，显示拥塞不阻断语音，last_sent 非像素证明 | b2/b8 OFF wake/打断/多 owner/temporary TTL、双 socket 顺序、bridge reset/HA reload初始同步；b10实机 | ESM-C15–C20/C23、P68-HB15 |
 
 本表覆盖 b0.5 分域，不代替 b0.6 对全部历史 ID 的闭环审计；主动播报/对话 P9 保持后置。b7/b8 均需针对自动化用例先红后绿，真实 HA/模拟服务测试与 b10 声学/两板/生产复验分开。历史 GAP/FAIL 原样保留。本批按路线 §2.2 对上述正常/异常时序与现有实现逐项自审（当前无独立 reviewer 工具）；b0.6 全量交叉评审仍未执行。当前只写设计、交叉引用及矩阵；无新包安装、生产代码/配置/部署/刷机/工具执行或实体状态修改。

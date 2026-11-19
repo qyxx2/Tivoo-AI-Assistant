@@ -25,7 +25,7 @@ from wyoming.tts import SynthesizeStopped
 from wyoming.asr import Transcript
 
 @pytest.mark.enable_socket
-@pytest.mark.parametrize("fault", [None, "early", "queued_end", "vad_start", "vad_end", "disconnect", "cancel", "silent", "slow", "superseded", "provider_error", "full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"])
+@pytest.mark.parametrize("fault", [None, "early", "queued_end", "vad_start", "vad_end", "disconnect", "cancel", "silent", "slow", "superseded", "provider_error", "full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed", "display_wire_on", "display_wire_off"])
 async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeypatch, aiohttp_client, fault, advance_clock):
     attribution = Attribution(name="test", url="https://example.invalid")
     info = Info(asr=[AsrProgram(
@@ -39,7 +39,8 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
     wire = []
     transcript = "what time is it"
     chats = []
-    full = fault in {"full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
+    display_wire = fault in {"display_wire_on", "display_wire_off"}
+    full = display_wire or fault in {"full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
     held_tts = fault in {"cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
     hold_chat = fault == "stop_unconfirmed"
     chat_waiting, chat_release = asyncio.Event(), asyncio.Event()
@@ -121,6 +122,10 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
     entity = display = manager = None
     tts_server = tts_entry = diagnostic_server = None
     diagnostic_peers = []
+    control_server = None
+    control_peers = []
+    release_display = asyncio.Event()
+    services_registered = False
     if full:
         tts_info = Info(tts=[TtsProgram(
             name="R09 loopback TTS", attribution=attribution, installed=True,
@@ -212,7 +217,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                     if fault == "send_failure" and frames[-1][0] == codec.TYPE_TTS_PLAY:
                         raise OSError("simulated diagnostic send failure")
 
-            if fault == "lost_terminal":
+            if fault == "lost_terminal" or display_wire:
                 # Use the actual TCP connection loop for the R08 epoch-loss
                 # scenario. No control channel or hardware is needed here.
                 from custom_components.tivoo import transport
@@ -235,7 +240,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                         status = await _read_tvio_message(reader)
                         assert ack == (codec.TYPE_HELLO_ACK, 0, {"accepted": True, "capabilities": [LOCAL_WAKE_CAPABILITY]})
                         assert status[0:2] == (codec.TYPE_GET_STATUS, 1)
-                        negotiated.put_nowait((epoch, writer))
+                        negotiated.put_nowait((epoch, writer, status[2]["request_id"]))
                         while True:
                             kind, seq, payload = await _read_tvio_message(reader)
                             diagnostic_messages.append((epoch, kind, seq, payload))
@@ -255,15 +260,89 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                 adapter.register_audio_session_manager(manager)
                 adapter._tasks["diagnostic"] = asyncio.create_task(adapter._connection_loop(
                     "diagnostic", diagnostic_server.sockets[0].getsockname()[1]))
-                epoch, diagnostic_writer = await asyncio.wait_for(negotiated.get(), 3)
+                epoch, diagnostic_writer, status_request_id = await asyncio.wait_for(negotiated.get(), 3)
                 assert epoch == 0
+                if display_wire:
+                    from custom_components.tivoo.protocol import encode_command
+                    from custom_components.tivoo.display_state import build_expression_command, DisplayState
+                    from custom_components.tivoo.commands import TivooCommand
+                    control_connected = asyncio.Event()
+                    control_received = asyncio.Queue()
+                    async def control_peer(reader, writer):
+                        control_peers.append(writer)
+                        try:
+                            assert await reader.readexactly(7) == bytes.fromhex("69 11 75 58 97 49 98")
+                            control_connected.set()
+                            while data := await reader.read(65536):
+                                control_received.put_nowait(data)
+                        finally:
+                            writer.close()
+                            await writer.wait_closed()
+                    control_server = await asyncio.start_server(control_peer, "127.0.0.1", 0)
+                    adapter._tasks["control"] = asyncio.create_task(adapter._connection_loop(
+                        "control", control_server.sockets[0].getsockname()[1]))
+                    await asyncio.wait_for(control_connected.wait(), 3)
+                    async with asyncio.timeout(3):
+                        while adapter.states["control"] != "connected":
+                            await asyncio.sleep(0)
+                    actual_writer = adapter._writers["control"]
+                    actual_drain = actual_writer.drain
+                    started_display = asyncio.Event()
+                    block_display = False
+
+                    async def slow_drain():
+                        await actual_drain()
+                        if block_display:
+                            started_display.set()
+                            await release_display.wait()
+
+                    monkeypatch.setattr(actual_writer, "drain", slow_drain)
+
+                    control_buffer = bytearray()
+
+                    async def assert_control(command):
+                        expected = b"".join(encode_command(command))
+                        async with asyncio.timeout(3):
+                            while len(control_buffer) < len(expected):
+                                control_buffer.extend(await control_received.get())
+                        assert control_buffer[:len(expected)] == expected
+                        del control_buffer[:len(expected)]
+
+                    async def assert_no_control():
+                        assert not control_buffer
+                        with pytest.raises(TimeoutError):
+                            await asyncio.wait_for(control_received.get(), .05)
+
+                    async def send_wire(kind, data):
+                        nonlocal diagnostic_rx_sequence
+                        payload = data if isinstance(data, bytes) else json.dumps(data).encode()
+                        diagnostic_writer.write(codec.encode_message(kind, payload, diagnostic_rx_sequence))
+                        diagnostic_rx_sequence += 1
+                        await diagnostic_writer.drain()
+
+                    async def status(state, mac, uptime):
+                        await send_wire(codec.TYPE_DEVICE_STATUS, {
+                            "request_id": status_request_id, "device_id": "tivoo-esp32",
+                            "firmware_version": "test", "uptime_ms": uptime,
+                            "wifi": {"state": "connected"},
+                            "tcp": {"7777": "connected", "7778": "connected"},
+                            "spp": {"state": state, "mac": mac},
+                            "audio_resource": {"state": "idle"},
+                        })
+                        async with asyncio.timeout(3):
+                            while adapter.device_status is None or adapter.device_status["uptime_ms"] != uptime:
+                                await asyncio.sleep(0)
+                        await asyncio.gather(*adapter._spp_state_tasks)
             else:
                 adapter = Esp32ConnectionAdapter(None)
                 adapter._diagnostic_handshaken = True
                 adapter._diagnostic_capabilities = {LOCAL_WAKE_CAPABILITY, "audio_control", "audio_resource_http"}
                 adapter._writers["diagnostic"] = DeviceWriter()
                 adapter.register_audio_session_manager(manager)
-        display = ExpressionCoordinator(RecordingAdapter())
+        output = RecordingAdapter()
+        display = ExpressionCoordinator(adapter if display_wire else output, spp_connected=not display_wire)
+        if display_wire:
+            adapter.register_spp_state_handler(display.async_on_spp_state)
         await display.async_start()
         entity = TivooAssistSatellite("test-entry", manager, adapter, display)
         entity.hass = hass
@@ -328,8 +407,24 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             original_handle = agent._async_handle_message
             intent_contexts = []
 
+            from custom_components.tivoo.services import register_services, unregister_services
+            from custom_components.tivoo.llm import _tools
+            from homeassistant.helpers.llm import ToolInput
+            from homeassistant.exceptions import HomeAssistantError
+            from custom_components.tivoo.display_state import DisplayState, build_expression_command
+            if fault in {"full", "no_tts"} or display_wire:
+                register_services(hass, {"display_coordinator": display, "command_adapter": display._adapter})
+                services_registered = True
+            mood_tool = next(tool for tool in _tools() if tool.name == "tivoo__SetMood")
+            async def mood(context, name="happy"):
+                result = await mood_tool.async_call(hass, ToolInput(tool_name=mood_tool.name,
+                    tool_args={"name": name}), SimpleNamespace(context=context))
+                assert result.data == {"status": "service_completed"}
+
             async def observed_intent(user_input, chat_log):
                 intent_contexts.append((user_input.satellite_id, user_input.context.id))
+                if (fault == "full" or display_wire) and len(intent_contexts) == 1:
+                    await mood(user_input.context)
                 return await original_handle(user_input, chat_log)
 
             monkeypatch.setattr(agent, "_async_handle_message", observed_intent)
@@ -340,6 +435,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                 from homeassistant.helpers import intent
                 async def silent_result(user_input, chat_log):
                     intent_contexts.append((user_input.satellite_id, user_input.context.id))
+                    await mood(user_input.context)
                     response = intent.IntentResponse(language=user_input.language)
                     return conversation.ConversationResult(response=response,
                         conversation_id=chat_log.conversation_id)
@@ -347,14 +443,28 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             transcript = "tell me a story about Mars"
             peer_fault = None
             sid = str(uuid4())
-            await manager.async_start_session(local_start(sid, 101), persistent=True, local_mode=True)
-            await manager.async_handle_gate(gate(sid))
+            if display_wire:
+                await status("connected", "11:75:58:97:49:98", 10)
+                await assert_control(display.desired_command)
+                block_display = True
+                await send_wire(codec.TYPE_MIC_SESSION_START, local_start(sid, 101))
+                await asyncio.wait_for(started_display.wait(), 3)
+                await assert_control(build_expression_command("question"))
+                await send_wire(codec.TYPE_COMMAND_GATE, gate(sid))
+            else:
+                await manager.async_start_session(local_start(sid, 101), persistent=True, local_mode=True)
+                await manager.async_handle_gate(gate(sid))
             await asyncio.wait_for(ready.wait(), 3)
             turn = entity.coordinator._turn
             assert isinstance(turn.context, Context)
-            await manager.async_handle_activity(activity("speech_start", sid))
-            await manager.async_push_pcm(sid, b"x"*640)
-            await manager.async_handle_activity(activity("speech_end", sid, pcm_samples=320))
+            if display_wire:
+                await send_wire(codec.TYPE_MIC_ACTIVITY, activity("speech_start", sid))
+                await send_wire(codec.TYPE_MIC_PCM, b"x"*640)
+                await send_wire(codec.TYPE_MIC_ACTIVITY, activity("speech_end", sid, pcm_samples=320))
+            else:
+                await manager.async_handle_activity(activity("speech_start", sid))
+                await manager.async_push_pcm(sid, b"x"*640)
+                await manager.async_handle_activity(activity("speech_end", sid, pcm_samples=320))
             await asyncio.wait_for(got_stop.wait(), 3)
             def grants():
                 return [p for kind, p in frames if kind == codec.TYPE_FOLLOWUP_OPEN]
@@ -362,7 +472,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                 nonlocal diagnostic_rx_sequence
                 data = json.dumps(dict(session_id=session_id, audio_id=playback_id, state=state, source=source)).encode()
                 handler = adapter._message_handlers[codec.TYPE_AUDIO_STATE]
-                if fault == "lost_terminal":
+                if fault == "lost_terminal" or display_wire:
                     handled = asyncio.Event()
                     async def observed(message):
                         await handler(message)
@@ -390,6 +500,8 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                 assert turn.context.id != sid and manager.active_session_id is None
                 assert intent_contexts == [(entity.entity_id, turn.context.id)]
                 stop.assert_awaited_once_with(sid, "conversation_complete")
+                assert all(cmd.data["name"] != "happy" for cmd in output.displays)
+                assert display.active_generation is None
                 return
 
             await asyncio.wait_for(sent.wait(), 5)
@@ -529,14 +641,64 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             await terminal(sid, str(uuid4()))
             await terminal(sid, play["playback_id"], source="prompt")
             assert not grants() and not turn.playback_completed
+            if display_wire:
+                await terminal(sid, play["playback_id"], "playing")
+                assert not release_display.is_set() and turn.valid_stt
+                assert display._intents[DisplayState.SPEAKING].generation == turn.context.id
+                assert not turn.playback_completed and not grants()
+                # Releasing the in-flight wake must skip all queued listening,
+                # thinking and tool images and send only the current TTS mood.
+                block_display = False
+                release_display.set()
+                async with display._lock:
+                    pass
+                await assert_control(build_expression_command("happy"))
+                await assert_no_control()
+                assert display.desired_state is DisplayState.SPEAKING
+                await terminal(str(uuid4()), play["playback_id"])
+                await terminal(sid, str(uuid4()))
+                await terminal(sid, play["playback_id"], source="prompt")
+                assert display.desired_command.data["name"] == "happy"
+                assert not turn.playback_completed
+                await display.async_set_explicit(build_expression_command("fish"))
+                await terminal(sid, play["playback_id"])
+                await idle()
+                async with display._lock:
+                    pass
+                assert display.desired_command.data["name"] == "fish"
+                await assert_control(build_expression_command("fish"))
+                await assert_no_control()
+                if fault == "display_wire_off":
+                    await display.async_acquire_screen_off("night")
+                    await assert_control(TivooCommand("set_screen_power", {"value": False}))
+                diagnostic_writer.close()
+                await diagnostic_writer.wait_closed()
+                epoch, diagnostic_writer, status_request_id = await asyncio.wait_for(negotiated.get(), 3)
+                assert epoch == 1 and adapter._writers["control"] is actual_writer
+                diagnostic_rx_sequence = 1
+                await status("connecting", "11:75:58:97:49:98", 20)
+                await display.async_set_explicit(build_expression_command("sad"))
+                await status("connected", "00:11:22:33:44:55", 21)
+                await display.async_set_explicit(build_expression_command("music"))
+                await assert_no_control()
+                await send_wire(codec.TYPE_DEVICE_EVENT, {"event": "spp_connected", "uptime_ms": 22,
+                    "data": {"mac": "11:75:58:97:49:98"}})
+                await assert_control(TivooCommand("set_screen_power", {"value": False})
+                    if fault == "display_wire_off" else build_expression_command("music"))
+                await assert_no_control()
+                return
             await terminal(sid, play["playback_id"], "playing")
+            if fault == "full":
+                await idle()
+                assert display.desired_state is DisplayState.SPEAKING
+                assert output.displays[-1].data["name"] == "happy"
             if fault == "lost_terminal":
                 # R08 retires the diagnostic epoch, without inventing a
                 # completed terminal. Wait for the actual new HELLO/ACK.
                 old_writer = diagnostic_writer
                 old_writer.close()
                 await old_writer.wait_closed()
-                epoch, diagnostic_writer = await asyncio.wait_for(negotiated.get(), 3)
+                epoch, diagnostic_writer, status_request_id = await asyncio.wait_for(negotiated.get(), 3)
                 await idle()
                 assert epoch == 1 and diagnostic_writer is not old_writer
                 diagnostic_rx_sequence = 1
@@ -554,6 +716,8 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             await terminal(sid, play["playback_id"])
             await idle()
             assert grants() == [{"session_id": sid}]
+            if fault == "full":
+                assert display.desired_command.data["name"] != "happy"
             await terminal(sid, play["playback_id"])
             await idle()
             assert len(grants()) == 1
@@ -580,6 +744,12 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             assert second["session_id"] == SESSION_2 and second["playback_id"] != play["playback_id"]
             second_get = await web_client.get(urlsplit(second["url"]).path)
             assert second_get.status == 200 and len(await second_get.read()) > 44
+            if fault == "full":
+                with pytest.raises(HomeAssistantError):
+                    await mood(turn.context)
+                await terminal(SESSION_2, second["playback_id"], "playing")
+                await idle()
+                assert output.displays[-1].data["name"] == "music"
             await terminal(SESSION_2, second["playback_id"])
             await idle()
             assert manager.active_session_id is None and len(grants()) == 1
@@ -800,6 +970,9 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         assert chats[0]["session_id"] == chats[1]["session_id"]
         assert chats[1]["session_id"] != chats[2]["session_id"]
     finally:
+        release_display.set()
+        if services_registered:
+            unregister_services(hass)
         chat_release.set()
         stop_release.set()
         tts_release.set()
@@ -816,6 +989,12 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                 await writer.wait_closed()
             diagnostic_server.close()
             await diagnostic_server.wait_closed()
+        if control_server is not None:
+            for writer in control_peers:
+                writer.close()
+                await writer.wait_closed()
+            control_server.close()
+            await control_server.wait_closed()
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.config_entries.async_unload(astrbot.entry_id)
         if tts_entry is not None:

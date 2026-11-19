@@ -390,3 +390,99 @@ async def test_ha_reload_initial_sync_uses_new_runtime_default_gate(
         assert output.commands[-1].name == "set_expression"
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("when", ["before", "during", "none"])
+async def test_local_mood_is_speaking_content_not_independent_intent(
+    hass, satellite, monkeypatch, advance_clock, when
+):
+    entity, manager, entered = await start_local(hass, satellite, monkeypatch)
+    display = entity.display
+    output = display._adapter
+    await display.async_set_explicit(build_expression_command("fish"))
+    await speech(entity, manager)
+    await endpoint(manager)
+    entity.on_pipeline_event(PipelineEvent(Event.STT_END, {"stt_output":{"text":"command"}}))
+    turn = entity.coordinator._turn
+    if when == "before":
+        await display.async_set_mood("happy", context_id=turn.context.id)
+        await advance_clock(6)
+    entity.on_pipeline_event(PipelineEvent(Event.INTENT_END, {"intent_output":{"response":{"response_type":"action_done"}}}))
+    turn.tts._manager.playback_id = "reply"
+    entity.coordinator.on_playback("reply", "buffering")
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.THINKING
+    assert display.desired_command.data["name"] == "thinking"
+    assert not any(cmd.data["name"] == "happy" for cmd in output.displays)
+    entity.coordinator.on_playback("reply", "playing")
+    await hass.async_block_till_done()
+    if when == "during":
+        assert display.desired_command.data["name"] == "music"
+        await display.async_set_mood("happy", context_id=turn.context.id)
+        await hass.async_block_till_done()
+    wanted = "music" if when == "none" else "happy"
+    assert display.desired_state is DisplayState.SPEAKING
+    assert display.desired_command.data["name"] == wanted
+    assert output.displays[-1].data["name"] == wanted
+    await advance_clock(6)
+    assert display.desired_command.data["name"] == wanted
+    await display.async_acquire_screen_off("night")
+    before = len(output.displays)
+    if when != "none":
+        await display.async_set_mood("sad", context_id=turn.context.id)
+        await hass.async_block_till_done()
+        wanted = "sad"
+    assert len(output.displays) == before
+    await display.async_on_spp_state("spp_disconnected")
+    await display.async_on_spp_state("spp_connected")
+    assert output.powers[-1] is False
+    await display.async_release_screen_off("night")
+    assert output.displays[-1].data["name"] == wanted
+    entity.coordinator.on_playback("reply", "completed")
+    await hass.async_block_till_done()
+    assert display.desired_state is not DisplayState.SPEAKING
+    assert display.desired_command.data["name"] not in {"happy", "sad"}
+    await manager.async_start_session(local_start(SESSION_2,101), persistent=True, local_mode=True)
+    await asyncio.wait_for(entered.get(),1)
+    with pytest.raises(HomeAssistantError):
+        await display.async_set_mood("happy", context_id=turn.context.id)
+    entity.coordinator.on_playback("reply", "playing")
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.WAKE_CONFIRMED
+    await manager.async_disconnect()
+    await hass.async_block_till_done()
+    assert display.desired_command.data["name"] == "fish"
+
+
+async def test_local_playing_mood_is_retired_by_new_wake(hass, satellite, monkeypatch):
+    entity, manager, entered = await start_local(hass, satellite, monkeypatch)
+    display = entity.display
+    await speech(entity, manager)
+    await endpoint(manager)
+    entity.on_pipeline_event(PipelineEvent(Event.STT_END, {"stt_output":{"text":"command"}}))
+    turn = entity.coordinator._turn
+    await display.async_set_mood("happy")
+    turn.tts._manager.playback_id = "old-reply"
+    entity.coordinator.on_playback("old-reply", "playing")
+    await hass.async_block_till_done()
+    assert display.desired_command.data["name"] == "happy"
+    # Interrupt actual playing, not a completed turn.
+    await manager.async_start_session(local_start(SESSION_2,101), persistent=True, local_mode=True)
+    await asyncio.wait_for(entered.get(),1)
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.WAKE_CONFIRMED
+    assert display.desired_command.data["name"] == "question"
+    await speech(entity, manager, SESSION_2)
+    await endpoint(manager, SESSION_2)
+    entity.on_pipeline_event(PipelineEvent(Event.STT_END, {"stt_output":{"text":"new command"}}))
+    with pytest.raises(HomeAssistantError):
+        await display.async_set_mood("sad", context_id=turn.context.id)
+    entity.coordinator._turn.tts._manager.playback_id = "new-reply"
+    entity.coordinator.on_playback("old-reply", "completed")
+    entity.coordinator.on_playback("new-reply", "playing")
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.SPEAKING
+    assert display.desired_command.data["name"] == "music"
+    await manager.async_disconnect()
+    await hass.async_block_till_done()
+    assert display.desired_state is DisplayState.IDLE

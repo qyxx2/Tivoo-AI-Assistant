@@ -29,7 +29,7 @@
 | ESM-C08 | 仅当前 turn 的 `continue_conversation=true` 且 `AUDIO_STATE=completed` 后进入 8 秒 follow-up；等待期可显示弱 `followup_wait`，新的 `speech_start` 再进入 active listening/STT。`false`/缺失时结束会话并回 idle | P6.5 `_open_followup()` 与 8 秒 timer | 2026-11-17 修订 |
 | ESM-C09 | 覆盖顺序固定为：`wake_confirmed > speaking > tooluse > thinking > active_listening > explicit_content > ai_mood > followup_wait > idle` | 这是显示仲裁策略；KWS 高于 speaking 用于打断确认即时反馈 | 新逻辑合同 |
 | ESM-C10 | 每个会话级 intent 必须绑定当前 turn/generation；旧轮取消、失败、session end、follow-up timeout 或新 generation 替换时统一清除旧 intents；迟到事件不得恢复旧画面 | P6.5 已有旧 playback/generation 隔离语义 | 新逻辑合同 |
-| ESM-C11 | AI mood 只能提交低优先级、session-scoped、有限 TTL 的 mood intent；首期 TTL 5 秒；不自动从回答文本做情绪分类 | 当前已有 mood preset；Persona 可决定是否调用，HA 必须强制生命周期 | 新逻辑合同 |
+| ESM-C11 | legacy：AI mood 为低优先级、session-scoped 的 mood intent，TTL 5 秒。本地语音模式按 P6.8 R10 裁决：SetMood 是当前 generation 的 speaking 内容，matching playing 时替换 music，终态/取消/换代清除，无独立 TTL 或尾部播放；无 TTS 不显示。不自动从回答文本做情绪分类 | 当前已有 mood preset；Persona 可决定是否调用，HA 必须强制生命周期 | 新逻辑合同 |
 | ESM-C12 | AI mood 白名单首期限定当前已有 `happy/sad/angry/love/cool/cry/laugh/sleepy/shock/wink/sick/party/kiss/oops`；系统状态表情不进入 mood 白名单 | 当前 `EMOTION_PRESETS` | 新逻辑合同 |
 | ESM-C13 | 后续可增加项目自有 mood Tool；它必须提交 intent 而不是直接发送 SPP。规格中建议名 `tivoo__SetMood` 仅是项目接口命名，不是上游 Tivoo API | 当前不存在该 Tool；实现前仍须在对应批次固定 schema/测试 | 预留，不得视为已实现 |
 | ESM-C14 | 用户/自动化明确要求的 `SetExpression/ShowImage/ShowText` 等属于 `explicit_content`；瞬态系统状态可覆盖，退出后若内容仍有效则恢复 | 现有显示 service/MCP 已真实存在；“lease/恢复”是新增协调逻辑 | 新逻辑合同 |

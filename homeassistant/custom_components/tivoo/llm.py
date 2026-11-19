@@ -192,7 +192,9 @@ def _tools() -> list[Tool]:
             description=(
                 "Use only during an active Tivoo voice reply when the response has "
                 "clear non-language emotional value. Do not use for neutral replies "
-                "or for listening, thinking, tool use, or speaking state."
+                "or to signal listening, thinking, tool use, or speaking state. "
+                "In local voice mode the mood replaces the default speaking image "
+                "during actual TTS playback; it does not display after the reply."
             ),
             service=SERVICE_SET_MOOD,
             parameters=_schema(

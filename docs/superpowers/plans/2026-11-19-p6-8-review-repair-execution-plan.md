@@ -172,12 +172,16 @@ R09 软件组合验收完成（F16）：[R09 报告](../reports/2026-11-19-p6-8-
 
 **F17/F18 / B8-R01/R03；VIEW-C01–04、ESM-C09/C11/C19、T08-A/B/C。**
 **Files:** 裁决后仅必要规格条款 `docs/superpowers/specs/2026-11-18-p6-8-b0-5-lifecycle-display-design.md` 与 ESM 矩阵/迁移索引，必要引用；HA `assist_satellite.py,display_state.py,transport.py,services.py,llm.py`；HA test_p68_display.py/test_display_state.py/test_transport.py/test_p68_real_pipeline.py/test_services.py（必要时既有 LLM 测试）。
-**Interfaces:** coordinator 的当前 generation/5s TTL/known voice Context、thinking/speaking/tooluse 正常终态，R02 可信 SPP eligibility，R09 的真实 Pipeline/0x32。继续唯一 coordinator，不增公共 schema。
+**Interfaces:** coordinator 的当前 generation/本地 speaking 内容生命周期（legacy 5s TTL）/known voice Context、thinking/speaking/tooluse 正常终态，R02 可信 SPP eligibility，R09 的真实 Pipeline/0x32。继续唯一 coordinator，不增公共 schema。
 
-- [ ] R10.1 **产品决策门禁（未批准不得编写 F17 实现）：** 原 ESM-C09 优先级不动，B0.5 thinking 从 STT_END 到完成，mood active reply/5s/结束清除，两者使 SetMood 接受却始终不显示。优先建议真实 Intent 结束（不再思考）时退出 thinking，保持 tooluse/speaking 覆盖与 TTL，允许未过期 mood 在无高优状态的当前 generation 窗口可见；复核真事件及 no-TTS 窗口。若用户要求长 TTS 后也必须显示，则另明确 response-tail 所有权、TTL 起点、新 wake/followup/OFF/显式内容抢占，修合同后才实施，不用延长轮次/阻塞新轮，不能自行提高 mood priority。若明确取消显示承诺亦须合同裁决。记录用户批准方案并最小更新冲突条款与测试期望；未确认时该子任务 GAP，可按独立授权做 R10.3，但不能宣称 R10/F17 完成。
-- [ ] R10.2 RED 真生命周期 SetMood 被接受后 winner/adapter 输出按获批时机实际可见；普通 TTS、无TTS、续聊授权、取消/新 Context、TTL、OFF、显式内容；已知旧 Context 拒绝、无 context 只按现 active reply，不猜 AstrBot 关联字段。最小实现获批状态变化；不改屏幕 power gate 或优先级；GREEN。不能以人工 begin_generation(no thinking) 单元测试替代完整事件。
-- [ ] R10.3 复用 R02 fake TCP socket＋R09 当前语音轮：真实 DEVICE_STATUS/DEVICE_EVENT→7777 writer→coordinator；人为阻塞 SPP 写时 gate/start/PCM/end/0x32 仍消费，旧 UUID/非 tts_http/错 playback ID 不改赢家；7778 连接恢复及 connecting/non-target→matched connected 期间不发、恢复重申 OFF/最新赢家，慢写解除后不回放过期队列。保护当前 I/O 不可撤销的原边界，last_sent 不是实际像素；不重做 RF/peer recovery。
-- [ ] R10.4 运行上述 HA 测试 + test_p68_lifecycle.py/test_p68_local_session.py；核对 T08 原优先级/idle/多 owner/临时唤醒/OFF/reload 不退化，真实物理显示仍 GAP；报告/审查/提交。
+- [x] R10.1 **产品决策门禁（未批准不得编写 F17 实现）：** 原 ESM-C09 优先级不动，B0.5 thinking 从 STT_END 到完成，mood active reply/5s/结束清除，两者使 SetMood 接受却始终不显示。优先建议真实 Intent 结束（不再思考）时退出 thinking，保持 tooluse/speaking 覆盖与 TTL，允许未过期 mood 在无高优状态的当前 generation 窗口可见；复核真事件及 no-TTS 窗口。若用户要求长 TTS 后也必须显示，则另明确 response-tail 所有权、TTL 起点、新 wake/followup/OFF/显式内容抢占，修合同后才实施，不用延长轮次/阻塞新轮，不能自行提高 mood priority。若明确取消显示承诺亦须合同裁决。记录用户批准方案并最小更新冲突条款与测试期望；未确认时该子任务 GAP，可按独立授权做 R10.3，但不能宣称 R10/F17 完成。
+
+  **实际裁决（用户 2026-11-19 明确授权）：** 不采用上述 A 或独立尾部 B，改为当前本地普通 TTS 的 speaking 内容；有 SetMood 用最近一次 mood、无则 music。不增加状态/owner/计时器，不改 C09 或语音流程；准备阶段缓存，matching playing 才显示，终态/取消/换代立即清；无 TTS 不显示、不补播，legacy 5s TTL 不变。以 B0.5/ESM-C11 修订为准，覆盖原 B8/T08-C 中本地 5s 的旧约束。
+- [x] R10.2 RED 真生命周期 SetMood 被接受后 winner/adapter 输出按获批时机实际可见；普通 TTS、无TTS、续聊授权、取消/新 Context、本地超过原 5s 仍有效及 legacy TTL、OFF、显式内容；已知旧 Context 拒绝、无 context 只按现 active reply，不猜 AstrBot 关联字段。最小实现获批状态变化；不改屏幕 power gate 或优先级；GREEN。不能以人工 begin_generation(no thinking) 单元测试替代完整事件。
+- [x] R10.3 复用 R02 fake TCP socket＋R09 当前语音轮：真实 DEVICE_STATUS/DEVICE_EVENT→7777 writer→coordinator；人为阻塞 SPP 写时 gate/start/PCM/end/0x32 仍消费，旧 UUID/非 tts_http/错 playback ID 不改赢家；7778 连接恢复及 connecting/non-target→matched connected 期间不发、恢复重申 OFF/最新赢家，慢写解除后不回放过期队列。保护当前 I/O 不可撤销的原边界，last_sent 不是实际像素；不重做 RF/peer recovery。
+- [x] R10.4 运行上述 HA 测试 + test_p68_lifecycle.py/test_p68_local_session.py；核对 T08 原优先级/idle/多 owner/临时唤醒/OFF/reload 不退化，真实物理显示仍 GAP；报告/审查/提交。
+
+R10 软件验收完成（F17/F18）：[R10 报告](../reports/2026-11-19-p6-8-r10-repair-acceptance.md)。本地 TTS speaking 内容按用户裁决替换默认图像，legacy TTL 保持；HA 指定202/全量591 passed，另加打断节点1 passed；真实显示硬件 GAP 保留。
 
 ## R11 — 全量软件复验与闭环核查（不替代 B9/B10）
 
@@ -224,4 +228,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R09 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过，R09 HA 全量通过）；R10–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R10 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过，R09/R10 HA 全量通过，F17 已获用户裁决）；R11 未实施/未勾选，仍须总复验及核销，不改变已有软件 PASS 的历史事实或硬件 GAP。

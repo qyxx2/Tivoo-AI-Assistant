@@ -158,6 +158,8 @@ class ExpressionCoordinator:
         self._active_generation: str | None = None
         self._voice_contexts: set[str] = set()
         self._reply_active = False
+        self._mood_during_speech = False
+        self._speaking_mood: TivooCommand | None = None
         self._desired_state: DisplayState = DisplayState.IDLE
         self._desired_command: TivooCommand | None = None
         self._last_sent: TivooCommand | None = None
@@ -193,10 +195,12 @@ class ExpressionCoordinator:
         for state in tuple(self._intents):
             self._remove_intent(state)
         self._active_generation = None
+        self._speaking_mood = None
         await self._gate.async_shutdown()
 
     def begin_generation(
-        self, generation: str, *, reply_active: bool = True, wake: bool = False
+        self, generation: str, *, reply_active: bool = True, wake: bool = False,
+        mood_during_speech: bool = False,
     ) -> None:
         """Set a new turn as authoritative; a late event from an old turn is inert."""
         if self._shutdown or generation == self._active_generation:
@@ -205,6 +209,7 @@ class ExpressionCoordinator:
         self._active_generation = generation
         self._voice_contexts.add(generation)
         self._reply_active = reply_active
+        self._mood_during_speech = mood_during_speech
         self._clear_session_intents()
         if wake:
             self._intents[DisplayState.WAKE_CONFIRMED] = _Intent(
@@ -233,6 +238,8 @@ class ExpressionCoordinator:
             self._remove_intent(old)
         if reply_active is not None:
             self._reply_active = reply_active
+            if not reply_active:
+                self._speaking_mood = None
         if state is not None:
             assert state in SESSION_STATES and preset is not None
             self._remove_intent(state)
@@ -406,6 +413,7 @@ class ExpressionCoordinator:
             intent.expiry.cancel()
 
     def _clear_session_intents(self) -> None:
+        self._speaking_mood = None
         for state in tuple(self._intents):
             if state in SESSION_STATES:
                 self._remove_intent(state)
@@ -443,9 +451,17 @@ class ExpressionCoordinator:
         for context in (context_id, parent_id):
             if context in self._voice_contexts and context != generation:
                 raise HomeAssistantError("Tivoo mood belongs to an expired voice generation")
+        command = build_expression_command(name)
+        if self._mood_during_speech:
+            # The generation owns this content until terminal/replacement.
+            # It never competes as a separate display intent or blocks voice on SPP.
+            self._speaking_mood = command
+            if DisplayState.SPEAKING in self._intents:
+                self._schedule_recompute()
+            return
         await self.async_set_intent(
             DisplayState.AI_MOOD,
-            build_expression_command(name),
+            command,
             generation=generation,
             ttl=MOOD_TTL_SECONDS,
         )
@@ -548,6 +564,8 @@ class ExpressionCoordinator:
         self._desired_command = (
             self._idle_command if winner is DisplayState.IDLE else self._intents[winner].command
         )
+        if winner is DisplayState.SPEAKING and self._speaking_mood is not None:
+            self._desired_command = self._speaking_mood
 
     def _ensure_idle_timer(self) -> None:
         if self._idle_timer is None:

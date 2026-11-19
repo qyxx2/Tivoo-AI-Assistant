@@ -292,7 +292,8 @@ class AudioSessionCoordinator:
         previous = self._turn
         self._turn = turn
         self.display.begin_generation(
-            turn.context.id, reply_active=not local_mode, wake=local_mode and confirmed
+            turn.context.id, reply_active=not local_mode, wake=local_mode and confirmed,
+            mood_during_speech=local_mode,
         )
         if confirmed and not local_mode:
             self._show(

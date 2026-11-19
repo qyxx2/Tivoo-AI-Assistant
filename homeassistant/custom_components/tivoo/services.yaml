@@ -31,7 +31,7 @@ set_expression:
 
 set_mood:
   name: Set mood
-  description: Show a short-lived mood for the active Tivoo voice reply.
+  description: Set the active Tivoo voice reply mood. In local voice mode it replaces the speaking image during actual TTS playback; legacy mode uses a short-lived mood.
   fields:
     name:
       name: Mood

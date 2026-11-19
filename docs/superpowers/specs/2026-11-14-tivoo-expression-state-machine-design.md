@@ -102,7 +102,7 @@ KWS 确认高于 speaking，保证打断成功后屏幕立即反馈“已听见�
 
 AI 心情不承担 listening/thinking/tooluse/speaking 等系统状态。后续实现应提供专用低优先级 mood 意图（建议 MCP 名称 `tivoo__SetMood`，这是本项目新接口，不是上游 Tivoo 接口），只允许情绪白名单，例如 `happy/sad/angry/love/cool/cry/laugh/sleepy/shock/wink/sick/party/kiss/oops`。
 
-Mood 的触发条件放在 AstrBot Persona / Tool description：只有回答确实需要非语言情绪表达时才调用，正常回答不必每轮调用。HA 负责白名单、优先级、generation 和 TTL；首期默认 TTL 5 秒。Mood 被更高状态压住时仍按真实时间过期，过期后不补播。
+Mood 的触发条件放在 AstrBot Persona / Tool description：只有回答确实需要非语言情绪表达时才调用，正常回答不必每轮调用。HA 负责白名单、优先级、generation 和 TTL；首期默认 TTL 5 秒。Mood 被更高状态压住时仍按真实时间过期，过期后不补播。以上为 legacy 合同；P6.8 R10 已裁决本地模式例外：SetMood 只替换当前有效回复的 speaking 内容（默认 music），在匹配的实际 TTS playing 区间显示，最新一次覆盖、不用固定 TTL、不在无 TTS 或播放结束后补播。仍受原优先级和屏幕门控，详见 [P6.8 生命周期/显示规格](2026-11-18-p6-8-b0-5-lifecycle-display-design.md)。
 
 现有 `SetExpression`、ShowImage/ShowText 等显式显示能力不能被 Persona 当作系统处理状态接口。后续接入 Coordinator 时，它们属于 `explicit_content`；系统会话状态可暂时覆盖，系统状态退出后可恢复仍有效的显式内容。
 
