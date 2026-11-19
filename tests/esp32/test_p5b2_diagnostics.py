@@ -855,3 +855,73 @@ def test_p68_local_wake_ack_must_echo_capability_each_epoch(tmp_path):
         if client is not None:
             client.close()
         _stop(process)
+
+
+def _reconnect_hello(port):
+    deadline = time.monotonic() + 3
+    while True:
+        client = _connect(port)
+        try:
+            return client, _read_frame(client)
+        except (OSError, AssertionError) as exc:
+            client.close()
+            if isinstance(exc, AssertionError) and str(exc) != "socket closed after 0 of 16 bytes":
+                raise
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(.05)
+
+
+@pytest.mark.enable_socket
+def test_p68_capability_rehandshake_preserves_nonvoice_channels(tmp_path):
+    process, control_port, port = _start_simulator(tmp_path)
+    control = client = None
+    try:
+        _command(process,"up")
+        control = _connect(control_port)
+        client = _connect(port)
+        _handshake(client)
+        # Acquiring the first valid AFE epoch must not leave the old HELLO stale.
+        _command(process,"local_wake_on")
+        _wait_closed(client)
+        client.close()
+        client, (kind, seq, hello) = _reconnect_hello(port)
+        assert (kind,seq)==(1,0)
+        assert "local_wake_stt_v1" in hello["capabilities"]
+        assert {"audio_control","audio_resource_http","spp_control"} <= set(hello["capabilities"])
+        _send_frame(client,2,0,b'{"accepted":true,"capabilities":["local_wake_stt_v1"]}')
+        _send_frame(client,0x25,1,b'{}')
+        assert _read_raw_frame(client)==(0x26,1,b'{}')
+        _send_frame(client,0x30,2,b'{}')
+        assert _read_raw_frame(client)==(0x32,2,b'{}')
+        _command(process,"local_wake_off")
+        _wait_closed(client)
+        client.close()
+        client, (kind, seq, hello) = _reconnect_hello(port)
+        assert (kind,seq)==(1,0)
+        assert "local_wake_stt_v1" not in hello["capabilities"]
+        _send_ack(client)
+        _send_frame(client,0x30,1,b'{}')
+        assert _read_raw_frame(client)==(0x32,1,b'{}')
+        _command(process,"local_wake_on")
+        _wait_closed(client)
+        client.close()
+        client, (_,_,hello) = _reconnect_hello(port)
+        assert "local_wake_stt_v1" in hello["capabilities"]
+        # A recovery between worker polls still invalidates the previous ACK.
+        _send_frame(client,2,0,b'{"accepted":true,"capabilities":["local_wake_stt_v1"]}')
+        _send_frame(client,0x25,1,b'{}')
+        assert _read_raw_frame(client)==(0x26,1,b'{}')
+        _command(process,"local_wake_cycle")
+        _wait_closed(client)
+        client.close()
+        client, (kind,seq,hello) = _reconnect_hello(port)
+        assert (kind,seq)==(1,0) and "local_wake_stt_v1" in hello["capabilities"]
+        # The original 7777 socket remains live, not a new socket in disguise.
+        control.settimeout(.1)
+        with pytest.raises(socket.timeout):
+            control.recv(1)
+    finally:
+        if client is not None: client.close()
+        if control is not None: control.close()
+        _stop(process)

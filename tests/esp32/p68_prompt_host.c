@@ -39,7 +39,7 @@ static void sink(void *ctx, const tivoo_afe_event_t *e) {
 static void frame(uint64_t first, bool speech, int state) {
     int16_t p[160];
     for(size_t i=0;i<160;++i) p[i]=(int16_t)(first+i);
-    tivoo_afe_flow_frame(&flow,first,p,160,speech,state,1,1,1,0);
+    tivoo_afe_flow_frame(&flow,first,p,160,speech,true,state,1,1,1,0);
 }
 int main(void) {
     const tivoo_prompt_asset_t pool[4]={{pcm,321},{pcm,321},{pcm,321},{pcm,321}};

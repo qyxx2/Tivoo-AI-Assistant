@@ -53,7 +53,6 @@ void app_main(void)
         err=tivoo_s3_local_turn_init(test_gate,calibrated,prompt_tail,prompt_offset);
         if(err==ESP_OK) err = tivoo_s3_afe_start(tivoo_s3_local_turn_event,NULL);
         if(err==ESP_OK) {
-            tivoo_diagnostics_enable_local_wake();
             tivoo_diagnostics_set_mic_capture_stop_handler(tivoo_s3_local_turn_stop);
         }
         if (err != ESP_OK) {

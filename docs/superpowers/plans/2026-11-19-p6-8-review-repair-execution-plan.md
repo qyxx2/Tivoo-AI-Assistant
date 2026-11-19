@@ -95,10 +95,12 @@ R03 软件验收完成（F05）：[R03 报告](../reports/2026-11-19-p6-8-r03-re
 **Files:** `esp32/firmware/main/{s3_afe,p68_afe_flow,s3_main,diagnostics,s3_local_turn}.c` 与必要 headers；`tests/esp32/{p68_afe_host,p68_lifecycle_host}.c`、test_p68_afe.py/test_p68_turn.py/test_p68_prompt.py；HA test_diagnostics/test_transport（若现能力协商需改）。
 **Interfaces:** tivoo_s3_afe_start/control/finish_prompt、feed/fetch vendor reset、flow 当前 gate/cursor、诊断 HELLO capabilities/ACK；R03 有效 epoch/fault。保留 B6 prompt_rearm/neutral。
 
-- [ ] R04.1 RED：首次持续 capture invalid 无有效 feed、vendor reset_buffer/reset_vad 失败、正常恢复三类；断言可观察原因/计数、能力声明不假报、普通控制/下行独立。复用现任务/状态测试，以最小 vendor/capture stub 执行实际 runtime；不能只搜字符串。
-- [ ] R04.2 实现 AFE 可用性区别任务创建/首有效 feed/运行 fatal/恢复；利用现诊断状态和协商边界，确需断线重握手须先核对协议约束，不发假 wake 或新增无限 supervisor。与 R03 分工：R04 不另造 DMA 恢复。GREEN R04.1。
-- [ ] R04.3 RED：实际 flow 中 gate 内 speech、开放后 50×160 静音 PCM 仍 vendor speech 后 silence，START=0/END=0；gate 后真实即时开口必须 START、PCM 首样本与合法历史连续，迟到/跨块 gate fail-closed；独立 WakeNet 连续 DETECTED/VERIFIED 无 neutral 仍不二次 wake。先核对锁定 esp_afe_sr_iface/reset_vad 语义、cache 与样本边界，再选最小隔离/reset；常驻 AFE/WakeNet 不关闭，不硬等额外500ms。GREEN。
-- [ ] R04.4 运行 test_p68_afe.py/test_p68_turn.py/test_p68_prompt.py/test_p68_audio.py、HA test_diagnostics.py/test_transport.py；S3 build；记录新 gate 状态语义供 R05/R09，真实三种 ready/followup/声学保持 GAP。报告、审查、提交。
+- [x] R04.1 RED：首次持续 capture invalid 无有效 feed、vendor reset_buffer/reset_vad 失败、正常恢复三类；断言可观察原因/计数、能力声明不假报、普通控制/下行独立。复用现任务/状态测试，以最小 vendor/capture stub 执行实际 runtime；不能只搜字符串。
+- [x] R04.2 实现 AFE 可用性区别任务创建/首有效 feed/运行 fatal/恢复；利用现诊断状态和协商边界，确需断线重握手须先核对协议约束，不发假 wake 或新增无限 supervisor。与 R03 分工：R04 不另造 DMA 恢复。GREEN R04.1。
+- [x] R04.3 RED：实际 flow 中 gate 内 speech、开放后 50×160 静音 PCM 仍 vendor speech 后 silence，START=0/END=0；gate 后真实即时开口必须 START、PCM 首样本与合法历史连续，迟到/跨块 gate fail-closed；独立 WakeNet 连续 DETECTED/VERIFIED 无 neutral 仍不二次 wake。先核对锁定 esp_afe_sr_iface/reset_vad 语义、cache 与样本边界，再选最小隔离/reset；常驻 AFE/WakeNet 不关闭，不硬等额外500ms。GREEN。
+- [x] R04.4 运行 test_p68_afe.py/test_p68_turn.py/test_p68_prompt.py/test_p68_audio.py、HA test_diagnostics.py/test_transport.py；S3 build；记录新 gate 状态语义供 R05/R09，真实三种 ready/followup/声学保持 GAP。报告、审查、提交。
+
+R04 软件验收完成（F06/F08）：[R04 报告](../reports/2026-11-19-p6-8-r04-repair-acceptance.md)，ESP 104 passed，HA 66 + 1 passed，S3 reconfigure/build/size exit 0；实际 vendor/物理声学及 R05/R09/R11 关联证据保留 GAP。
 
 ## R05 — 有界校准 trace、真实提示音数字链
 
@@ -212,4 +214,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R03 已完成软件修复验收；R04–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R04 已完成软件修复验收；R05–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

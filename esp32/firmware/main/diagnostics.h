@@ -41,6 +41,8 @@ esp_err_t tivoo_diagnostics_start(void);
 void tivoo_diagnostics_enable_mic_activity(void);
 uint32_t tivoo_diagnostics_mic_generation(void);
 void tivoo_diagnostics_enable_local_wake(void);
+/* Nonblocking availability publication; a changed HELLO requires a fresh ACK. */
+void tivoo_diagnostics_set_local_wake_available(bool available);
 uint32_t tivoo_diagnostics_local_wake_generation(void);
 bool tivoo_diagnostics_send_mic(
     uint32_t generation, uint8_t type, const void *payload, size_t size);

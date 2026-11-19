@@ -145,6 +145,11 @@ int main(int argc, char **argv)
         }
         if (strcmp(command, "local_wake_on") == 0) {
             tivoo_diagnostics_enable_local_wake();
+        } else if (strcmp(command, "local_wake_cycle") == 0) {
+            tivoo_diagnostics_set_local_wake_available(false);
+            tivoo_diagnostics_set_local_wake_available(true);
+        } else if (strcmp(command, "local_wake_off") == 0) {
+            tivoo_diagnostics_set_local_wake_available(false);
         } else if (strcmp(command, "up") == 0) {
             network_listeners_set_ip_available(true);
         } else if (strcmp(command, "down") == 0) {

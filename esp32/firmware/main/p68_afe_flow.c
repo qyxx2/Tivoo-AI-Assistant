@@ -31,7 +31,7 @@ void tivoo_afe_flow_init(tivoo_afe_flow_t *f, int words, tivoo_afe_sink_t sink, 
 
 void tivoo_afe_flow_close(tivoo_afe_flow_t *f)
 {
-    f->gate_open=f->speaking=false;
+    f->gate_open=f->speaking=f->onset_guard=false;
     f->write=f->history_count=0;
 }
 
@@ -44,6 +44,7 @@ bool tivoo_afe_flow_open(tivoo_afe_flow_t *f, uint64_t first)
     }
     f->gate=first;
     f->gate_open=true;
+    f->onset_guard=true;
     return true;
 }
 
@@ -128,7 +129,7 @@ static void start(tivoo_afe_flow_t *f, uint64_t first)
 }
 
 void tivoo_afe_flow_frame(tivoo_afe_flow_t *f, uint64_t first, const int16_t *pcm,
-    size_t count, bool speech, int wake_state, int raw_channels,
+    size_t count, bool speech, bool vad_valid, int wake_state, int raw_channels,
     int model, int word, size_t cache_samples)
 {
     if (!pcm || !count || count>UINT64_MAX-first ||
@@ -148,13 +149,34 @@ void tivoo_afe_flow_frame(tivoo_afe_flow_t *f, uint64_t first, const int16_t *pc
         return;
     }
     if (!f->gate_open || f->prompt || f->next<=f->gate) return;
-    if (first<f->gate) {
+    const bool crosses_gate=first<f->gate;
+    if (crosses_gate) {
         size_t skip=f->gate-first;
         pcm+=skip;
         count-=skip;
         first=f->gate;
         /* A VAD decision covering pre-gate samples is not command speech. */
-        if (!f->speaking) speech=false;
+        vad_valid=false;
+    }
+    /* Preserve post-gate samples even when their VAD decision predates
+     * the gate reset. They cannot establish either speech or neutrality. */
+    if (!vad_valid) {
+        if (f->speaking) tivoo_afe_flow_gap(f);
+        else remember(f,pcm,count);
+        return;
+    }
+    /* Reject digital silence at ambiguous onset, without inventing a
+     * second acoustic threshold or waiting for a silence transition. */
+    if (!f->speaking && f->onset_guard) {
+        if (!speech) f->onset_guard=false;
+        else {
+            bool nonzero=false;
+            for (size_t i=0;i<count;i++) {
+                if (pcm[i]) { nonzero=true; break; }
+            }
+            if (!nonzero) speech=false;
+            else f->onset_guard=false;
+        }
     }
     if (!f->speaking && !speech) {
         remember(f,pcm,count);

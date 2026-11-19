@@ -2010,3 +2010,79 @@ async def test_p68_spp_status_reconnect_revokes_display_eligibility(
         diagnostic_server.close()
         await control_server.wait_closed()
         await diagnostic_server.wait_closed()
+
+
+async def test_p68_afe_capability_reconnect_retires_old_turn_only(monkeypatch, socket_enabled):
+    """Actual HA transport/manager: capability changes are connection scoped."""
+    import json
+    from custom_components.tivoo.audio_session import AudioSessionManager
+    from test_p68_local_session import local_start
+    from test_audio_session import SESSION_1, SESSION_2
+
+    manager = AudioSessionManager()
+    starts = []
+    manager.on_local_start = lambda *args: starts.append(args)
+    adapter = transport.Esp32ConnectionAdapter(
+        "127.0.0.1", "11:75:58:97:49:98", retry_interval=.05
+    )
+    adapter.register_audio_session_manager(manager)
+    controls, diagnostics = [], []
+    negotiated = asyncio.Queue()
+
+    async def control(reader, writer):
+        controls.append(writer)
+        await reader.read()
+
+    async def peer(reader, writer):
+        epoch = len(diagnostics)
+        diagnostics.append(writer)
+        caps = [*transport._BASE_CAPABILITIES, "audio_resource_http", "audio_control"]
+        if epoch != 1:
+            caps.append("local_wake_stt_v1")
+        hello = dict(device_id="tivoo-esp32", firmware_version="0.1.0+abcdef0",
+                     protocol_version=1, capabilities=caps, reset_reason="ESP_RST_POWERON")
+        writer.write(_tvio_message(1, 0, json.dumps(hello).encode()))
+        await writer.drain()
+        ack = await _read_tvio_message(reader)
+        status = await _read_tvio_message(reader)
+        await negotiated.put((epoch, ack, status))
+        if epoch in (0, 2):
+            session = SESSION_1 if epoch == 0 else SESSION_2
+            writer.write(_tvio_message(0x20, 1, json.dumps(local_start(session, 100)).encode()))
+            await writer.drain()
+        await reader.read()
+
+    control_server = await asyncio.start_server(control, "127.0.0.1", 0)
+    diagnostic_server = await asyncio.start_server(peer, "127.0.0.1", 0)
+    monkeypatch.setattr(transport, "CONTROL_PORT", control_server.sockets[0].getsockname()[1])
+    monkeypatch.setattr(transport, "DIAGNOSTIC_PORT", diagnostic_server.sockets[0].getsockname()[1])
+    await adapter.async_start()
+    try:
+        async with asyncio.timeout(3):
+            epoch, ack, status = await negotiated.get()
+            assert (epoch, ack[2]) == (0, {"accepted": True, "capabilities": ["local_wake_stt_v1"]})
+            assert status[0] == 0x10
+            while manager.active_session_id != SESSION_1 or not controls:
+                await asyncio.sleep(.01)
+            diagnostics[0].close()
+            epoch, ack, status = await negotiated.get()
+            assert (epoch, ack[2]) == (1, {"accepted": True})
+            assert status[0] == 0x10
+            assert not adapter.local_wake_capable and manager.active_session_id is None
+            with pytest.raises(HomeAssistantError, match="local wake capability"):
+                await adapter.async_send_message(0x25, json.dumps({"session_id": SESSION_1}).encode())
+            assert adapter.states["control"] == "connected" and len(controls) == 1
+            diagnostics[1].close()
+            epoch, ack, status = await negotiated.get()
+            assert (epoch, ack[2]) == (2, {"accepted": True, "capabilities": ["local_wake_stt_v1"]})
+            while manager.active_session_id != SESSION_2:
+                await asyncio.sleep(.01)
+            assert adapter.local_wake_capable and len(starts) == 2
+            assert adapter.states["control"] == "connected" and len(controls) == 1
+    finally:
+        await adapter.async_stop()
+        control_server.close()
+        diagnostic_server.close()
+        await _close_clients(controls + diagnostics)
+        await control_server.wait_closed()
+        await diagnostic_server.wait_closed()

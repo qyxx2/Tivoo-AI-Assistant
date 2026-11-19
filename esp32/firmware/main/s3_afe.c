@@ -1,6 +1,7 @@
 #include "s3_afe.h"
 #include "s3_local_turn.h"
 #include "audio_capture.h"
+#include "diagnostics.h"
 #include "esp_afe_config.h"
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_sr_models.h"
@@ -26,7 +27,8 @@ static tivoo_afe_flow_t *flow;
 static TaskHandle_t feed_handle, fetch_handle;
 typedef struct { tivoo_afe_control_t control; uint64_t index; } gate_control_t;
 static QueueHandle_t controls;
-static atomic_bool reset_requested, feed_paused, streaming, fatal;
+static bool vad_gate_pending; /* fetch owner; new gate must have fresh vendor VAD */
+static atomic_bool reset_requested, feed_paused, streaming, usable, fatal;
 static atomic_uint feed_errors, rx_gaps, feed_calls, feed_max_us, feed_stack;
 static uint64_t epoch_first; /* publish before streaming release; reset handshake protects writes */
 
@@ -43,10 +45,16 @@ const char *tivoo_s3_afe_wake_word(int index)
 bool tivoo_s3_afe_control(tivoo_afe_control_t control, uint64_t index)
 {
     if (control<TIVOO_AFE_GATE_OPEN || control>TIVOO_AFE_PROMPT_END ||
-        !controls || !atomic_load(&streaming) || atomic_load(&reset_requested) ||
+        !controls || !atomic_load(&usable) || atomic_load(&reset_requested) ||
         atomic_load(&fatal)) return false;
     const gate_control_t command={control,index};
     return xQueueSend(controls,&command,0)==pdTRUE;
+}
+
+static bool open_gate(uint64_t index)
+{
+    vad_gate_pending=tivoo_afe_flow_open(flow,index);
+    return vad_gate_pending;
 }
 
 static void apply_controls(void)
@@ -56,7 +64,7 @@ static void apply_controls(void)
     for (unsigned i=0;i<4 && xQueueReceive(controls,&command,0)==pdTRUE;++i) {
         switch (command.control) {
         case TIVOO_AFE_GATE_OPEN:
-            (void)tivoo_afe_flow_open(flow,command.index);
+            (void)open_gate(command.index);
             break;
         case TIVOO_AFE_GATE_CLOSE: tivoo_afe_flow_close(flow); break;
         case TIVOO_AFE_PROMPT_BEGIN: tivoo_afe_flow_prompt(flow,true,0); break;
@@ -67,7 +75,8 @@ static void apply_controls(void)
 
 bool tivoo_s3_afe_open_test_gate(void)
 {
-    return flow && tivoo_afe_flow_open(flow,flow->next);
+    return flow && atomic_load(&usable) && !atomic_load(&reset_requested) &&
+        !atomic_load(&fatal) && open_gate(flow->next);
 }
 void tivoo_s3_afe_close_local_gate(void)
 {
@@ -81,15 +90,23 @@ void tivoo_s3_afe_begin_prompt(void)
 bool tivoo_s3_afe_finish_prompt(uint64_t boundary, bool open)
 {
     if (!flow) return false;
-    const bool valid=atomic_load(&streaming) && !atomic_load(&reset_requested) &&
+    const bool valid=atomic_load(&usable) && !atomic_load(&reset_requested) &&
         !atomic_load(&fatal) && (!flow->have_next || boundary>=flow->next);
     const uint64_t wake_after=flow->have_next && boundary<flow->next ? flow->next : boundary;
     tivoo_afe_flow_prompt(flow,false,wake_after);
-    return open && valid && tivoo_afe_flow_open(flow,boundary);
+    return open && valid && open_gate(boundary);
+}
+
+static void publish_available(bool available)
+{
+    if (atomic_exchange(&usable,available)!=available)
+        tivoo_diagnostics_set_local_wake_available(available);
 }
 
 static void request_reset(void)
 {
+    /* Feed only requests; fetch owns availability publication so a racing
+     * feed error cannot reorder two independent capability updates. */
     atomic_store(&reset_requested,true);
 }
 
@@ -152,6 +169,10 @@ static void feed_task(void *arg)
         }
         atomic_store(&feed_stack,uxTaskGetStackHighWaterMark(NULL));
     }
+    /* Keep draining RX for the shared DAC/recovery even if vendor AFE dies.
+     * This task was the sole capture consumer; transfer ownership once. */
+    if (tivoo_audio_capture_monitor_start()!=ESP_OK)
+        TIVOO_LOGE(TAG,"AFE fatal; capture monitor unavailable");
     vTaskDelete(NULL);
 }
 
@@ -165,8 +186,23 @@ static void fetch_task(void *arg)
     unsigned fetch_max_us=0;
     int last_state=0;
     int64_t report=esp_timer_get_time();
+    const char *failure=NULL;
     for (;;) {
+        if (atomic_load(&reset_requested)) publish_available(false);
         tivoo_s3_local_turn_tick();
+        if (!atomic_load(&usable) && esp_timer_get_time()-report>=10000000) {
+            report=esp_timer_get_time();
+            TIVOO_LOGW(TAG,"AFE unavailable: %s rx_gaps=%u feed_errors=%u fetch_errors=%llu resets=%llu",
+                failure ? failure : (atomic_load(&reset_requested) ? "recovering" : "waiting for valid feed/fetch"),
+                atomic_load(&rx_gaps),atomic_load(&feed_errors),
+                (unsigned long long)fetch_errors,(unsigned long long)resets);
+        }
+        if (atomic_load(&fatal)) {
+            /* Retire a canceled prompt on the existing turn tick even if
+             * there will never be another vendor fetch. No AFE retry loop. */
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
         if (atomic_load(&reset_requested)) {
             /* Both API users are quiescent before reset_buffer/reset_vad. */
             if (!atomic_load(&feed_paused)) {
@@ -185,10 +221,14 @@ static void fetch_task(void *arg)
                 ESP_LOGW(TAG,"AFE discontinuity: resets=%llu rx_gaps=%u feed_errors=%u fetch_errors=%llu",
                     (unsigned long long)resets,atomic_load(&rx_gaps),
                     atomic_load(&feed_errors),(unsigned long long)fetch_errors);
-            if (afe->reset_buffer(data)!=1 || afe->reset_vad(data)!=1) {
-                ESP_LOGE(TAG,"AFE reset failed; local wake disabled");
+            if (afe->reset_buffer(data)!=1) failure="reset_buffer failed";
+            else if (afe->reset_vad(data)!=1) failure="reset_vad failed";
+            if (failure) {
+                TIVOO_LOGE(TAG,"AFE reset failed: %s rx_gaps=%u feed_errors=%u fetch_errors=%llu resets=%llu",
+                    failure,atomic_load(&rx_gaps),atomic_load(&feed_errors),
+                    (unsigned long long)fetch_errors,(unsigned long long)resets);
                 atomic_store(&fatal,true);
-                break;
+                continue;
             }
             atomic_store(&feed_paused,false);
             atomic_store(&reset_requested,false);
@@ -198,6 +238,18 @@ static void fetch_task(void *arg)
         if (!have_epoch) {
             cursor=epoch_first;
             have_epoch=true;
+        }
+        /* The locked 2mic vendor library computes VAD in fetch_with_delay,
+         * after reading enhanced PCM. Reset only VAD, on its sole owner,
+         * before the first entirely post-gate fetch. Do not reset the ring
+         * or WakeNet, and keep the tail of a crossing frame in history. */
+        if (flow->gate_open && vad_gate_pending && cursor>=flow->gate) {
+            if (afe->reset_vad(data)!=1) {
+                TIVOO_LOGE(TAG,"AFE gate reset_vad failed; recovering");
+                request_reset();
+                continue;
+            }
+            vad_gate_pending=false;
         }
         int64_t before=esp_timer_get_time();
         afe_fetch_result_t *r=afe->fetch_with_delay(data,pdMS_TO_TICKS(250));
@@ -214,6 +266,14 @@ static void fetch_task(void *arg)
             continue;
         }
         ++fetch_calls;
+        if (!atomic_load(&usable) && !atomic_load(&reset_requested)) {
+            publish_available(true);
+            // A feed-side fault racing publication still wins.
+            if (atomic_load(&reset_requested)) publish_available(false);
+            else TIVOO_LOGI(TAG,"AFE available: valid feed/fetch sample=%llu rx_gaps=%u",
+                (unsigned long long)cursor,atomic_load(&rx_gaps));
+        }
+        if (atomic_load(&reset_requested)) continue;
         tivoo_s3_local_turn_tick();
         apply_controls();
         size_t count=(size_t)r->data_size/sizeof(int16_t);
@@ -225,7 +285,11 @@ static void fetch_task(void *arg)
         }
         /* After boot/reset, require a neutral detector result before arming. */
         if (r->wakeup_state==WAKENET_NO_DETECT) wait_neutral=false;
-        tivoo_afe_flow_frame(flow,cursor,r->data,count,r->vad_state==VAD_SPEECH,
+        /* A gate may have been opened by the tick/controls after this
+         * vendor result was evaluated. Keep its legal PCM, not its VAD. */
+        const bool vad_valid=!(flow->gate_open && vad_gate_pending);
+        if (atomic_load(&reset_requested)) continue;
+        tivoo_afe_flow_frame(flow,cursor,r->data,count,r->vad_state==VAD_SPEECH,vad_valid,
             wait_neutral ? WAKENET_NO_DETECT : r->wakeup_state,r->raw_data_channels,
             r->wakenet_model_index,r->wake_word_index,r->vad_cache_size/sizeof(int16_t));
         cursor+=count;

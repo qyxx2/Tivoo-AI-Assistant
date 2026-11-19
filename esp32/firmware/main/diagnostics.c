@@ -100,7 +100,11 @@ static atomic_bool s_ack_accepted = ATOMIC_VAR_INIT(false);
 static atomic_uint s_mic_generation;
 static uint32_t s_next_generation;
 static atomic_bool s_mic_activity_enabled;
-static atomic_bool s_local_wake_enabled, s_local_wake_accepted;
+static atomic_bool s_local_wake_accepted;
+/* Low bit = available; revision prevents a quick false/true recovery from
+ * resurrecting a previously accepted connection. HELLO snapshot is mutex-owned. */
+static atomic_uint s_local_wake_revision, s_local_wake_accepted_revision;
+static unsigned s_hello_local_wake_revision;
 static uint32_t s_tx_sequence;
 static uint32_t s_rx_sequence;
 static uint8_t s_rx_buffer[RX_BUFFER_SIZE];
@@ -450,7 +454,7 @@ static bool send_message_locked(
     return false;
 }
 
-static char *build_hello_payload(size_t *payload_size)
+static char *build_hello_payload(size_t *payload_size, bool local_wake)
 {
 #ifdef ESP_PLATFORM
     const esp_reset_reason_t reason = esp_reset_reason();
@@ -541,7 +545,7 @@ static char *build_hello_payload(size_t *payload_size)
         cJSON_AddItemToArray(capabilities, cJSON_CreateString("mic_activity_events"));
     }
 #endif
-    if (atomic_load(&s_local_wake_enabled)) {
+    if (local_wake) {
         cJSON_AddItemToArray(capabilities, cJSON_CreateString(TVIO_LOCAL_WAKE_CAPABILITY));
     }
     cJSON_AddItemToObject(root, "capabilities", capabilities);
@@ -723,13 +727,22 @@ void tivoo_diagnostics_enable_mic_activity(void)
     atomic_store(&s_mic_activity_enabled, true);
 }
 
+void tivoo_diagnostics_set_local_wake_available(bool available)
+{
+    unsigned old=atomic_load(&s_local_wake_revision);
+    while ((bool)(old&1U)!=available &&
+        !atomic_compare_exchange_weak(&s_local_wake_revision,&old,old+1U)) {}
+}
 void tivoo_diagnostics_enable_local_wake(void)
 {
-    atomic_store(&s_local_wake_enabled,true);
+    tivoo_diagnostics_set_local_wake_available(true);
 }
 uint32_t tivoo_diagnostics_local_wake_generation(void)
 {
-    return atomic_load(&s_local_wake_accepted) ? atomic_load(&s_mic_generation) : 0;
+    const unsigned revision=atomic_load(&s_local_wake_revision);
+    return (revision&1U) && atomic_load(&s_local_wake_accepted) &&
+        revision==atomic_load(&s_local_wake_accepted_revision)
+        ? atomic_load(&s_mic_generation) : 0;
 }
 uint32_t tivoo_diagnostics_mic_generation(void)
 {
@@ -739,7 +752,8 @@ uint32_t tivoo_diagnostics_mic_generation(void)
 bool tivoo_diagnostics_send_mic(
     uint32_t generation, uint8_t type, const void *payload, size_t size)
 {
-    if (type == TVIO_TYPE_COMMAND_GATE && generation != tivoo_diagnostics_local_wake_generation())
+    if ((type == TVIO_TYPE_COMMAND_GATE || atomic_load(&s_local_wake_accepted)) &&
+        generation != tivoo_diagnostics_local_wake_generation())
         return false;
     return generation && enqueue_message(generation, type, payload, size);
 }
@@ -863,9 +877,19 @@ static void diagnostics_worker(void)
             continue;
         }
 
+        const unsigned revision=atomic_load(&s_local_wake_revision);
+        if (s_hello_sent && s_hello_local_wake_revision!=revision) {
+            /* TVIO v1 negotiates capabilities once per connection. Only
+             * the diagnostic socket is retired; 7777/SPP and DAC stay alive. */
+            disconnect_client_locked(fd);
+            mutex_give();
+            worker_delay();
+            continue;
+        }
         if (!s_hello_sent) {
             size_t payload_size = 0U;
-            char *payload = build_hello_payload(&payload_size);
+            s_hello_local_wake_revision=revision;
+            char *payload = build_hello_payload(&payload_size,(revision&1U)!=0);
             const bool sent =
                 payload != NULL &&
                 send_message_locked(
@@ -1100,7 +1124,8 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
     if (data == NULL || size == 0U || !mutex_take(true)) {
         return false;
     }
-    if (s_client_fd != fd || size > sizeof(s_rx_buffer) - s_rx_size) {
+    if (s_client_fd != fd || size > sizeof(s_rx_buffer) - s_rx_size ||
+        (s_hello_sent && s_hello_local_wake_revision!=atomic_load(&s_local_wake_revision))) {
         mutex_give();
         return false;
     }
@@ -1147,7 +1172,7 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
                                         : NULL;
             const bool valid = cJSON_IsBool(accepted) && cJSON_IsTrue(accepted);
             bool local = false;
-            if (valid && atomic_load(&s_local_wake_enabled)) {
+            if (valid && (s_hello_local_wake_revision&1U)) {
                 const cJSON *caps = cJSON_GetObjectItemCaseSensitive(payload, "capabilities");
                 const cJSON *cap = NULL;
                 if (cJSON_IsArray(caps)) {
@@ -1167,9 +1192,10 @@ bool tivoo_diagnostics_client_data(int fd, const uint8_t *data, size_t size)
                 ++s_next_generation;
             }
             atomic_store(&s_mic_generation, s_next_generation);
+            atomic_store(&s_local_wake_accepted_revision,s_hello_local_wake_revision);
             atomic_store(&s_local_wake_accepted, local);
         } else if (!atomic_load(&s_ack_accepted) ||
-                   ((message_type == TVIO_TYPE_STT_READY || message_type == TVIO_TYPE_FOLLOWUP_OPEN) && !atomic_load(&s_local_wake_accepted)) ||
+                   ((message_type == TVIO_TYPE_STT_READY || message_type == TVIO_TYPE_FOLLOWUP_OPEN) && !tivoo_diagnostics_local_wake_generation()) ||
                    (supported_message_type(message_type) &&
                     !inbound_message_type(message_type))) {
             mutex_give();

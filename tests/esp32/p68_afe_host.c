@@ -26,8 +26,38 @@ static void frame(size_t count, bool speech, int state, int raw, int model, int 
     int16_t pcm[1000];
     assert(count<=1000);
     for(size_t i=0;i<count;i++) pcm[i]=(int16_t)(cursor+i);
-    tivoo_afe_flow_frame(&flow,cursor,pcm,count,speech,state,raw,model,word,cache);
+    tivoo_afe_flow_frame(&flow,cursor,pcm,count,speech,true,state,raw,model,word,cache);
     cursor+=count;
+}
+static void gate_regression(void) {
+    static int16_t silence[160], voice[160];
+    for (size_t i=0;i<160;i++) voice[i]=(int16_t)(400+i);
+    for (int fast=0;fast<2;fast++) {
+        tivoo_afe_flow_init(&flow,1,sink,0);
+        cursor=0; starts=ends=wakes=faults=0; n=0;
+        tivoo_afe_flow_prompt(&flow,true,0);
+        tivoo_afe_flow_frame(&flow,0,voice,160,true,true,1,2,1,1,0);
+        tivoo_afe_flow_prompt(&flow,false,240);
+        assert(tivoo_afe_flow_open(&flow,240));
+        // Frame overlaps gate: only the second half belongs to the command.
+        tivoo_afe_flow_frame(&flow,160,fast?voice:silence,160,true,true,-1,2,1,1,0);
+        assert(starts==0 && wakes==0);
+        if (fast) {
+            tivoo_afe_flow_frame(&flow,320,voice,160,true,true,1,2,1,1,0);
+            assert(starts==1 && first==240 && n==240 && wakes==0);
+            assert(!memcmp(received,voice+80,80*sizeof(int16_t)));
+            assert(!memcmp(received+80,voice,160*sizeof(int16_t)));
+            tivoo_afe_flow_frame(&flow,480,silence,160,false,true,0,2,0,0,0);
+            assert(ends==1 && n==400);
+        } else {
+            for (int i=0;i<50;i++)
+                tivoo_afe_flow_frame(&flow,320+160*i,silence,160,true,true,0,2,0,0,0);
+            tivoo_afe_flow_frame(&flow,8320,silence,160,false,true,0,2,0,0,0);
+            assert(starts==0 && ends==0 && n==0);
+            tivoo_afe_flow_frame(&flow,8480,voice,160,true,true,0,2,0,0,0);
+            assert(starts==1 && first==480 && n==8160);
+        }
+    }
 }
 int main(void) {
     int16_t l[]={1,2}, r[]={3,4}, ref[]={5,6}, mmnr[8];
@@ -94,5 +124,6 @@ int main(void) {
     // A second gate while speech is active must not silently discard PCM.
     assert(!tivoo_afe_flow_open(&flow,cursor));
     assert(faults==prior_faults+1 && !flow.gate_open);
+    gate_regression();
     return 0;
 }

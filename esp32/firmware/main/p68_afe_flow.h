@@ -24,7 +24,7 @@ typedef struct {
     tivoo_afe_sink_t sink;
     void *ctx;
     uint64_t next, gate, wake_after;
-    bool have_next, gate_open, speaking, prompt, latched, prompt_rearm;
+    bool have_next, gate_open, speaking, prompt, latched, prompt_rearm, onset_guard;
     int candidate, words;
     size_t write, history_count;
     uint64_t cache_ignored;
@@ -39,5 +39,5 @@ void tivoo_afe_flow_close(tivoo_afe_flow_t *f);
 void tivoo_afe_flow_prompt(tivoo_afe_flow_t *f, bool suppress, uint64_t wake_after);
 void tivoo_afe_flow_gap(tivoo_afe_flow_t *f);
 void tivoo_afe_flow_frame(tivoo_afe_flow_t *f, uint64_t first, const int16_t *pcm,
-    size_t count, bool speech, int wake_state, int raw_channels,
+    size_t count, bool speech, bool vad_valid, int wake_state, int raw_channels,
     int model, int word, size_t cache_samples);
