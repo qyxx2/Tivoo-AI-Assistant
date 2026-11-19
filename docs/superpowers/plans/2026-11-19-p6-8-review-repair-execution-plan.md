@@ -161,10 +161,12 @@ R08 软件验收完成（F14）：[R08 报告](../reports/2026-11-19-p6-8-r08-re
 **Files:** `tests/homeassistant/custom_components/tivoo/{test_p68_real_pipeline,test_p68_lifecycle,test_p68_local_session,test_audio_resource}.py`、`tests/homeassistant/test_assist_pipeline_tts_cancellation.py`、`tests/homeassistant/custom_components/astrbot/{test_session,test_conversation}.py`；若测试暴露确凿组合缺陷仅改现 `assist_satellite/audio_session/audio_resource/tts_lifecycle/transport` 或 AstrBot 真实 owner 调用边界，不扩大范围。
 **Interfaces:** 复用 R06 真实 HA public API + fake Wyoming STT；现 PipelineTtsOwner 与 fake TTS/真实取消 API、AstrBot fake SSE server、R05/07/08 的 gate/设备终态契约。避免 R05/R08 各造另一套 HA 测试环境。
 
-- [ ] R09.1 真 HA local STT→Intent→TTS→资源 URL→匹配设备 terminal→正常完成；strict True 时一次0x27及新 followup UUID 消费；有效 no-TTS 与 TTS send failure 区别，不凭 playback_id=None 推断。测试实际 session/playback/epoch/Context/URL 及定向 stop，不把 end_stage=INTENT 当完整。
-- [ ] R09.2 真实旧 PipelineTtsOwner 停止：fake Wyoming peer FIN/EOF、ResultStream/GET/取消等待与真实 AstrBot SSE stop_unconfirmed 路径；新轮不得越过 old public caller/retiring owner，未确认旧 session 不复用且显式新会话可恢复；disconnect/unload 等待 close 能收敛。保留 B7 模拟六阶段和连续3轮测试；只增加最小真实组合，不重写全部 mock。
-- [ ] R09.3 复跑 R06 提前 Transcript/EOF、R07 旧 UUID/拒绝、R08 terminal failure；对应 fake peer 共享基础 fixture，保证异常不发外部 Intent、不错误 grant、不错误结束新轮。已有行为若直接 GREEN 记录，若实际失败先 RED 后最小修复并说明归属。
-- [ ] R09.4 运行上述 HA 测试 + test_transport.py；检查完整事件、URL/播放终态绑定。物理 DAC/真实生产 TTS/AstrBot Stop 保留 GAP；报告所需 display 事件序列供 R10，审查、提交。
+- [x] R09.1 真 HA local STT→Intent→TTS→资源 URL→匹配设备 terminal→正常完成；strict True 时一次0x27及新 followup UUID 消费；有效 no-TTS 与 TTS send failure 区别，不凭 playback_id=None 推断。测试实际 session/playback/epoch/Context/URL 及定向 stop，不把 end_stage=INTENT 当完整。
+- [x] R09.2 真实旧 PipelineTtsOwner 停止：fake Wyoming peer FIN/EOF、ResultStream/GET/取消等待与真实 AstrBot SSE stop_unconfirmed 路径；新轮不得越过 old public caller/retiring owner，未确认旧 session 不复用且显式新会话可恢复；disconnect/unload 等待 close 能收敛。保留 B7 模拟六阶段和连续3轮测试；只增加最小真实组合，不重写全部 mock。
+- [x] R09.3 复跑 R06 提前 Transcript/EOF、R07 旧 UUID/拒绝、R08 terminal failure；对应 fake peer 共享基础 fixture，保证异常不发外部 Intent、不错误 grant、不错误结束新轮。已有行为若直接 GREEN 记录，若实际失败先 RED 后最小修复并说明归属。
+- [x] R09.4 运行上述 HA 测试 + test_transport.py；检查完整事件、URL/播放终态绑定。物理 DAC/真实生产 TTS/AstrBot Stop 保留 GAP；报告所需 display 事件序列供 R10，审查、提交。
+
+R09 软件组合验收完成（F16）：[R09 报告](../reports/2026-11-19-p6-8-r09-repair-acceptance.md)，真实完整 public Pipeline 新增8节点、HA 指定179及全量586 passed，ESP worker 9及 turn host 2 passed；补证直接 GREEN，无生产修改。提供 R10 真事件基线，硬件/生产 GAP 保留。
 
 ## R10 — 显示合同裁决与真实传输组合
 
@@ -222,4 +224,4 @@ T01–T08 原物理与部署缺口：实物板/接线/电源/USB/PSRAM/NVS/Bond�
 
 ## 本文状态
 
-R01–R08 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过）；R09–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。
+R01–R09 已完成各批软件专项修复验收（R05 保留额外全量旧测试波动，R07/R08 独立全量通过，R09 HA 全量通过）；R10–R11 未实施/未勾选；18项归并、11个批次拆分、命名和建议顺序为计划者决定，不代表 F17 已获合同裁决。计划编制不需要再次复现原全部审查，也不改变已有软件 PASS 的历史事实；当前软件仍待修复复验。

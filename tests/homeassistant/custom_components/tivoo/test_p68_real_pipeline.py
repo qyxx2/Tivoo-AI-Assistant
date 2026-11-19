@@ -19,11 +19,13 @@ from test_audio_session import SESSION_1, SESSION_2
 from test_assist_satellite import advance_clock
 from custom_components.tivoo.diagnostics import TYPE_STT_READY
 from wyoming.event import async_read_event, async_write_event
-from wyoming.info import Info, AsrProgram, AsrModel, Attribution
+from wyoming.info import Info, AsrProgram, AsrModel, Attribution, TtsProgram, TtsVoice
+from wyoming.audio import AudioStart, AudioChunk, AudioStop
+from wyoming.tts import SynthesizeStopped
 from wyoming.asr import Transcript
 
 @pytest.mark.enable_socket
-@pytest.mark.parametrize("fault", [None, "early", "queued_end", "vad_start", "vad_end", "disconnect", "cancel", "silent", "slow", "superseded", "provider_error"])
+@pytest.mark.parametrize("fault", [None, "early", "queued_end", "vad_start", "vad_end", "disconnect", "cancel", "silent", "slow", "superseded", "provider_error", "full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"])
 async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeypatch, aiohttp_client, fault, advance_clock):
     attribution = Attribution(name="test", url="https://example.invalid")
     info = Info(asr=[AsrProgram(
@@ -37,18 +39,40 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
     wire = []
     transcript = "what time is it"
     chats = []
+    full = fault in {"full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
+    held_tts = fault in {"cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
+    hold_chat = fault == "stop_unconfirmed"
+    chat_waiting, chat_release = asyncio.Event(), asyncio.Event()
+    stop_waiting, stop_release = asyncio.Event(), asyncio.Event()
+    remote_stops = []
+    tts_wire = []
+    tts_receiving, tts_fin, tts_release, tts_closed = (asyncio.Event() for _ in range(4))
+    reply = ("A story about Mars. " * 100 + "Would you like another story?") if hold_chat else ("Would you like another story?" if full else "Test AstrBot reply")
     async def handle_chat(request):
         body = await request.json()
         chats.append(body)
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
         await response.prepare(request)
-        for event in ({"type": "session_id", "data": None, "session_id": body["session_id"]}, {"type": "plain", "data": "Test AstrBot reply"}, {"type": "end", "data": ""}):
+        for event in ({"type": "session_id", "data": None, "session_id": body["session_id"]}, {"type": "plain", "data": reply}):
             await response.write(f"data: {json.dumps(event)}\n\n".encode())
-        await response.write_eof()
+        if hold_chat:
+            chat_waiting.set()
+            await chat_release.wait()
+        else:
+            await response.write(b'data: {"type":"end","data":""}\n\n')
+            await response.write_eof()
         return response
+
+    async def handle_stop(request):
+        remote_stops.append(request.match_info["session_id"])
+        stop_waiting.set()
+        await stop_release.wait()
+        return web.json_response({"status": "error"}, status=500)
+
 
     app = web.Application()
     app.router.add_post("/api/v1/chat", handle_chat)
+    app.router.add_post("/api/v1/chat/sessions/{session_id}/stop", handle_stop)
     client = await aiohttp_client(app)
     astrbot = MockConfigEntry(domain="astrbot", title="AstrBot", unique_id="astrbot", data={"base_url": str(client.make_url("/")).rstrip("/"), "api_key": "test-secret-value", "api_key_id": "p68-test-key"})
     astrbot.add_to_hass(hass)
@@ -95,17 +119,65 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
     entry = MockConfigEntry(domain="wyoming", data={"host": "127.0.0.1", "port": server.sockets[0].getsockname()[1]})
     entry.add_to_hass(hass)
     entity = display = manager = None
+    tts_server = tts_entry = diagnostic_server = None
+    diagnostic_peers = []
+    if full:
+        tts_info = Info(tts=[TtsProgram(
+            name="R09 loopback TTS", attribution=attribution, installed=True,
+            description=None, version=None, supports_synthesize_streaming=True,
+            voices=[TtsVoice(name="test", attribution=attribution, installed=True,
+                             description=None, version=None, languages=["en-US"])],
+        )])
+
+        async def tts_connection(reader, writer):
+            active = False
+            try:
+                while (event := await async_read_event(reader)) is not None:
+                    if event.type == "describe":
+                        await async_write_event(tts_info.event(), writer)
+                        continue
+                    tts_wire.append(event)
+                    if event.type == "synthesize-start":
+                        active = True
+                        await async_write_event(AudioStart(rate=16000, width=2, channels=1).event(), writer)
+                        await async_write_event(AudioChunk(rate=16000, width=2, channels=1, audio=b"\x01\x02"*16000).event(), writer)
+                        tts_receiving.set()
+                    if event.type == "synthesize-stop" and not held_tts:
+                        await async_write_event(AudioStop().event(), writer)
+                        await async_write_event(SynthesizeStopped().event(), writer)
+                        break
+                if active and held_tts:
+                    tts_fin.set()
+                    await tts_release.wait()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                if active:
+                    tts_closed.set()
+
+        tts_server = await asyncio.start_server(tts_connection, "127.0.0.1", 0)
+        tts_entry = MockConfigEntry(domain="wyoming", title="R09 TTS",
+            data={"host": "127.0.0.1", "port": tts_server.sockets[0].getsockname()[1]})
+        tts_entry.add_to_hass(hass)
+
     try:
         assert await async_setup_component(hass, "wyoming", {})
         await hass.async_block_till_done()
         from homeassistant.helpers import entity_registry as er
         stt_id = er.async_get(hass).async_get_entity_id("stt", "wyoming", f"{entry.entry_id}-stt")
         assert stt_id
+        tts_id = None
+        if tts_entry is not None:
+            await hass.async_block_till_done()
+            tts_id = er.async_get(hass).async_get_entity_id("tts", "wyoming", f"{tts_entry.entry_id}-tts")
+            assert tts_id
+            assert await async_setup_component(hass, "ffmpeg", {})
+            hass.config.internal_url = "http://ha.local:8123"
         store = hass.data[KEY_ASSIST_PIPELINE].pipeline_store
         pipeline = await store.async_create_item(dict(
             name="Tivoo local test", language="en", conversation_engine="conversation.astrbot",
             conversation_language="en", stt_engine=stt_id, stt_language="en-US",
-            tts_engine=None, tts_language=None, tts_voice=None,
+            tts_engine=tts_id, tts_language="en-US" if tts_id else None, tts_voice="test" if tts_id else None,
             wake_word_entity=None, wake_word_id=None, prefer_local_intents=True,
         ))
         stop = AsyncMock()
@@ -115,6 +187,82 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             async_send_message=AsyncMock(side_effect=lambda *args: ready.set()),
             async_send_tts_play=AsyncMock(), register_playback_handler=Mock(),
         )
+        if full:
+            from custom_components.tivoo import diagnostics as codec
+            from custom_components.tivoo.transport import Esp32ConnectionAdapter, LOCAL_WAKE_CAPABILITY
+            from homeassistant.exceptions import HomeAssistantError
+            frames = []
+            frame_stream = codec.DiagnosticFrameStream()
+            sent = asyncio.Event()
+
+            class DeviceWriter:
+                def is_closing(self):
+                    return False
+
+                def write(self, data):
+                    for frame in frame_stream.feed(data):
+                        payload = json.loads(frame.payload)
+                        frames.append((frame.message_type, payload))
+                        if frame.message_type == codec.TYPE_STT_READY:
+                            ready.set()
+                        elif frame.message_type == codec.TYPE_TTS_PLAY:
+                            sent.set()
+
+                async def drain(self):
+                    if fault == "send_failure" and frames[-1][0] == codec.TYPE_TTS_PLAY:
+                        raise OSError("simulated diagnostic send failure")
+
+            if fault == "lost_terminal":
+                # Use the actual TCP connection loop for the R08 epoch-loss
+                # scenario. No control channel or hardware is needed here.
+                from custom_components.tivoo import transport
+                from test_transport import _read_tvio_message, _tvio_message
+                negotiated = asyncio.Queue()
+                diagnostic_messages = []
+                diagnostic_rx_sequence = 1
+
+                async def diagnostic_peer(reader, writer):
+                    epoch = len(diagnostic_peers)
+                    diagnostic_peers.append(writer)
+                    hello = dict(device_id="tivoo-esp32", firmware_version="0.1.0+abcdef0",
+                        protocol_version=1, capabilities=[*transport._BASE_CAPABILITIES,
+                            LOCAL_WAKE_CAPABILITY, "audio_control", "audio_resource_http"],
+                        reset_reason="ESP_RST_POWERON")
+                    writer.write(_tvio_message(codec.TYPE_HELLO, 0, json.dumps(hello).encode()))
+                    await writer.drain()
+                    try:
+                        ack = await _read_tvio_message(reader)
+                        status = await _read_tvio_message(reader)
+                        assert ack == (codec.TYPE_HELLO_ACK, 0, {"accepted": True, "capabilities": [LOCAL_WAKE_CAPABILITY]})
+                        assert status[0:2] == (codec.TYPE_GET_STATUS, 1)
+                        negotiated.put_nowait((epoch, writer))
+                        while True:
+                            kind, seq, payload = await _read_tvio_message(reader)
+                            diagnostic_messages.append((epoch, kind, seq, payload))
+                            frames.append((kind, payload))
+                            if kind == codec.TYPE_STT_READY:
+                                ready.set()
+                            elif kind == codec.TYPE_TTS_PLAY:
+                                sent.set()
+                    except (asyncio.IncompleteReadError, ConnectionError):
+                        pass
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
+
+                diagnostic_server = await asyncio.start_server(diagnostic_peer, "127.0.0.1", 0)
+                adapter = Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98", retry_interval=.05)
+                adapter.register_audio_session_manager(manager)
+                adapter._tasks["diagnostic"] = asyncio.create_task(adapter._connection_loop(
+                    "diagnostic", diagnostic_server.sockets[0].getsockname()[1]))
+                epoch, diagnostic_writer = await asyncio.wait_for(negotiated.get(), 3)
+                assert epoch == 0
+            else:
+                adapter = Esp32ConnectionAdapter(None)
+                adapter._diagnostic_handshaken = True
+                adapter._diagnostic_capabilities = {LOCAL_WAKE_CAPABILITY, "audio_control", "audio_resource_http"}
+                adapter._writers["diagnostic"] = DeviceWriter()
+                adapter.register_audio_session_manager(manager)
         display = ExpressionCoordinator(RecordingAdapter())
         await display.async_start()
         entity = TivooAssistSatellite("test-entry", manager, adapter, display)
@@ -165,6 +313,281 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         assert not wire and not ready.is_set()
         stop.reset_mock()
         events.clear()
+
+        if full:
+            from uuid import uuid4
+            from urllib.parse import urlsplit
+            from homeassistant.components import tts
+            from homeassistant.components.assist_pipeline.const import WAKE_WORD_COOLDOWN
+            from test_p68_lifecycle import followup
+            from homeassistant.core import Context
+            from custom_components.tivoo.tts_lifecycle import PipelineTtsOwner
+
+            from homeassistant.components import conversation
+            agent = conversation.async_get_agent(hass, "conversation.astrbot")
+            original_handle = agent._async_handle_message
+            intent_contexts = []
+
+            async def observed_intent(user_input, chat_log):
+                intent_contexts.append((user_input.satellite_id, user_input.context.id))
+                return await original_handle(user_input, chat_log)
+
+            monkeypatch.setattr(agent, "_async_handle_message", observed_intent)
+            if fault == "no_tts":
+                # A provider may return a valid successful response with no
+                # spoken text. Keep TTS configured and the public run unmodified;
+                # only substitute the conversation provider's result.
+                from homeassistant.helpers import intent
+                async def silent_result(user_input, chat_log):
+                    intent_contexts.append((user_input.satellite_id, user_input.context.id))
+                    response = intent.IntentResponse(language=user_input.language)
+                    return conversation.ConversationResult(response=response,
+                        conversation_id=chat_log.conversation_id)
+                monkeypatch.setattr(agent, "_async_handle_message", silent_result)
+            transcript = "tell me a story about Mars"
+            peer_fault = None
+            sid = str(uuid4())
+            await manager.async_start_session(local_start(sid, 101), persistent=True, local_mode=True)
+            await manager.async_handle_gate(gate(sid))
+            await asyncio.wait_for(ready.wait(), 3)
+            turn = entity.coordinator._turn
+            assert isinstance(turn.context, Context)
+            await manager.async_handle_activity(activity("speech_start", sid))
+            await manager.async_push_pcm(sid, b"x"*640)
+            await manager.async_handle_activity(activity("speech_end", sid, pcm_samples=320))
+            await asyncio.wait_for(got_stop.wait(), 3)
+            def grants():
+                return [p for kind, p in frames if kind == codec.TYPE_FOLLOWUP_OPEN]
+            async def terminal(session_id, playback_id, state="completed", source="tts_http"):
+                nonlocal diagnostic_rx_sequence
+                data = json.dumps(dict(session_id=session_id, audio_id=playback_id, state=state, source=source)).encode()
+                handler = adapter._message_handlers[codec.TYPE_AUDIO_STATE]
+                if fault == "lost_terminal":
+                    handled = asyncio.Event()
+                    async def observed(message):
+                        await handler(message)
+                        handled.set()
+                    adapter._message_handlers[codec.TYPE_AUDIO_STATE] = observed
+                    try:
+                        diagnostic_writer.write(codec.encode_message(codec.TYPE_AUDIO_STATE, data, diagnostic_rx_sequence))
+                        diagnostic_rx_sequence += 1
+                        await diagnostic_writer.drain()
+                        await asyncio.wait_for(handled.wait(), 3)
+                    finally:
+                        adapter._message_handlers[codec.TYPE_AUDIO_STATE] = handler
+                else:
+                    await handler(codec.DiagnosticMessage(codec.TYPE_AUDIO_STATE, 0, 0, data))
+            async def idle():
+                await asyncio.wait_for(hass.async_block_till_done(wait_background_tasks=True), 8)
+
+            if fault == "no_tts":
+                await idle()
+                types = [e.type for e in events]
+                assert PipelineEventType.INTENT_END in types and PipelineEventType.RUN_END in types
+                assert PipelineEventType.ERROR not in types and PipelineEventType.TTS_START not in types
+                assert not grants() and not any(kind == codec.TYPE_TTS_PLAY for kind, p in frames)
+                assert not turn.tts_attempted and turn.run_returned and not turn.tts.send_failed
+                assert turn.context.id != sid and manager.active_session_id is None
+                assert intent_contexts == [(entity.entity_id, turn.context.id)]
+                stop.assert_awaited_once_with(sid, "conversation_complete")
+                return
+
+            await asyncio.wait_for(sent.wait(), 5)
+            play, = [p for kind, p in frames if kind == codec.TYPE_TTS_PLAY]
+            assert play["session_id"] == sid and play["playback_id"] == turn.tts.playback_id
+            assert intent_contexts == [(entity.entity_id, turn.context.id)]
+            assert play["mime_type"] == "audio/mpeg"
+            path = urlsplit(play["url"]).path
+            assert play["url"].startswith("http://ha.local:8123/api/tts_proxy/")
+            start_event = next(e for e in events if e.type == PipelineEventType.RUN_START)
+            token = start_event.data["tts_output"]["token"]
+            assert path == urlsplit(start_event.data["tts_output"]["url"]).path
+            owner = turn.tts._owner
+            assert isinstance(owner, PipelineTtsOwner)
+            assert owner.stream is tts.async_get_stream(hass, token)
+            assert not grants()
+            if fault == "send_failure":
+                await idle()
+                assert turn.tts.send_failed and manager.active_session_id is None
+                assert not grants()
+                stop.assert_awaited_once_with(sid, "pipeline_failed")
+                return
+
+            web_client = await aiohttp_client(hass.http.app)
+            get = asyncio.create_task(web_client.get(path))
+            await asyncio.wait_for(tts_receiving.wait(), 5)
+            if held_tts:
+                if hold_chat:
+                    await asyncio.wait_for(chat_waiting.wait(), 3)
+                await terminal(sid, play["playback_id"], "playing")
+                old_caller = turn.task
+                old_context = turn.context.id
+                await asyncio.sleep(WAKE_WORD_COOLDOWN + 0.05)
+                ready.clear()
+                new_sid = str(uuid4())
+                if fault == "eof_unconfirmed":
+                    from custom_components.tivoo import tts_lifecycle
+                    monkeypatch.setattr(tts_lifecycle, "_WYOMING_CLOSE_TIMEOUT", .5)
+                if fault == "unload":
+                    closing = asyncio.create_task(entity.async_will_remove_from_hass())
+                else:
+                    await manager.async_start_session(local_start(new_sid, 102), persistent=True, local_mode=True)
+                    await manager.async_handle_gate(gate(new_sid))
+                await asyncio.wait_for(tts_fin.wait(), 5)
+                assert not ready.is_set() and not owner._close_task.done()
+                if hold_chat:
+                    assert not old_caller.done()
+                assert len([e for e in events if e.type == PipelineEventType.RUN_START]) == 1
+                assert not grants()
+                if hold_chat:
+                    await asyncio.wait_for(stop_waiting.wait(), 5)
+                    assert not ready.is_set()
+                    stop_release.set()
+                    chat_release.set()
+                if fault == "eof_unconfirmed":
+                    await idle()
+                    assert not ready.is_set() and manager.active_session_id is None
+                    assert isinstance(owner._close_task.exception(), HomeAssistantError)
+                    assert not grants()
+                tts_release.set()
+                await asyncio.wait_for(tts_closed.wait(), 5)
+                response = await asyncio.wait_for(get, 5)
+                await response.read()
+                assert owner._close_task is not None
+                if fault == "unload":
+                    await asyncio.wait_for(closing, 5)
+                    assert manager.active_session_id is None
+                elif fault == "eof_unconfirmed":
+                    stop.assert_awaited_once_with(new_sid, "pipeline_failed")
+                elif hold_chat:
+                    await idle()
+                    assert turn.stop_unconfirmed and remote_stops == [chats[0]["session_id"]]
+                    assert manager.active_session_id is None and not ready.is_set()
+                    assert not grants()
+                    # A subsequent real local turn may enter STT, but the
+                    # quarantined AstrBot session must never reach /chat.
+                    await asyncio.sleep(WAKE_WORD_COOLDOWN + 0.05)
+                    ready.clear()
+                    rejected_sid = str(uuid4())
+                    await manager.async_start_session(local_start(rejected_sid, 103), persistent=True, local_mode=True)
+                    await manager.async_handle_gate(gate(rejected_sid))
+                    await asyncio.wait_for(ready.wait(), 5)
+                    await manager.async_handle_activity(activity("speech_start", rejected_sid))
+                    await manager.async_push_pcm(rejected_sid,b"q"*640)
+                    await manager.async_handle_activity(activity("speech_end", rejected_sid,pcm_samples=320))
+                    await idle()
+                    assert len(chats) == 1 and not grants() and manager.active_session_id is None
+                    await hass.services.async_call("astrbot", "new_conversation", blocking=True)
+                    hold_chat = False
+                    held_tts = False
+                    reply = "Recovered."
+                    ready.clear()
+                    sent.clear()
+                    await asyncio.sleep(WAKE_WORD_COOLDOWN + 0.05)
+                    new_sid = str(uuid4())
+                    await manager.async_start_session(local_start(new_sid, 104), persistent=True, local_mode=True)
+                    await manager.async_handle_gate(gate(new_sid))
+                    await asyncio.wait_for(ready.wait(), 5)
+                    await manager.async_handle_activity(activity("speech_start", new_sid))
+                    await manager.async_push_pcm(new_sid,b"y"*640)
+                    await manager.async_handle_activity(activity("speech_end", new_sid,pcm_samples=320))
+                    await asyncio.wait_for(sent.wait(), 5)
+                    recovery = [p for kind,p in frames if kind == codec.TYPE_TTS_PLAY][-1]
+                    assert recovery["session_id"] == new_sid
+                    result = await web_client.get(urlsplit(recovery["url"]).path)
+                    assert result.status == 200 and len(await result.read()) > 44
+                    await terminal(new_sid, recovery["playback_id"])
+                    await idle()
+                    assert manager.active_session_id is None and not grants()
+                    assert len(chats) == 2 and chats[0]["session_id"] != chats[1]["session_id"]
+                else:
+                    await asyncio.wait_for(ready.wait(), 5)
+                    assert manager.active_session_id == new_sid
+                    assert entity.coordinator._turn.context.id != old_context
+                    await terminal(sid, play["playback_id"])
+                    assert manager.active_session_id == new_sid and not grants()
+                    await manager.async_disconnect()
+                    await idle()
+                assert old_caller.done() and owner._close_task.done()
+                targets = [p for kind,p in frames if kind == codec.TYPE_AUDIO_STOP]
+                assert any(p["session_id"] == sid and p["expected_audio_id"] == play["playback_id"] for p in targets)
+                return
+
+            response = await asyncio.wait_for(get, 5)
+            assert response.status == 200 and response.content_type == "audio/mpeg"
+            data = await asyncio.wait_for(response.read(), 5)
+            assert data.startswith(b"ID3") and len(data) > 44
+            await idle()
+            types = [e.type for e in events]
+            for event_type in (PipelineEventType.STT_END, PipelineEventType.INTENT_END, PipelineEventType.TTS_END, PipelineEventType.RUN_END):
+                assert types.count(event_type) == 1
+            assert PipelineEventType.ERROR not in types
+            assert next(e for e in events if e.type == PipelineEventType.INTENT_END).data["intent_output"]["continue_conversation"] is True
+            assert turn.run_returned and not grants() and manager.active_session_id == sid
+            assert owner.producer.done()
+            await terminal(str(uuid4()), play["playback_id"])
+            await terminal(sid, str(uuid4()))
+            await terminal(sid, play["playback_id"], source="prompt")
+            assert not grants() and not turn.playback_completed
+            await terminal(sid, play["playback_id"], "playing")
+            if fault == "lost_terminal":
+                # R08 retires the diagnostic epoch, without inventing a
+                # completed terminal. Wait for the actual new HELLO/ACK.
+                old_writer = diagnostic_writer
+                old_writer.close()
+                await old_writer.wait_closed()
+                epoch, diagnostic_writer = await asyncio.wait_for(negotiated.get(), 3)
+                await idle()
+                assert epoch == 1 and diagnostic_writer is not old_writer
+                diagnostic_rx_sequence = 1
+                assert not grants() and manager.active_session_id is None
+                await asyncio.sleep(WAKE_WORD_COOLDOWN + 0.05)
+                ready.clear()
+                await manager.async_start_session(local_start(SESSION_2, 1), persistent=True, local_mode=True)
+                await manager.async_handle_gate(gate(SESSION_2))
+                await asyncio.wait_for(ready.wait(), 3)
+                assert diagnostic_messages[-1][:3] == (1, codec.TYPE_STT_READY, 2)
+                await terminal(sid, play["playback_id"])
+                assert manager.active_session_id == SESSION_2 and not grants()
+                print(f"R09 actual diagnostic epochs: {diagnostic_messages!r}")
+                return
+            await terminal(sid, play["playback_id"])
+            await idle()
+            assert grants() == [{"session_id": sid}]
+            await terminal(sid, play["playback_id"])
+            await idle()
+            assert len(grants()) == 1
+            await asyncio.sleep(WAKE_WORD_COOLDOWN + 0.05)
+            ready.clear()
+            payload = followup(sid)
+            await manager.async_start_session(payload, persistent=True, local_mode=True)
+            await manager.async_handle_gate(gate(SESSION_2))
+            await asyncio.wait_for(ready.wait(), 3)
+            assert manager.active_session_id == SESSION_2
+            followup_turn = entity.coordinator._turn
+            assert followup_turn.context.id != turn.context.id
+            await terminal(sid, play["playback_id"])
+            assert manager.active_session_id == SESSION_2 and len(grants()) == 1
+            # Consume the grant once and complete the follow-up with a new
+            # actual STT/Intent/TTS run (not just a START handshake).
+            sent.clear()
+            reply = "That is all."
+            await manager.async_handle_activity(activity("speech_start", SESSION_2))
+            await manager.async_push_pcm(SESSION_2,b"y"*640)
+            await manager.async_handle_activity(activity("speech_end", SESSION_2,pcm_samples=320))
+            await asyncio.wait_for(sent.wait(), 5)
+            second = [p for kind,p in frames if kind == codec.TYPE_TTS_PLAY][-1]
+            assert second["session_id"] == SESSION_2 and second["playback_id"] != play["playback_id"]
+            second_get = await web_client.get(urlsplit(second["url"]).path)
+            assert second_get.status == 200 and len(await second_get.read()) > 44
+            await terminal(SESSION_2, second["playback_id"])
+            await idle()
+            assert manager.active_session_id is None and len(grants()) == 1
+            assert len(chats) == 2 and chats[0]["session_id"] == chats[1]["session_id"]
+            assert intent_contexts == [(entity.entity_id, turn.context.id), (entity.entity_id, followup_turn.context.id)]
+            assert [e.type for e in wire].count("audio-stop") == 2
+            print(f"R09 {fault}: events={types!r} playback={play} context={turn.context.id} device={frames!r}")
+            return
 
         if fault is not None:
             from uuid import uuid4
@@ -377,13 +800,28 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         assert chats[0]["session_id"] == chats[1]["session_id"]
         assert chats[1]["session_id"] != chats[2]["session_id"]
     finally:
+        chat_release.set()
+        stop_release.set()
+        tts_release.set()
         if manager is not None:
             await manager.async_disconnect()
         if entity is not None:
             await entity.async_will_remove_from_hass()
         if display is not None:
             await display.async_shutdown()
+        if diagnostic_server is not None:
+            await adapter.async_stop()
+            for writer in diagnostic_peers:
+                writer.close()
+                await writer.wait_closed()
+            diagnostic_server.close()
+            await diagnostic_server.wait_closed()
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.config_entries.async_unload(astrbot.entry_id)
+        if tts_entry is not None:
+            await hass.config_entries.async_unload(tts_entry.entry_id)
+        if tts_server is not None:
+            tts_server.close()
+            await tts_server.wait_closed()
         server.close()
         await server.wait_closed()
