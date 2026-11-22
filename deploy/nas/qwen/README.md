@@ -70,6 +70,42 @@ Qwen 不支持配置级 `readOnly`/`approval` 策略，不能添加这些字段�
 上游会把非字母数字下划线字符替换成 `_` 并限制总长度 128，部署时须检查名称碰撞。
 白名单覆盖当前已授权合同能力；既不把开发测试的工具数量当作上限，也不自动启用 NAS 新出现的非合同能力。
 未列出或 `enabled=false` 的工具不暴露。
+
+### B8.7 冷启动门
+
+生产部署同时安装 `wait-ha-mcp.mjs` 与 `qwen-entrypoint.sh`。Compose 将二者只读挂载到容器，
+并用 `qwen-entrypoint.sh` 替换镜像默认 entrypoint；脚本先调用真实 HA `/api/mcp/assist`
+`tools/list`，从持久 `frontend-mcp.json` 读取 `homeassistant` server 中所有 `enabled=true`
+的工具名。只有这些工具全部出现在实时目录后，才执行原始 `qwenaudio gateway --lan`。
+
+这不是第二套 MCP client，也不缓存 tools/list；它只解决 HA 与 Qwen 同时冷启动时 `/api/mcp/assist`
+可能先 404、再返回部分工具，而 Qwen 2.1.0 Frontend MCP 只做一次启动发现的问题。等待上限
+120 秒；超时进程退出，由 Compose `restart: unless-stopped` 重新尝试。日志只记录 HTTP 状态、
+缺失工具数量和最终发现/要求数量，不输出 Authorization。运行中的 HA 重启不依赖此门：B8.7
+真实验证中，既有 Qwen MCP client 在 HA 恢复后可继续调用工具。
+
+NAS Compose 保留原 `init`、端口、env_file 和其他 mounts，只增加：
+
+```yaml
+services:
+  qwen-audio-agent:
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/lib/tivoo/qwen-entrypoint.sh"]
+    volumes:
+      - ./startup/qwen-entrypoint.sh:/usr/local/lib/tivoo/qwen-entrypoint.sh:ro
+      - ./startup/wait-ha-mcp.mjs:/usr/local/lib/tivoo/wait-ha-mcp.mjs:ro
+```
+
+宿主将仓库这两个文件复制到 Qwen Compose 目录的 `startup/`；不要把 token 写入脚本或 Compose。
+
+本地定向测试：
+
+```bash
+node --test deploy/nas/qwen/tests/wait-ha-mcp.test.mjs
+```
+
+覆盖 endpoint 404、部分工具、完整工具与始终缺工具 fail-closed。
+
 上游上限：8 server、每 server 64 tool policy；连接超时 100–30000 ms，
 单次调用超时 100–30000 ms，结果 1024–65536 bytes，每工具每 turn 1–4 次。
 模板选用 1 server、8 s 连接、10 s 调用、32 KiB 结果、每工具每 turn 2 次。

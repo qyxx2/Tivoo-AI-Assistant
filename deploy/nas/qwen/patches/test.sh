@@ -27,7 +27,8 @@ fi
 cat "$SCRATCH/red.log"
 patch --batch --fuzz=0 -p1 < "$HERE/0001-frontend-mcp-private-http.patch"
 export QWEN_B83_SOURCE="$PWD"
-node --test "$HERE"/tests/*.test.mjs \
+node --test "$HERE/tests/private-http.test.mjs" \
+  "$HERE/tests/mcp-integration.test.mjs" \
   server/test/frontend-mcp-config.test.mjs \
   server/test/frontend-mcp-client.test.mjs \
   server/test/tool-call-handler.test.mjs \
