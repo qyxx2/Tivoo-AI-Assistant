@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **B8.1 follow-up 产品决策已确定，B8.2 预检可启动；B8.5/B8.6 实现仍须等待 B8.2 的文本标点与同 socket 双轮实测通过。** 用户选择方案 A：模型最终助手文本用 `？`/`?` 表达确实需要用户下一步回答，HA 只解析当前 generation 的 assistant `transcript.final`。该约定是项目应用层策略，不是 Qwen 原生 `continue_conversation` 字段。设计：[Qwen Realtime 条件续聊设计](../specs/2026-11-22-p6-8-qwen-realtime-followup-design.md)；运行时证据：[Qwen Audio Agent 实测报告](../reports/2026-11-22-p6-8-qwen-audio-agent-runtime-investigation.md)。
+- **B8.1 产品决策不变，B8.2 标点与同 socket 多轮预检 PASS；B8.5/B8.6 仍须先核销合同矩阵 §2.1 的正常终态可观测性门禁。** 用户选择方案 A：模型最终助手文本用 `？`/`?` 表达确实需要用户下一步回答，HA 只解析当前 generation 的 assistant `transcript.final`。该约定是项目应用层策略，不是 Qwen 原生 `continue_conversation` 字段。设计：[Qwen Realtime 条件续聊设计](../specs/2026-11-22-p6-8-qwen-realtime-followup-design.md)；运行时证据：[Qwen Audio Agent 实测报告](../reports/2026-11-22-p6-8-qwen-audio-agent-runtime-investigation.md)。
 - 仅替换语音/LLM 输入输出链路。保留本地唤醒、S3 AFE/VAD、7777/7778、UART/SPP、HA Services、HA MCP API、ExpressionCoordinator、ScreenPowerGate、音频输出唯一 owner、设备状态和其他 P6.8 工作。
 - HA 继续是业务控制面和设备状态/服务权威。Qwen 负责实时语音理解、模型推理、工具选择和回答；Qwen 不直接连接 ESP32/SPP，不新增第二套设备控制、显示或播放仲裁。
 - **复用现有 HA Assist MCP endpoint**：`/api/mcp/assist`，Streamable HTTP；不得另建第二套 HA MCP Server、GCP Client Action 映射或自制 28 个 Tivoo 工具。Qwen 使用标准 Frontend MCP Client。Qwen 的工具 allowlist 必须基于 NAS 实际 `tools/list`，不是把开发机测试列表直接当作生产配置。
@@ -39,13 +39,13 @@
 
 ## B8.1 — 独立合同矩阵审查与放行门禁
 
-**结果：B8.1 源码/协议审查与产品策略设计完成；产品决策 Gate 已解除，B8.2 技术 Gate PENDING。** GCP 7.0 没有原生 `continue_conversation` 字段或授权事件，因此问号只作为项目应用层约定，不标记为 Qwen 原生授权。详细合同见 [Qwen Realtime 条件续聊设计](../specs/2026-11-22-p6-8-qwen-realtime-followup-design.md)。允许先开始 B8.2 预检；B8.2 必须验证助手最终文本标点保真和同活动 socket 双轮上下文，两项未通过前 B8.5/B8.6 不得实现问号续聊。
+**结果：B8.1 审查与产品策略设计完成；B8.2 预检 PASS。后续最小实现补充及门禁以合同矩阵 §2.1 为准。** GCP 7.0 没有原生 `continue_conversation` 字段或授权事件，因此问号只作为项目应用层约定，不标记为 Qwen 原生授权。详细合同见 [Qwen Realtime 条件续聊设计](../specs/2026-11-22-p6-8-qwen-realtime-followup-design.md)。这两项预检已通过；正常终态可观测性与生产生命周期验收仍按合同矩阵 §2.1 执行。
 
 - [x] 审阅 P6.8 49 条合同矩阵与旧迁移索引受影响条目。审查矩阵：[B8.1 Qwen Realtime 合同矩阵](../specs/2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix.md)。
 - [x] 核对本地 VAD EOF 与 Qwen Provider VAD 的边界、ConfigEntry.entry_id 到 Qwen URL sessionId 的项目映射、MCP 权限边界、response/tool/audio/playback 生命周期、取消和 owner 冲突语义。原生续聊授权字段缺失已确认；用户随后选择以 assistant `transcript.final` 问号约定作为项目策略，详见 B81-C15 与条件续聊设计。
-- [x] 形成独立审查报告：[B8.1 合同矩阵审查报告](../reports/2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix-review.md)。报告新增用户决策补充：产品策略已确定，B8.2 技术 Gate 仍待验证。
+- [x] 形成独立审查报告：[B8.1 合同矩阵审查报告](../reports/2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix-review.md)。报告保留原审查与用户决策历史；最新预检及实现门禁以 B8.2 报告和合同矩阵 §2.1 为准。
 
-**放行条件更新：** 用户已明确选择“最终助手文本问号约定 + HA 判断”的应用层策略，产品决策层面已解决 B81-C15；允许仅启动 B8.2 真实协议预检。B8.2 必须通过 assistant `transcript.final` 保留 `？`/`?`/普通标点，以及同一活动 WebSocket 双轮上下文验证。未通过前不实施 B8.5/B8.6 的生产问号解析/续聊状态；不得改用 `audio.done`、`voice.state=idle` 或只靠 sessionId 重连推断授权/上下文。
+**放行条件更新：** 方案 A、B8.2 预检 PASS 保留。B8.3/B8.4 按原范围推进；B8.5 接入前先证明正常最终响应与 cancelled/incomplete 的客户端可区分性，未核销不得以无 error、audio.done 或 idle 视为成功。其余连接移交、早端点/清播放及 PCM 清理条目随 B8.5/B8.6 验收，统一见 [合同矩阵 §2.1](../specs/2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix.md#21-现有合同的最小实现补充2026-11-22)。本次不新增上游协议改造批次。
 
 ## B8.2 — Qwen GCP、HA PCM 边界与本地 HTTP 预检
 
@@ -117,6 +117,8 @@
 
 ## B8.5 — HA Qwen Realtime Bridge（替换 STT/LLM/TTS 入口）
 
+**接入前门禁及验收补充：** 先核销合同矩阵 §2.1 的正常终态可观测性；未通过保持 HOLD，不臆造 GCP 字段。Step 2/3/7/8 同时覆盖早端点与同 MIC 多 turnId、playback.clear、满队列/无 GET/断连清理、工具中间响应和晚到最终文本。只补既有 bridge 的边界测试，不新增服务或状态机。
+
 **Files:**
 - Create: `homeassistant/custom_components/tivoo/qwen_realtime.py` by adapting the verified test-branch bridge, not blind cherry-picking.
 - Modify: `homeassistant/custom_components/tivoo/__init__.py`, `assist_satellite.py`, and only the existing transport/resource code needed for Qwen raw PCM delivery.
@@ -140,13 +142,15 @@
 
 ## B8.6 — HA 会话身份、打断、显示事件与 follow-up 生命周期
 
+**验收补充：** Step 4/5/8 按合同矩阵 §2.1 测试已授权 follow-up 的旧轮 retire 与原 socket 移交、迟到事件隔离、移交失败收口，以及 suspend/deactivated 不自行重新开麦；不增加设备控制消息或会话管理层。
+
 **Files:**
 - Modify: `homeassistant/custom_components/tivoo/assist_satellite.py`, `qwen_realtime.py`, and the smallest required display/playback callback surface.
 - Tests: extend `test_assist_satellite.py`, `test_p68_lifecycle.py`, `test_p68_display.py`; add Qwen lifecycle-focused tests.
 
 **Interfaces:**
 - Qwen URL 的 `sessionId` 使用当前 `ConfigEntry.entry_id` 的稳定映射；HA `Context.id` 仍是每轮新建的 turn/generation；ESP32 `session_id` 和 playback UUID 保持独立。当前 Tivoo AssistSatellite 不调用 HA ChatSession。
-- Qwen `client.instance_id` 固定为 `tivoo-<ConfigEntry.entry_id>`，跨 turn / reconnect 不变；Gateway owner 由现有 Gateway access-token 决定。**immediate follow-up 必须在原活动 WebSocket 上继续；仅普通回复结束、follow-up gate 超时或错误收口时才关闭连接。** 独立 wake 的重连恢复需 B8.2 实测。
+- Qwen `client.instance_id` 固定为 `tivoo-<ConfigEntry.entry_id>`，跨 turn / reconnect 不变；Gateway owner 由现有 Gateway access-token 决定。**immediate follow-up 必须在原活动 WebSocket 上继续；仅普通回复结束、follow-up gate 超时或错误收口时才关闭连接。** 独立 wake 的重连恢复已由 B8.2 预检验证，生产接入仍须回归。
 
 - [ ] **Step 1: Add RED session mapping tests.** Two independent local-wake conversations under the same ConfigEntry reconnect with the same Qwen sessionId and stable client.instance_id; verify journal/history recovery separately from same-socket follow-up; a different ConfigEntry must use a different sessionId. Do not invent HA ChatSession or conversation ULID behavior.
 - [ ] **Step 2: Add RED owner/connection tests.** Same instance reconnect replaces its stale Gateway socket; different same-owner client gets the expected occupied result. Handle Gateway heartbeat ping/pong and negotiated capabilities; never start a second active Client intentionally.

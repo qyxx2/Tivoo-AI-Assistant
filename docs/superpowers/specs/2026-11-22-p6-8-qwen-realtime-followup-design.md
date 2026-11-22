@@ -1,7 +1,7 @@
 # P6.8 Qwen Realtime 条件续聊设计
 
 > - 日期：2026-11-22
-> - 状态：产品方向已由用户选择方案 A；实现未开始。B8.2 的真实协议验证通过前，不得进入 B8.5/B8.6 的生产实现。
+> - 状态：方案 A 不变；B8.2 标点与同 socket 多轮预检已通过，生产实现未开始。B8.5/B8.6 仍受合同矩阵 §2.1 的正常终态门禁约束。
 > - 范围：仅适用于 P6.8 的 Qwen Realtime 语音路径；旧 AstrBot/HA Pipeline 路径及其既有 INTENT_END.continue_conversation 语义不变。
 
 ## 1. 已确定的产品行为
@@ -102,7 +102,7 @@ def wants_followup(text: str) -> bool:
 6. Qwen 在同一活动 Realtime 会话上下文中接收下一轮；Gateway 为新输入产生新的 turnId/responseId。
 7. 新响应再次判断是否续聊，形成下一轮相同流程。
 
-不要只保存 sessionId、关闭 socket 后立即用相同字符串重连，再假定上下文必然还在。配置中的稳定 URL \`sessionId\` 是会话历史键，不等价于原来的活动 WebSocket。断开后 journal 恢复能力另由 B8.2 验证。
+不要只保存 sessionId、关闭 socket 后立即用相同字符串重连，再假定上下文必然还在。配置中的稳定 URL \`sessionId\` 是会话历史键，不等价于原来的活动 WebSocket。断开后 journal 恢复已由 B8.2 单独预检验证。
 
 普通答复没有问号时，等匹配设备播放完成并正常结束 turn 后关闭 Gateway socket。问号触发后则保留 socket，直至续聊输入到达并完成后续响应，或 4 秒 gate 超时/取消/连接失败。
 
@@ -126,6 +126,8 @@ def wants_followup(text: str) -> bool:
 - 新真实唤醒、用户打断、Qwen 响应失败、ESP32 播放失败、HA unload、Gateway disconnect：先让现有 HA generation 失效并停止匹配播放，再按 B8.1 已核实的取消顺序取消/关闭 Gateway socket；旧事件不得影响新 turn。
 - 以后一个独立的新唤醒如需重连同一 sessionId，必须以 B8.2 的 journal/context continuity 实测为依据；不把它与上述 immediate follow-up 混为一谈。
 
+连接归属、旧轮 retire 与新轮移交，以及迟到事件过滤，统一遵循 [合同矩阵 §2.1](2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix.md#21-现有合同的最小实现补充2026-11-22)；复用现有 bridge/coordinator，不新增会话管理层。
+
 ## 5. HA 与 ESP32 的最小生命周期
 
 复用当前 P6.8 的实现与合同，不发明新的设备消息：
@@ -146,7 +148,7 @@ def wants_followup(text: str) -> bool:
 - Gateway / Agent 会处理工具结果后的模型续接。HA 只判断工具执行结束后面向用户的最终 assistant \`transcript.final\`，不判断中间 response。
 - \`audio.done\` 表示某个模型 response 的音频生成结束，不表示工具链结束，也不代表 ESP32 物理播放结束。
 - \`AUDIO_STATE=completed\` 且 playback_id 匹配，才是本系统的设备播放完成条件。
-- response 失败、中断、被旧 generation 抑制或没有有效最终文本，默认不续聊。
+- response 失败、中断、被旧 generation 抑制或没有有效最终文本，默认不续聊。锁定 Gateway 的 cancelled/incomplete 终态可能不向客户端公开，问号与 audio.done 不能证明正常成功；该可观测性缺口按合同矩阵 §2.1 保持门禁，不新增猜测字段，也不默许放宽条件。
 
 ## 7. B8 批次分工
 
@@ -178,10 +180,6 @@ def wants_followup(text: str) -> bool:
 
 ### Gate
 
-B8.2 必须证明：
-1. 当前锁定 Agent 的助手文本最终事件确实到达 HA，中文问号和句号没有被丢失或改写。
-2. 同一活动 Gateway WebSocket 可在一个 response 结束后接收下一轮音频，并保持上一轮上下文。
-3. 对话第二轮产生新 turn/response 标识，session 仍保持同一活动会话。
-4. 普通语句、工具调用中间阶段、错误和中断不会误判为最终追问。
+B8.2 已验证助手最终文本的标点/身份关联及同一活动 socket 多轮上下文，详见 [B8.2 报告](../reports/2026-11-22-p6-8-b8-2-qwen-gcp-pcm-preflight.md)。该结果不证明 cancelled/incomplete 可被客户端识别，也不代表 HA/设备续聊已验收。
 
-在这些条件完成前，只允许 B8.2 预检，不得实现生产侧问号解析或部署 prompt overlay。
+B8.5 接入前须先核销合同矩阵 §2.1 的正常终态门禁；B8.5/B8.6 的反例测试须覆盖最终问句后取消/不完整、工具中间文本、文本晚于物理完成、旧轮清理后同 socket 接续。方案 A、0x27、4 秒 gate 与 B8.7 Prompt 部署范围均不变。
