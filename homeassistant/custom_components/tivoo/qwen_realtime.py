@@ -185,8 +185,9 @@ class QwenTurnOwner:
         self.playback_failed = False
         self.stopped = False
         self.success = False
-        # Set only by an explicit authorized caller; punctuation/gate is B8.6.
+        # Satellite decides retention after the validated final result.
         self.keep_socket = False
+        self.on_connection_lost: Callable[[], None] | None = None
         self.turn_id = None
         self.responses = {}
         self.completed_responses = set()
@@ -586,6 +587,8 @@ class QwenRealtimeBridge:
         owner: QwenTurnOwner,
         audio: AsyncIterator[bytes],
         on_event: Callable[[dict], None],
+        *,
+        on_result: Callable[[QwenResult], None] | None = None,
     ) -> QwenResult:
         sender = receiver = waiter = get_waiter = None
         if self._owner is not None:
@@ -627,12 +630,15 @@ class QwenRealtimeBridge:
                     ):
                         sender.result()
                         owner.success = True
-                        return QwenResult(
+                        result = QwenResult(
                             owner.transcripts[owner.final_response],
                             owner.turn_id,
                             owner.final_response,
                             not owner.final_has_tools,
                         )
+                        if on_result is not None:
+                            on_result(result)
+                        return result
                     owner.changed.clear()
                     waiter = asyncio.create_task(owner.changed.wait())
                     tasks = {receiver, waiter}
@@ -711,7 +717,7 @@ class QwenRealtimeBridge:
                         self._retained_parent = owner.session_id
                         if owner.turn_id:
                             self._retired_turns.add(owner.turn_id)
-                        self._retained_task = asyncio.create_task(self._retain())
+                        self._retained_task = asyncio.create_task(self._retain(owner))
                     else:
                         await self._close_socket()
             finally:
@@ -736,7 +742,7 @@ class QwenRealtimeBridge:
                     json.dumps(owner.timings, separators=(",", ":")),
                 )
 
-    async def _retain(self):
+    async def _retain(self, owner):
         try:
             async with asyncio.timeout(RETAIN_SECONDS):
                 while True:
@@ -758,6 +764,18 @@ class QwenRealtimeBridge:
             TimeoutError,
         ):
             _LOGGER.debug("Qwen retained connection ended")
+        await self._close_socket()
+        if owner.on_connection_lost is not None:
+            owner.on_connection_lost()
+
+    async def async_release_parent(self, session_id):
+        """Revoke only this retired MIC's retained connection, joining its reader."""
+        if self._retained_parent != session_id:
+            return
+        if self._retained_task:
+            self._retained_task.cancel()
+            await asyncio.gather(self._retained_task, return_exceptions=True)
+            self._retained_task = None
         await self._close_socket()
 
     async def _close_socket(self):

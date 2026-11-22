@@ -1,7 +1,7 @@
 # P6.8 Qwen Realtime 条件续聊设计
 
 > - 日期：2026-11-22
-> - 状态：方案 A 不变；B8.2 标点与同 socket 多轮预检已通过，生产实现未开始。B8.5/B8.6 仍受合同矩阵 §2.1 的正常终态门禁约束。
+> - 状态：方案 A 不变；B8.2 预检、B8.5 Bridge 与 B8.6 条件续聊软件验收通过。正常终态门禁在 B8.5 最小兼容补丁源码副本核销；NAS 尚未安装补丁，生产部署与实机验收仍归 B8.7。
 > - 范围：仅适用于 P6.8 的 Qwen Realtime 语音路径；旧 AstrBot/HA Pipeline 路径及其既有 INTENT_END.continue_conversation 语义不变。
 
 ## 1. 已确定的产品行为

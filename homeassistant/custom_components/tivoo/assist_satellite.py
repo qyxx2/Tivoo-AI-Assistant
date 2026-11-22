@@ -41,7 +41,7 @@ from .prompt_audio import PromptSoundPlayer
 from .transport import Esp32ConnectionAdapter
 
 if TYPE_CHECKING:
-    from .qwen_realtime import QwenRealtimeBridge, QwenTurnOwner
+    from .qwen_realtime import QwenRealtimeBridge, QwenResult, QwenTurnOwner
 
 _LOGGER = logging.getLogger(__name__)
 _WAKE_WORD_ID = "tivoo-wake"
@@ -122,6 +122,7 @@ class AudioSessionCoordinator:
         self._turn: _Turn | None = None
         self._timers: dict[str, Callable[[], None]] = {}
         self._followup = False
+        self._qwen_followup_parent: str | None = None
         self._closing: asyncio.Future | None = None
         self._event_turn: _Turn | None = None
         self._prompt_generation: str | None = None
@@ -209,7 +210,11 @@ class AudioSessionCoordinator:
     @callback
     def on_local_start(self, session_id: str, phrase: str | None) -> None:
         self._session_id = session_id
-        self._start_turn(PipelineStage.STT, start=0, confirmed=phrase is not None, local_phrase=phrase, local_mode=True)
+        parent, self._qwen_followup_parent = self._qwen_followup_parent, None
+        self._start_turn(
+            PipelineStage.STT, start=0, confirmed=phrase is not None,
+            local_phrase=phrase, local_mode=True, parent_session_id=parent,
+        )
 
     @callback
     def on_gate(self, session_id: str) -> None:
@@ -272,6 +277,7 @@ class AudioSessionCoordinator:
         prompt_before_command: bool = False,
         local_phrase: str | None = None,
         local_mode: bool = False,
+        parent_session_id: str | None = None,
     ) -> None:
         self._clear_timers()
         self._followup = False
@@ -289,6 +295,7 @@ class AudioSessionCoordinator:
                 context.id,
                 current=lambda: self._turn is turn and not turn.error,
                 prompt_player=player,
+                parent_session_id=parent_session_id,
             )
         else:
             tts = PipelineTtsEvents(
@@ -431,8 +438,46 @@ class AudioSessionCoordinator:
                             ):
                                 turn.valid_stt = True
                                 self._cancel_timer("stt_finalize_timeout")
+                                self.display.update_voice(
+                                    turn.context.id,
+                                    clear=(DisplayState.WAKE_CONFIRMED, DisplayState.ACTIVE_LISTENING,
+                                           DisplayState.FOLLOWUP_WAIT),
+                                    state=DisplayState.THINKING, preset="thinking", reply_active=True,
+                                )
+                            elif event.get("type") == "tool.call":
+                                if any(
+                                    status in {"received", "running"}
+                                    for _, status in turn.tts.tools.values()
+                                ):
+                                    self.display.update_voice(
+                                        turn.context.id, state=DisplayState.TOOLUSE, preset="tooluse"
+                                    )
+                                else:
+                                    self.display.update_voice(
+                                        turn.context.id, clear=(DisplayState.TOOLUSE,)
+                                    )
 
-                        await qwen.async_run(turn.tts, audio, on_qwen_event)
+                        def on_qwen_result(result: QwenResult) -> None:
+                            # Bridge supplies only the correlated, normally completed
+                            # final response after input/HTTP/physical playback drain.
+                            if self._turn is not turn or turn.error:
+                                return
+                            turn.continue_conversation = bool(
+                                result.followup_eligible and turn.valid_stt
+                                and result.transcript.rstrip().endswith(("？", "?"))
+                            )
+                            turn.tts.keep_socket = turn.continue_conversation
+
+                        def connection_lost() -> None:
+                            if self._turn is turn:
+                                turn.continue_conversation = False
+                                self.entity.hass.async_create_task(
+                                    self.ingress.async_stop_session(turn.session_id, "qwen_connection_lost"),
+                                    "Tivoo retained Qwen connection ended",
+                                )
+
+                        turn.tts.on_connection_lost = connection_lost
+                        await qwen.async_run(turn.tts, audio, on_qwen_event, on_result=on_qwen_result)
                         if self._turn is turn:
                             turn.run_end = True
                             turn.intent_finished = True
@@ -542,6 +587,8 @@ class AudioSessionCoordinator:
                     _LOGGER.error("Tivoo old Pipeline failed: %s", result)
             try:
                 await turn.tts.async_close()
+                if self.entity.qwen_bridge is not None and reason != "followup":
+                    await self.entity.qwen_bridge.async_release_parent(turn.session_id)
             except Exception:
                 _LOGGER.exception("Tivoo old TTS owner cleanup failed")
                 clean = False
@@ -856,6 +903,7 @@ class AudioSessionCoordinator:
         if self._session_id != session_id:
             return
         self._session_id = None
+        self._qwen_followup_parent = session_id if reason == "followup" else None
         self._followup = False
         self._cancel_prompt()
         self._clear_timers()

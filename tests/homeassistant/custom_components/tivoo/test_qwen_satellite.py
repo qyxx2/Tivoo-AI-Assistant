@@ -9,6 +9,7 @@ from custom_components.tivoo.assist_satellite import TivooAssistSatellite
 from custom_components.tivoo.audio_session import AudioSessionManager
 from custom_components.tivoo.diagnostics import TYPE_STT_READY
 from custom_components.tivoo.display_state import ExpressionCoordinator
+from custom_components.tivoo.qwen_realtime import QwenResult
 from test_audio_session import SESSION_1, SESSION_2
 from test_display_state import RecordingAdapter
 from test_p68_local_session import activity, gate, local_start
@@ -32,12 +33,12 @@ class Bridge:
         self.current = None
         self.playback = []
 
-    def create_turn(self, session_id, generation, *, current, prompt_player=None):
+    def create_turn(self, session_id, generation, *, current, prompt_player=None, parent_session_id=None):
         self.session_id, self.generation = session_id, generation
         self.current = current
         return self.owner
 
-    async def async_run(self, owner, audio, on_event):
+    async def async_run(self, owner, audio, on_event, *, on_result=None):
         assert owner is self.owner
         self.on_event = on_event
         self.started.set()
@@ -47,7 +48,13 @@ class Bridge:
         await self.finish.wait()
         if self.error:
             raise self.error
-        return SimpleNamespace(transcript="好了？", turn_id="t1", response_id="r1")
+        result = QwenResult("好了。", "t1", "r1")
+        if on_result:
+            on_result(result)
+        return result
+
+    async def async_release_parent(self, session_id):
+        pass
 
     def on_playback(self, playback_id, state):
         self.playback.append((playback_id, state))
@@ -119,7 +126,7 @@ async def test_qwen_local_pcm_eof_waits_for_physical_completion(
     await hass.async_block_till_done(wait_background_tasks=True)
     assert turn.run_end and turn.intent_finished and turn.run_returned
     assert turn.response_finished
-    # A question in the result must not enable the separate B8.6 policy.
+    # An ordinary final answer closes without follow-up.
     assert not turn.continue_conversation
     stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
     assert bridge.closed.is_set()

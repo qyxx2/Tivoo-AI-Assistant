@@ -13,7 +13,8 @@ from custom_components.tivoo import qwen_realtime as qwen
 
 
 class Socket:
-    def __init__(self, *, capabilities=None, rate=16000, reverse=False):
+    def __init__(self, *, capabilities=None, rate=16000, reverse=False, session_id="entry"):
+        self.session_id = session_id
         self.incoming = asyncio.Queue()
         self.sent = []
         self.closed = False
@@ -27,7 +28,7 @@ class Socket:
             ready = {
                 "type": "session.ready",
                 "request_event_id": event["event_id"],
-                "session_id": "entry",
+                "session_id": self.session_id,
                 "protocol_version": "7.0.0",
                 "capabilities": event["capabilities"]
                 if self.capabilities is None
