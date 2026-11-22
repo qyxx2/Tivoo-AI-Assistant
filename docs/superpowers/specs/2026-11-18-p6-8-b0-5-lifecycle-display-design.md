@@ -99,3 +99,42 @@ HA/设备双方失联清理不依赖对端再发 terminal；新握手前设备�
 | VIEW-C04 | OFF 硬门控，SPP 重连 OFF/当前赢家，真实 status 和 stale 7777 处理，显示拥塞不阻断语音，last_sent 非像素证明 | b2/b8 OFF wake/打断/多 owner/temporary TTL、双 socket 顺序、bridge reset/HA reload初始同步；b10实机 | ESM-C15–C20/C23、P68-HB15 |
 
 本表覆盖 b0.5 分域，不代替 b0.6 对全部历史 ID 的闭环审计；主动播报/对话 P9 保持后置。b7/b8 均需针对自动化用例先红后绿，真实 HA/模拟服务测试与 b10 声学/两板/生产复验分开。历史 GAP/FAIL 原样保留。本批按路线 §2.2 对上述正常/异常时序与现有实现逐项自审（当前无独立 reviewer 工具）；b0.6 全量交叉评审仍未执行。当前只写设计、交叉引用及矩阵；无新包安装、生产代码/配置/部署/刷机/工具执行或实体状态修改。
+
+
+---
+
+## 8. Qwen Realtime 条件续聊适配（2026-11-22）
+
+> 本节只为 B8 Qwen Realtime 路径补充续聊意图来源。前述 LIFE-C06/LIFE-C07 原始合同仍是设备 gate、真实播放完成、单次授权、4 秒窗口和 generation 生命周期的权威，不重写旧 AstrBot/HA Pipeline 的实现语义。
+
+### 8.1 意图来源
+
+Qwen GCP 7.0 没有原生 `continue_conversation` 字段或客户端/服务端续聊授权事件。P6.8 Qwen 路径采用用户已选择的方案 A：
+
+- Qwen Agent 核心 `PROMPT.md` overlay 要求：只有真正需要用户进一步补充、选择或确认时，最终面向用户的完整回复才以中文“？”或英文“?”结尾；正常完成的答复不得加礼貌性反问。
+- HA 只消费当前 turn/generation 的助手 `transcript.final`，去除末尾空白后检查是否以“？”或“?”结尾。
+- `transcript.delta`、用户 role transcript、工具调用中间 response、`tool.call`、`audio.done`、`voice.state=idle` 以及 response failed/cancelled/incomplete 均不构成续聊意图。
+- 该约定是 Prompt + HA 的应用层行为，不是 Qwen 原生结构化授权回执。未收到完整助手 final 文本、普通结束标点或任何失败/中断时默认不续聊。
+
+旧 AstrBot/HA Pipeline 路径仍使用 HA 现有 `INTENT_END.intent_output.continue_conversation`，不得把 Qwen 的问号规则改成所有 Pipeline 共用规则。
+
+### 8.2 物理续聊授权条件不变
+
+问号只设置当前 turn 的待续聊意图，不立即开启 MIC。仍必须同时满足：
+1. 当前 HA turn/generation 尚有效，助手最终响应正常完成且无中断/错误；
+2. 本轮有效输入已经结束并按现有 ingress 规则 drain；
+3. 对应 response 的物理输出具有匹配 playback_id；
+4. ESP32 报告该 playback_id 的真实 `AUDIO_STATE=completed`；
+5. 本轮续聊授权未消费、未被更高优先级的新 wake/interrupt 取消。
+
+之后复用现有 `AudioSessionManager.grant_followup(session_id)` 和 `TYPE_FOLLOWUP_OPEN (0x27)`，只打开一次现有 4 秒 local_followup gate。既有 beep、beep 播放完成/声学尾部的安全 gate、真 wake 优先和旧 generation 隔离不变。不得用 Qwen `audio.done` 替代设备播放完成，也不得恢复已废弃的 8 秒 follow-up 规则。
+
+### 8.3 Qwen session 与设备 turn 的连接边界
+
+- 问号响应完成后，**保持原活动 Gateway WebSocket**，等待实际播放结束和 4 秒设备 gate；用户续聊音频经原 socket 发送，交由同一个 Realtime 会话处理。
+- 第二轮仍创建新 HA Context/generation 和 ESP32 MIC UUID；Gateway 生成新的 turnId/responseId。上述 ID 不相互复用。
+- 稳定 ConfigEntry.entry_id 映射到 Qwen URL sessionId，稳定 client.instance_id 表示 Tivoo Gateway 客户端/lease。它们不替代活动 socket。
+- 普通回复无问号、follow-up 超时、失败或被打断时按现有资源所有权规则完成连接清理。若后续独立 wake 必须断线重连，session journal 的历史恢复需单独验收，不能假设重连等同 immediate follow-up 同 socket 上下文。
+- 不增加 HA ChatSession、额外 MCP 工具、GCP 自定义授权事件或第二套续聊状态机；优先复用当前 per-turn `continue_conversation` bool 和 LIFE-C06/LIFE-C07。
+
+详细合同与实现批次：[Qwen Realtime 条件续聊设计](2026-11-22-p6-8-qwen-realtime-followup-design.md)。助手文本标点保真和同活动 WebSocket 两轮上下文必须先由 B8.2 实测；其通过后再由 B8.5/B8.6 实现和测试，B8.7 才安装持久 PROMPT overlay。

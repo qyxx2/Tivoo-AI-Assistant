@@ -102,9 +102,19 @@
 
 > **B1–B8 审查修复插入步骤（2026-11-19）：** B8 完成后，先按 [P6.8 审查修复 R01–R11 执行计划](2026-11-19-p6-8-review-repair-execution-plan.md) 分批修复并复验软件合同。此前各批 PASS 为历史证据，现有审查缺口在 R 批重新核销；R11 软件复验不能替代 b4–b8 必要实物/生产 gate，不解除 b9 条件清理或 b10 综合验收要求。
 
+## B8.1–B8.7 — Qwen Realtime 语音入口迁移（先于 B9）
+
+> **2026-11-22 更新 / B8.1 产品策略决策已完成：** R11 完成后不直接进入 B9。B8.1 源码核验和合同矩阵见 [合同矩阵](../specs/2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix.md) 与 [审查报告](../reports/2026-11-22-p6-8-b8-1-qwen-realtime-contract-matrix-review.md)。随后用户明确选择方案 A：Qwen 最终助手文本以 `？`/`?` 表达确实需要用户继续回答，HA 只解析当前 generation 的 assistant `transcript.final`。这属于项目 Prompt/应用层策略，不是 Qwen 原生授权字段。详细设计：[条件续聊设计](../specs/2026-11-22-p6-8-qwen-realtime-followup-design.md)；运行时事实：[NAS 核查报告](../reports/2026-11-22-p6-8-qwen-audio-agent-runtime-investigation.md)。B8.2 可先做协议/标点/同活动 socket 双轮预检；B8.5/B8.6 生产实现仍须等 B8.2 技术 Gate 通过。
+
+**迁移边界：** 仅替换 Tivoo 的 STT/LLM/TTS 语音入口和输出。沿用 HA 现有 `/api/mcp/assist`，由 Qwen Frontend MCP Client 直接调用 HA/Tivoo 工具；不新增 MCP Server 或 Client Action 工具层。HA 继续拥有本地 wake 后的 turn/Context、设备 PCM ingress、interrupt/cancel、显示/息屏/播放仲裁与实体服务；Qwen 拥有实时语音模型、工具选择、回答、人格和记忆。**MCP 批次分工：B8.3 实现 Qwen 2.1.0 Frontend MCP 私网 HTTP opt-in、配置模板和 mock 测试；B8.7 才把真实 HA 工具白名单及专用 HA Token 写入 NAS Qwen 持久配置卷的 `frontend-mcp.json` / `config.env`，重启 Gateway 后验收 tools/list 和实际工具调用。此处部署的是 Qwen MCP Client 配置，不另行部署 HA MCP Server。** AstrBot 不迁移任何数据，验收后移除；Sherpa/Wyoming 是否停止整个容器仍按 B9 实际消费者盘点决定。
+
+**执行顺序与放行：** B8.1 源码/合同审查与方案 A 产品决策（已完成）→ B8.2 GCP/本地 VAD 端点、助手 `transcript.final` 标点保真及同活动 WebSocket 双轮上下文预检 → B8.3 HA Assist MCP 内网 HTTP 接入 → B8.4 ESP32 24→32 kHz SRC → B8.5 HA Qwen Realtime Bridge → B8.6 会话/中断/问号续聊生命周期 → B8.7 NAS Prompt overlay 部署及端到端验收。B8.2 静音尾帧、assistant final 标点和同 socket 双轮连续性任一未通过，B8.5/B8.6 不得实现问号续聊；B8.3 私网 HTTP 安全例外和 B8.7 真实 ESP32/AUX 验收也都是明确 gate。未全部通过不得进入 B9。B9/B10 仅按迁移计划末尾 overlay 增补语音清理/验收，原有其他任务全部保留。
+
+**特别约束：** Qwen 2.1.0 GCP 客户端线上音频事件为 `input_audio_buffer.append`（Gateway 内部归一化为 `audio.append`），没有客户端 audio commit；HA 本地 VAD EOF 后需要的静音尾帧长度必须由实际 Qwen3.8 测试确定。立即续聊必须保持原活动 Gateway WebSocket 跨越物理播放和 4 秒 follow-up gate，并将下一轮输入继续送入同 socket；普通答复才在物理播放完成后关闭。稳定 `sessionId` 使用 `ConfigEntry.entry_id` 映射，`client.instance_id` 独立稳定，HA 当前代码不使用 ChatSession。助手最终文本标点由 Qwen Agent 核心 `PROMPT.md` overlay 约定，实际加载使用 `QWEN_AUDIO_AGENT_FRONTEND_PROMPT_DIR`；B8.7 需复制锁定版本完整 PROMPT.md 再追加 overlay，不能只改 `ASSISTANT.md`。24 kHz Qwen PCM 转换优先复用 ESP32 现有 ESP Audio Effects SRC，不使用试验分支线性插值作为最终实现。
+
 ## b9 — 条件清理和部署说明
 
-**Consumes:** b4–b8 真实本地模式已通过必要 gate（特别确认正/负样本、语音链、打断与显示）；**Produces:** Tivoo 单一本地唤醒，非 Tivoo 服务兼容。
+**Consumes:** b4–b8 真实本地模式已通过必要 gate（特别确认正/负样本、语音链、打断与显示）；并且新增 B8.1–B8.7 Qwen Realtime 迁移计划的独立合同矩阵确认、软件/服务/实机 gate 全部通过；**Produces:** Tivoo 单一本地唤醒 + Qwen Realtime 语音链，非 Tivoo 服务兼容。
 **Files:** 原 legacy candidate/watch_wake_word/remote prompt 路径和对应旧固件配置/测试、HA/Sherpa 配置及 README/部署说明。
 - [ ] T09：先测试 local 模式无旧候选上传/WAKE_WORD run/side watcher/3或15s rearm/远程 prompt URL、旧固件明确不兼容、STT/TTS/普通 URL/音频取消仍正常；按 b0.4 能力隔离切换，删除确认无消费者的 Tivoo 专属代码/资产路径；保留四源 MP3 构建输入。盘点实际 HA pipelines、Wyoming entries、其它客户端配置与消费证据；未证实无依赖则保留10400/KWS模型/健康契约并记录，不删全局服务。若有依赖不改消费者；旧 tests 中仍有通用语义的移植，新无用路径断言替换为负样本，历史报告不删。
 - [ ] 验证：HA 与 Sherpa suite、两 build、目标模式抓包/配置核对，README/回退路径和证据；报告/提交。不得为清理提前变更在线服务。
@@ -112,7 +122,7 @@
 ## b10 — 实机综合与全量核销
 
 **Consumes:** b1–b9 所有软件与实际依赖 gate。**Produces:** T10 每合同 PASS/GAP/FAIL + 证据定位；不自动关闭历史 GAP。
-- [ ] 自动化：`bash scripts/test-ha.sh tests/esp32 tests/homeassistant`，`bash scripts/test-sherpa-wyoming.sh`，两个 target clean build（只清各 build 产物、非工作区/NVS）；记录测试数量/失败、flash manifest/版本/部署目标。
+- [ ] 自动化：`bash scripts/test-ha.sh tests/esp32 tests/homeassistant`，两个 target clean build（只清各 build 产物、非工作区/NVS）；若 Sherpa/Wyoming 仍为其他消费者保留，再运行 `bash scripts/test-sherpa-wyoming.sh` 及对应部署验收；若 B9 已确认无消费者并移除服务，则仅保留仍适用的可复用单元测试，不把已移除容器作为生产依赖；记录测试数量/失败、flash manifest/版本/部署目标。
 - [ ] 综合实机：对照 T01–T09 各行，复查双麦接线/独立 USB、电源、真实 SPP/断电 Bond/切换重连/长 GIF、HA 本地/LLM、TTS长段/间隙、端点、真实人声、电视、自播负样本、三次打断、3s/4s、屏幕/mood、AP/7777/7778各失联、任一板重启/HA reload、生产 HTTPS；保留原适用断言。各阶段原报告未运行项按 H01–H19 处理，不自动执行第二台/JTAG/key 轮换等延后专项。
 - [ ] 延迟：固定说话距离、词、声源音量和命令；记录外部录音与独立设备/HA 单调时间轴，不减异机 uptime。报告词尾→WakeNet确认、词尾→真实提示首声、实际命令人声尾→STT_END（另记 VAD speech_end→STT_END）、实际命令结束→HA实际执行/回答首声、wake确认→旧声停止（目标见路线：300ms/1.2s/1.5s/100ms；非保证）；LLM、TTS 独立分解。每组记录 count/P50/P95、失败样本、旧基线缺测；未达目标列 GAP/FAIL 并定位，不能以日志代替物理结果。
 - [ ] 压力：长回复/连续电视与常驻监听/控制 GIF 同时，记录时长/次数、两核 CPU、IRAM/DRAM/PSRAM 最低和 contiguous/DMA、stack、AFE feed/fetch、UART/队列水位、CRC/drop/underrun、watchdog、长期资源变化；统计正负样本，不承诺电视同词可区分。
