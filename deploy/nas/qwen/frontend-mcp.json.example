@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "servers": {
+    "homeassistant": {
+      "enabled": true,
+      "connectTimeoutMs": 8000,
+      "transport": {
+        "type": "streamable-http",
+        "url": "${HA_ASSIST_MCP_URL}",
+        "headers": {
+          "authorization": "${HA_MCP_AUTHORIZATION}"
+        }
+      },
+      "tools": {
+        "REPLACE_WITH_EXACT_READ_TOOL_NAME": {
+          "enabled": true,
+          "timeoutMs": 10000,
+          "maxResultBytes": 32768,
+          "maxCallsPerTurn": 2
+        },
+        "REPLACE_WITH_EXACT_WRITE_TOOL_NAME": {
+          "enabled": true,
+          "timeoutMs": 10000,
+          "maxResultBytes": 32768,
+          "maxCallsPerTurn": 2
+        }
+      }
+    }
+  }
+}
