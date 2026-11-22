@@ -58,15 +58,17 @@
 - Input: 当前 P6.8 在本地唤醒及 ready prompt 完成后提供的有序 16 kHz mono S16LE PCM；本地 `speech_end` 后 iterator 正常 EOF。
 - Output: 已验证的 Qwen3.8 Omni GCP 7.0 用户轮次端点行为、实际转写和响应事件；不修改生产桥接代码。
 
-- [ ] **Step 1: 核对锁定的 Qwen 部署版本和协议来源。** 在 NAS 只读采集 Gateway 镜像版本/digest、模型 profile、`semantic_vad_ec` 补丁是否仍在、GCP handshake/capabilities 和当前真实客户端事件列表。以 NAS 运行版本为准，不把 GitHub 当前 main 文档替代 2.1.0 源码。
-- [ ] **Step 2: 核对实际 DashScope Omni 文档和 Gateway 适配器。** 记录 Qwen3.8 16 kHz 输入、输出采样率、当前 turn_detection profile、VAD 与 Manual 模式差别；确认 Gateway 2.1.0 的客户端线上输入事件是 `input_audio_buffer.append`（内部归一化为 `audio.append`），不得向客户端宣称 `input_audio_buffer.commit` 已受支持。
-- [ ] **Step 3: 建立本地 VAD 真实结束边界样本。** 从既有测试音频/录音中取语音 PCM，按当前 ESP32 20 ms、640-byte 数据格式发送；分别测试本地 VAD speech_end 后追加不同长度的零值 PCM 尾帧。采样时长从短到长扫描，记录发出的 PCM byte 数/持续时间、Gateway `voice.state`、转写、`response.started`、`audio.delta`、`audio.done`。
-- [ ] **Step 4: 选定最短可靠静音尾帧。** 至少使用中文短句、长句、轻声、正常间隔、背景噪声样本进行重复测试；记录每组成功率、P50/P95 端点时间和失败日志。只有在尾帧能稳定触发服务端端点且没有把下轮/播放回声并入当前 turn 时才 PASS。
-- [ ] **Step 5: 验证助手最终文本和同一活动 socket 的即时续聊。** 在同一 GCP 7.0 WebSocket 上完成真实双轮语音输入/响应：第一轮测试要求模型确实向用户提出一个需要回答的问题，捕获 Gateway `transcript.final`，核对 `role=assistant`、匹配 turnId/responseId、`content` 保留中文全角 `？` 和英文 ASCII `?`；另测试普通陈述回复保留句号/其他非问号标点。第二轮在第一轮响应后不关闭 socket，继续经同一 socket 发送语音 PCM；确认 `session_id`/活动连接不变、turnId/responseId 更新，且模型能利用第一轮上下文回答。用户侧 transcript 的问号不得误判为助手意图。然后单独验证普通回答结束后关闭 socket，再用同一个 Qwen URL `sessionId` 和 `client.instance_id` 重连时 Gateway journal 是否恢复历史；另换 sessionId 验证会话隔离。只有第一种同 socket 路径作为 immediate follow-up 的强制实现路径；重连恢复是独立新 wake 的能力，不得替代前者。
-- [ ] **Step 6: 记录停止条件。** 若只能通过 Gateway 不支持的 commit 事件才能完成本地 turn，或静音尾帧方案在真实 Qwen3.8 上不可靠，停止后续代码迁移，提交最小失败证据和另行设计建议；不得先写入猜测的事件名。
-- [ ] **Step 7: RED/GREEN。** 把已验证的 VAD-tail、跨 WS session continuity、session isolation 和 lease 冲突场景固化为可重复探针/自动化测试，并重新运行探针验证。
+- [x] **Step 1: 核对锁定的 Qwen 部署版本和协议来源。** 在 NAS 只读采集 Gateway 镜像版本/digest、模型 profile、`semantic_vad_ec` 补丁是否仍在、GCP handshake/capabilities 和当前真实客户端事件列表。以 NAS 运行版本为准，不把 GitHub 当前 main 文档替代 2.1.0 源码。
+- [x] **Step 2: 核对实际 DashScope Omni 文档和 Gateway 适配器。** 记录 Qwen3.8 16 kHz 输入、输出采样率、当前 turn_detection profile、VAD 与 Manual 模式差别；确认 Gateway 2.1.0 的客户端线上输入事件是 `input_audio_buffer.append`（内部归一化为 `audio.append`），不得向客户端宣称 `input_audio_buffer.commit` 已受支持。
+- [x] **Step 3: 建立本地 VAD 真实结束边界样本。** 从既有测试音频/录音中取语音 PCM，按当前 ESP32 20 ms、640-byte 数据格式发送；分别测试本地 VAD speech_end 后追加不同长度的零值 PCM 尾帧。采样时长从短到长扫描，记录发出的 PCM byte 数/持续时间、Gateway `voice.state`、转写、`response.started`、`audio.delta`、`audio.done`。
+- [x] **Step 4: 选定最短可靠静音尾帧。** 至少使用中文短句、长句、轻声、正常间隔、背景噪声样本进行重复测试；记录每组成功率、P50/P95 端点时间和失败日志。只有在尾帧能稳定触发服务端端点且没有把下轮/播放回声并入当前 turn 时才 PASS。
+- [x] **Step 5: 验证助手最终文本和同一活动 socket 的即时续聊。** 在同一 GCP 7.0 WebSocket 上完成真实双轮语音输入/响应：第一轮测试要求模型确实向用户提出一个需要回答的问题，捕获 Gateway `transcript.final`，核对 `role=assistant`、匹配 turnId/responseId、`content` 保留中文全角 `？` 和英文 ASCII `?`；另测试普通陈述回复保留句号/其他非问号标点。第二轮在第一轮响应后不关闭 socket，继续经同一 socket 发送语音 PCM；确认 `session_id`/活动连接不变、turnId/responseId 更新，且模型能利用第一轮上下文回答。用户侧 transcript 的问号不得误判为助手意图。然后单独验证普通回答结束后关闭 socket，再用同一个 Qwen URL `sessionId` 和 `client.instance_id` 重连时 Gateway journal 是否恢复历史；另换 sessionId 验证会话隔离。只有第一种同 socket 路径作为 immediate follow-up 的强制实现路径；重连恢复是独立新 wake 的能力，不得替代前者。
+- [x] **Step 6: 记录停止条件。** 若只能通过 Gateway 不支持的 commit 事件才能完成本地 turn，或静音尾帧方案在真实 Qwen3.8 上不可靠，停止后续代码迁移，提交最小失败证据和另行设计建议；不得先写入猜测的事件名。
+- [x] **Step 7: RED/GREEN。** 把已验证的 VAD-tail、跨 WS session continuity、session isolation 和 lease 冲突场景固化为可重复探针/自动化测试，并重新运行探针验证。
 
 **Acceptance:** 本地 VAD EOF 能触发 Qwen 服务端端点并得到非空用户 transcript/模型音频；同一活动 WebSocket 上可连续完成至少两轮语音 turn 并保留上下文；Gateway 输出的 assistant `transcript.final` 保留模型实际使用的中文 `？`、英文 `?` 和普通结束标点，事件带正确的 turnId/responseId；独立重连时的 journal 恢复结果有单独证据；新 session 不串话；没有发送未实现协议事件。未通过文本标点或同 socket 双轮验证时，B8.5/B8.6 不得启用问号续聊实现。
+
+**B8.2 实测结果（2026-11-22）：PASS。** NAS 锁定镜像为 Qwen Audio Agent 2.1.0 / GCP 7.0.0，输入 16 kHz mono PCM16，实际输出 24 kHz。通过 20 ms / 640-byte 帧验证本地 VAD EOF 后静音尾帧；跨中文、英文、现有 STT WAV、50% 音量、500 ms 句中停顿和 18 dB SNR 背景噪声测试，统一候选尾帧取 1000 ms。25% 音量测试未形成 Provider speech turn，已列入报告限制。assistant transcript.final 的全角问号、ASCII 问号、普通句末标点均有真实事件证据。最终加强断言复跑通过：同一活动 WebSocket 三轮连续对话（含中间 tool response）、client_occupied lease 冲突、journal 断开重连恢复、新 session 隔离均得到自动化断言。HA 测试 592 passed，Sherpa Wyoming 140 passed，ESP32 host 117 passed / 1 个既有 device-status 模拟断言失败（单独复跑仍失败，未修改无关实现）；B8.2 自身 12 项单测和静态检查通过。HTTP PCM 预检发现试验桥接未传当前 MIC session_id、finish 队列 sentinel 有潜在阻塞、试验线性 SRC 不应复制，分别交 B8.5/B8.4 处理。详见 [B8.2 Qwen GCP 与 PCM 预检报告](../reports/2026-11-22-p6-8-b8-2-qwen-gcp-pcm-preflight.md) 和 [B8.2 Probe 代码审查](../reports/2026-11-22-p6-8-b8-2-probe-code-review.md)。本批没有修改 HA / ESP32 生产代码、NAS 持久配置或播放路径。
 
 ## B8.3 — Qwen Frontend MCP 直连 HA 与内网 HTTP 例外
 
