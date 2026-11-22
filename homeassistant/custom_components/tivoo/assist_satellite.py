@@ -8,9 +8,13 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from homeassistant.components import stt, wake_word
-from homeassistant.components.assist_pipeline import async_get_pipeline, async_get_pipelines
+from homeassistant.components.assist_pipeline import (
+    async_get_pipeline,
+    async_get_pipelines,
+)
 from homeassistant.components.assist_pipeline.const import OPTION_PREFERRED
 from homeassistant.components.assist_pipeline.error import SpeechToTextError
 from homeassistant.components.assist_pipeline.models import (
@@ -31,10 +35,13 @@ from homeassistant.helpers.event import async_call_later
 from .audio_resource import PipelineTtsEvents
 from .audio_session import AudioSessionManager
 from .const import DOMAIN
-from .diagnostics import TYPE_STT_READY, TYPE_FOLLOWUP_OPEN
+from .diagnostics import TYPE_FOLLOWUP_OPEN, TYPE_STT_READY
 from .display_state import DisplayState, ExpressionCoordinator, build_expression_command
 from .prompt_audio import PromptSoundPlayer
 from .transport import Esp32ConnectionAdapter
+
+if TYPE_CHECKING:
+    from .qwen_realtime import QwenRealtimeBridge, QwenTurnOwner
 
 _LOGGER = logging.getLogger(__name__)
 _WAKE_WORD_ID = "tivoo-wake"
@@ -60,6 +67,7 @@ async def async_setup_entry(
                 runtime["audio_session_manager"],
                 runtime["connection_adapter"],
                 runtime["display_coordinator"],
+                qwen_bridge=runtime["qwen_bridge"],
             )
         ]
     )
@@ -71,7 +79,7 @@ class _Turn:
 
     session_id: str
     context: Context
-    tts: PipelineTtsEvents
+    tts: PipelineTtsEvents | QwenTurnOwner
     waiting_for_wake: bool
     task: asyncio.Task | None = None
     pipeline_id: str | None = None
@@ -274,15 +282,25 @@ class AudioSessionCoordinator:
         if start is None:
             start = self.ingress.ingress_offset(session_id)
         player = self.entity.prompt_player
-        turn = _Turn(
-            session_id,
-            Context(),
-            PipelineTtsEvents(
+        context = Context()
+        if local_mode and self.entity.qwen_bridge is not None:
+            tts = self.entity.qwen_bridge.create_turn(
+                session_id,
+                context.id,
+                current=lambda: self._turn is turn and not turn.error,
+                prompt_player=player,
+            )
+        else:
+            tts = PipelineTtsEvents(
                 self.entity.hass,
                 self.entity.adapter,
                 player.async_yield_to_tts if player is not None and not local_mode else None,
                 session_id=session_id if local_mode else None,
-            ),
+            )
+        turn = _Turn(
+            session_id,
+            context,
+            tts,
             waiting_for_wake=stage == PipelineStage.WAKE_WORD,
             confirmed=confirmed,
             prompt_before_command=prompt_before_command,
@@ -371,7 +389,8 @@ class AudioSessionCoordinator:
             def input_drained() -> None:
                 if self._turn is turn:
                     self._cancel_timer("local_speech_timeout")
-                    self._arm(_LOCAL_STT_FINALIZE_SECONDS, "stt_finalize_timeout")
+                    if self.entity.qwen_bridge is None or not turn.valid_stt:
+                        self._arm(_LOCAL_STT_FINALIZE_SECONDS, "stt_finalize_timeout")
 
             async with self.ingress.audio_subscription(
                 turn.session_id, start=start, consumer=turn,
@@ -393,16 +412,38 @@ class AudioSessionCoordinator:
                         await asyncio.shield(asyncio.gather(prior, return_exceptions=True))
                 if self._turn is not turn:
                     return
-                if turn.local_mode:
+                qwen = self.entity.qwen_bridge if turn.local_mode else None
+                if turn.local_mode and qwen is None:
                     _, turn.local_pipeline_id = self.entity.validate_local_pipeline()
                 self._event_turn = turn
                 try:
-                    await turn.tts.async_run(
-                        self.entity.async_accept_pipeline_from_satellite(
-                            audio, stage, context=turn.context,
-                            **({"wake_word_phrase": turn.local_phrase} if turn.local_mode else {}),
+                    if qwen is not None:
+                        turn.stt_started = True
+
+                        def on_qwen_event(event: dict) -> None:
+                            if self._turn is not turn or turn.error:
+                                return
+                            if (
+                                event.get("type") == "transcript.final"
+                                and event.get("role") == "user"
+                                and isinstance(event.get("content"), str)
+                                and event["content"].strip()
+                            ):
+                                turn.valid_stt = True
+                                self._cancel_timer("stt_finalize_timeout")
+
+                        await qwen.async_run(turn.tts, audio, on_qwen_event)
+                        if self._turn is turn:
+                            turn.run_end = True
+                            turn.intent_finished = True
+                            self._cancel_timer("stt_finalize_timeout")
+                    else:
+                        await turn.tts.async_run(
+                            self.entity.async_accept_pipeline_from_satellite(
+                                audio, stage, context=turn.context,
+                                **({"wake_word_phrase": turn.local_phrase} if turn.local_mode else {}),
+                            )
                         )
-                    )
                 finally:
                     self._event_turn = None
         except asyncio.CancelledError:
@@ -747,6 +788,8 @@ class AudioSessionCoordinator:
     @callback
     def on_playback(self, playback_id: str, state: str) -> None:
         """Use the matching physical playback terminal state."""
+        if self.entity.qwen_bridge is not None:
+            self.entity.qwen_bridge.on_playback(playback_id, state)
         player = self.entity.prompt_player
         if player is not None and player.on_playback(playback_id, state):
             return
@@ -901,6 +944,8 @@ class TivooAssistSatellite(AssistSatelliteEntity):
         ingress: AudioSessionManager,
         adapter: Esp32ConnectionAdapter,
         display: ExpressionCoordinator,
+        *,
+        qwen_bridge: QwenRealtimeBridge | None = None,
     ) -> None:
         self._attr_unique_id = entry_id
         self._attr_tts_options = {
@@ -909,6 +954,7 @@ class TivooAssistSatellite(AssistSatelliteEntity):
             "preferred_sample_channels": 1,
         }
         self.adapter = adapter
+        self.qwen_bridge = qwen_bridge
         self.display = display
         self.prompt_player: PromptSoundPlayer | None = None
         self.coordinator = AudioSessionCoordinator(self, ingress, display)

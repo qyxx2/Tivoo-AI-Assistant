@@ -1,0 +1,67 @@
+diff --git a/server/src/voice/realtime-presentation-runtime.mjs b/server/src/voice/realtime-presentation-runtime.mjs
+--- a/server/src/voice/realtime-presentation-runtime.mjs
++++ b/server/src/voice/realtime-presentation-runtime.mjs
+@@ -352,7 +352,9 @@
+     const awaitsPlayback = this.getPlaybackReceipts()
+     const terminalToolResponse = this.toolCalls.consumeTerminalToolResponse(id)
+     const responseTurnId = context?.turnId || this.turns.turnId
+-    const responseStatus = event.response?.status
++    const responseStatus = ['completed', 'failed', 'cancelled', 'incomplete'].includes(event.response?.status)
++      ? event.response.status
++      : 'unknown'
+     const failed = ['failed', 'cancelled', 'incomplete'].includes(responseStatus)
+     const sourceHasSpeech = Boolean(context?.hasAudio || context?.assistantTranscript?.trim())
+     const suppressResponse = Boolean(failed || context?.suppressed)
+@@ -379,6 +381,9 @@
+         type: GatewayServerEvent.AUDIO_DONE,
+         responseId: id,
+         turnId: responseTurnId,
++        responseStatus,
++        awaitsToolFollowUp: toolFollowUpPending,
++        hasFunctionCall: Boolean(context?.hasFunctionCall),
+       })
+       if ((!context?.hasAudio || !awaitsPlayback) && !toolFollowUpPending) {
+         this.send({
+@@ -735,6 +740,9 @@
+           type: GatewayServerEvent.AUDIO_DONE,
+           responseId: id,
+           turnId: context.turnId || this.turns.turnId,
++          responseStatus: 'failed',
++          awaitsToolFollowUp: false,
++          hasFunctionCall: Boolean(context.hasFunctionCall),
+         })
+         this.#scheduleContextCleanup(id, context)
+       } else if (id) {
+diff --git a/shared/protocol/gateway-events.mjs b/shared/protocol/gateway-events.mjs
+--- a/shared/protocol/gateway-events.mjs
++++ b/shared/protocol/gateway-events.mjs
+@@ -266,6 +266,10 @@
+   }).passthrough(),
+   [GatewayServerEvent.AUDIO_DONE]: z.object({
+     responseId: z.string().min(1),
++    // Optional for legacy producers; terminal-status clients require all three.
++    responseStatus: z.enum(['completed', 'failed', 'cancelled', 'incomplete', 'unknown']).optional(),
++    awaitsToolFollowUp: z.boolean().optional(),
++    hasFunctionCall: z.boolean().optional(),
+   }).passthrough(),
+   [GatewayServerEvent.RESPONSE_STARTED]: z.object({
+     responseId: z.string().min(1),
+diff --git a/shared/protocol/gateway-client-protocol.mjs b/shared/protocol/gateway-client-protocol.mjs
+--- a/shared/protocol/gateway-client-protocol.mjs
++++ b/shared/protocol/gateway-client-protocol.mjs
+@@ -59,6 +59,7 @@
+   INPUT_IMAGE_BUFFER: 'input.image_buffer',
+   INPUT_FILE: 'input.file',
+   PLAYBACK_RECEIPTS: 'playback.receipts',
++  RESPONSE_TERMINAL_STATUS: 'response.terminal-status',
+   TASK_COMMANDS: 'tasks.commands',
+   PERMISSION_RESPOND: 'permissions.respond',
+   INPUT_RESPOND: 'tasks.input.respond',
+@@ -92,6 +93,7 @@
+   GatewayClientCapability.INPUT_IMAGE_BUFFER,
+   GatewayClientCapability.INPUT_FILE,
+   GatewayClientCapability.PLAYBACK_RECEIPTS,
++  GatewayClientCapability.RESPONSE_TERMINAL_STATUS,
+   GatewayClientCapability.TASK_COMMANDS,
+   GatewayClientCapability.PERMISSION_RESPOND,
+   GatewayClientCapability.INPUT_RESPOND,

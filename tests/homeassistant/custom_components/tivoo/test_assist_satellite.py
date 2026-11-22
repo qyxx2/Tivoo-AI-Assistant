@@ -1166,6 +1166,7 @@ async def test_satellite_platform_reuses_runtime_display(hass):
         "display_coordinator": display,
         "audio_session_manager": ingress,
         "connection_adapter": adapter,
+        "qwen_bridge": object(),
     }
     add = Mock()
     await async_setup_entry(hass, SimpleNamespace(entry_id="entry"), add)

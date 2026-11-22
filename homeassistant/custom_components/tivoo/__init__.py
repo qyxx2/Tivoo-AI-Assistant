@@ -38,6 +38,8 @@ class _RuntimeDisplayAdapter:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Tivoo services and the shared runtime for one config entry."""
+    from .qwen_realtime import QwenRealtimeBridge, TivooQwenPcmView
+
     media_directory = entry.data.get(CONF_MEDIA_DIRECTORY, DEFAULT_MEDIA_DIRECTORY)
     adapter = Esp32ConnectionAdapter(
         entry.data.get(CONF_ESP32_HOST),
@@ -53,10 +55,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     audio_session_manager = AudioSessionManager(send_mic_capture_stop)
     adapter.register_audio_session_manager(audio_session_manager)
 
+    streams = hass.data.get("tivoo_qwen_streams")
+    if streams is None:
+        streams = hass.data["tivoo_qwen_streams"] = {}
+        hass.http.register_view(TivooQwenPcmView(streams))
+    qwen_bridge = QwenRealtimeBridge(hass, adapter, streams, entry.entry_id)
+
     runtime = {
         "command_adapter": adapter,
         "connection_adapter": adapter,
         "audio_session_manager": audio_session_manager,
+        "qwen_bridge": qwen_bridge,
         "pipeline_event_callback_factory": lambda: create_pipeline_event_callback(
             hass, adapter
         ),
@@ -97,6 +106,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if runtime is not None:
             await runtime["display_coordinator"].async_shutdown()
             await runtime["audio_session_manager"].async_shutdown()
+            await runtime["qwen_bridge"].async_close()
             await runtime["connection_adapter"].async_stop()
 
     unregister_services(hass)

@@ -104,3 +104,86 @@ PYTHONPATH="$PWD/.superpowers/p68-b5/pythonpath" bash scripts/test-ha.sh \
 ```
 
 真实 HA Token 拒绝、NAS tools/list、HA 实际工具调用以及 NAS MCP 配置部署归 B8.7。
+
+## B8.5 最小终态兼容补丁（仅打包）
+
+用户已批准 B8.5 的最小兼容补丁。`patches/0002-response-terminal-status.patch`
+保留 GCP 7.0 的现有事件及 `audio.done.responseId`、`turnId`，增加：
+
+| 字段 | 值与含义 |
+|---|---|
+| `responseStatus` | `completed` / `failed` / `cancelled` / `incomplete` / `unknown`；未提供或未知 provider 状态归为 `unknown` |
+| `awaitsToolFollowUp` | boolean；上游本次响应是否等待工具后续响应 |
+| `hasFunctionCall` | boolean；本次响应是否包含函数调用；即使上游抑制后续总结，也不能据此响应开启续聊 |
+
+客户端在 `session.hello.capabilities` 请求 `response.terminal-status`，并检查
+`session.ready.capabilities` 的交集回显。旧版相同版本号不能证明支持该补丁；未回显时终态门禁失败。
+补丁在 WebSocket `/api/realtime` 的原有事件路径发布字段，无新增 GCP event 或版本变更。
+只有三个字段全部存在且类型正确、`responseStatus === "completed"`、
+`awaitsToolFollowUp === false`、`hasFunctionCall === false` 时，才具备可用于续聊判断的模型成功终态条件。
+物理播放完成、文本最终完成及其他会话条件仍由 HA 独立检查。
+`audio.done` 是一次模型响应的结束，工具中间响应也会发送它；不能把它独自当作整轮完成。
+`hasFunctionCall=true` 且 `awaitsToolFollowUp=false` 的正常工具受理语音允许结束 PCM，
+但必须等待本轮全部已观察工具成功结束再完成交付；结果 `followup_eligible=false`，
+关闭 socket，不能由工具中间文字开启续聊。`awaitsToolFollowUp=true` 继续等待后续响应，
+缺失应到的工具/文本/物理回执仍有界超时清理。
+
+补丁只增加可观测性，不改变工具执行/后续响应策略。旧 producer 的 schema 字段仍为 optional，
+保留旧消息解析；补丁 producer 在两个 `audio.done` 发送点均附加全部字段，provider error
+路径标记 `failed`。原有 schema passthrough、session encode 与 JSON 序列化保留新字段。
+取消/不完整响应之后迟到的文字不会把其终态升级为 completed；正常响应允许终态先于最终文字。
+被 upstream 抑制而无 `audio.done` 的响应不生成成功证据，由 HA 的取消/超时路径收敛。
+
+修改上游三个文件：`server/src/voice/realtime-presentation-runtime.mjs`、
+`shared/protocol/gateway-events.mjs`、`shared/protocol/gateway-client-protocol.mjs`。
+锁定提交同上，原文件 SHA256 记录在 `patches/terminal-source.sha256`。
+安装前须逐项核对目标文件 hash，使用 `patch --batch --fuzz=0 -p1`；
+hash 不符必须重新审查。0001 与 0002 修改不同文件，可顺序应用。
+B8.5 没有安装此补丁、修改运行中的 NAS 或进入 B8.6/B8.7。
+B8.7 部署前仍需备份并验证，回滚恢复这三个原文件；保留既有 provider/VAD 配置。
+
+独立验证入口（不改变 B8.3 的 `test.sh`）：
+
+```bash
+bash deploy/nas/qwen/patches/test-terminal.sh /path/to/qwen-audio-agent-v2.1.0
+```
+
+需要 Node 22+、Git、patch、npm、ripgrep。可设置
+`QWEN_B85_NODE_MODULES=/absolute/path/to/node_modules` 复用锁定依赖。
+脚本从锁定提交创建临时 archive，校验原 hash，先确认原版断言 RED，再应用 0002 并跑
+终态、协议、presentation 和 session 定向测试；不运行全量 suite，不修改传入 checkout。
+本地结果为原版 20 个预期断言失败（1 个兼容性用例通过），补丁后 100/100 通过。
+覆盖状态枚举、缺失/未知状态、最终问句后的取消/不完整、工具中间响应及抑制总结、
+迟到文本、provider failure、capability 正向协商/未协商、schema 类型拒绝和真实 encode/JSON
+字段保留，以及旧客户端消息兼容。没有调用模型网络、HA、NAS 或物理设备。
+
+## P6.8 Prompt overlay（B8.5 交付，B8.7 合并）
+
+`prompt-overlay.md` 是需追加到完整 Prompt 的最小片段，遵循
+[续聊设计 §2](../../../docs/superpowers/specs/2026-11-22-p6-8-qwen-realtime-followup-design.md)。
+B8.7 从实际部署的锁定镜像提取完整 `config/frontend-agent/PROMPT.md`，
+保留原有工具、路由、权限及核心规则，再将该片段追加到副本末尾。
+不得用此片段替换整个 `PROMPT.md`，也不能仅放入 `ASSISTANT.md`。
+合并后校验完整内容/hash 及总长度不超过 16,000 字符，放入持久配置目录，
+再设置 `QWEN_AUDIO_AGENT_FRONTEND_PROMPT_DIR` 并按 B8.7 流程重启验证。
+升级时从新锁定版本完整 Prompt 重新合并。
+本批只维护片段，没有安装 Prompt、设置环境变量或重启 NAS。
+
+## HA Bridge 接入（B8.5）
+
+HA 进程读取 `TIVOO_QWEN_GATEWAY_URL`（默认 `ws://127.0.0.1:3101/api/realtime`）
+和 `TIVOO_QWEN_GATEWAY_TOKEN`（仅环境 Secret）。URL 的 `sessionId` 固定为 ConfigEntry
+entry_id，客户端实例为 `tivoo-<entry_id>`。B8.7 需配置实际可达地址和 Token，并先安装
+0002；原版 2.1.0 会在 capability 协商时被明确拒绝，没有旧 Pipeline fallback。
+
+每轮 HTTP PCM 缓存上限 512 KiB，只接受 24/32 kHz mono S16LE；
+`/api/tivoo/qwen/audio/{stream_id}` 是随机 UUID 单次 GET capability，不持久化或记入本模块日志。
+GET 等待上限 10 秒，每次读/写停滞 10 秒；Gateway 事件/物理完成等待上限 45 秒，
+整轮上限 120 秒，取消的设备 stop、socket/HTTP join 各 5 秒；静音尾帧 50 × 20 ms。
+日志仅含 generation、输入/输出字节数和阶段耗时。
+
+Bridge 返回 `QwenResult`，保留精确最终文本和 turn/response identity，另有
+`followup_eligible`。显式 `owner.keep_socket=true` 可将已成功且具备续聊资格的原 socket
+保留最多 5 秒；接收者必须传匹配 `parent_session_id`，禁止连接缺失时重连冒充续聊。
+只有未来 B8.6 的授权调用者可以设置该标志；当前 Satellite 不解析问号，不发 0x27。
+旧 owner 的重复 close 不关闭已保留的连接；超时、异常及 unload 均关闭。

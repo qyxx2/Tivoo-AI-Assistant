@@ -1,0 +1,3 @@
+0f71e77fcd14081ae2cf427f2bd60e5a183aa5a49381a9e57460a1dd8b06bea3  server/src/voice/realtime-presentation-runtime.mjs
+66b445a3de2fa11f755ff2fee648c7cad5becbe4ed9415111e11f2748451a190  shared/protocol/gateway-events.mjs
+e321750cad098d90e6129ea8355b1cd93f9bdaec076fcaab457edd1858ba8b1d  shared/protocol/gateway-client-protocol.mjs
