@@ -104,7 +104,7 @@ def test_controlled_http_fixture_covers_stream_and_failure_responses(tmp_path):
         server.wait(timeout=3)
 
 
-@pytest.mark.parametrize("case", ["temporary", "permanent", "old_epoch", "pending", "pending_lost", "timeout", "normal", "long_stream", "matching_stop"])
+@pytest.mark.parametrize("case", ["temporary", "permanent", "old_epoch", "pending", "pending_lost", "timeout", "normal", "long_stream", "matching_stop", "pcm24", "pcm32", "pcm_mismatch", "pcm_unsupported", "pcm24_full", "pcm24_buffered"])
 def test_local_resource_worker(tmp_path, case):
     """Production worker and parser, deterministic RTOS/HTTP/output/diagnostics boundaries."""
     from test_p68_prompt import write_resource_test_headers

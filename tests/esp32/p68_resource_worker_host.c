@@ -31,9 +31,16 @@ static void (*task)(void *);
 static void *task_arg;
 static esp_http_client_config_t config;
 static char terminal_state[16];
+static bool format_failure(void) {return !strcmp(scenario,"pcm_mismatch") || !strcmp(scenario,"pcm_unsupported");}
+static const char *request_mime(void) {
+    if(!strcmp(scenario,"pcm_unsupported")) return "audio/x-tivoo-pcm-s16le-16000-mono";
+    if(!strcmp(scenario,"pcm32")) return TIVOO_PCM_MIME;
+    if(!strncmp(scenario,"pcm",3)) return TIVOO_PCM_24K_MIME;
+    return "audio/mpeg";
+}
 static void play(const char *sid,const char *pid) {
     char json[512];
-    int n=snprintf(json,sizeof(json),"{\"session_id\":\"%s\",\"playback_id\":\"%s\",\"url\":\"http://test/audio\",\"mime_type\":\"audio/mpeg\"}",sid,pid);
+    int n=snprintf(json,sizeof(json),"{\"session_id\":\"%s\",\"playback_id\":\"%s\",\"url\":\"http://test/audio\",\"mime_type\":\"%s\"}",sid,pid,request_mime());
     assert(tivoo_audio_resource_handle_message(0x30,(uint8_t *)json,n));
 }
 static void stop(const char *sid,const char *pid) {
@@ -70,6 +77,11 @@ bool tivoo_diagnostics_send_mic(uint32_t e,uint8_t type,const void *p,size_t n) 
             assert(!strcmp(state,"stopped") && !tivoo_audio_resource_test_silent());
         } else if(!strcmp(scenario,"matching_stop")) {
             assert(!strcmp(state,"stopped") && tivoo_audio_resource_test_silent());
+        } else if(format_failure()) {
+            const char *err=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"error_code"));
+            assert(!strcmp(state,"failed") && err);
+            assert(!strcmp(err,!strcmp(scenario,"pcm_mismatch") ? "audio_content_type_mismatch" : "audio_format_unsupported"));
+            assert(!reads && tivoo_audio_resource_test_silent());
         } else if(!strcmp(scenario,"timeout")) {
             assert(!strcmp(state,"failed") && quarantine);
         } else {
@@ -101,11 +113,11 @@ bool tivoo_audio_output_release_drained(uint32_t g,uint64_t *end) {
 uint64_t tivoo_audio_output_recovery_boundary(void) {return 0;}
 bool tivoo_audio_output_prompt_drain(uint32_t g,uint64_t *end,uint64_t *c) {(void)g;*end=100;*c=1000;return !quarantine;}
 esp_err_t tivoo_audio_playback_init(void) {return ESP_OK;}
-struct tivoo_audio_playback {bool pcm;};
+struct tivoo_audio_playback {bool pcm,ended;};
 static struct tivoo_audio_playback decoder;
-tivoo_audio_playback_t *tivoo_audio_playback_open(uint32_t g,bool pcm) {assert(g==owner && !pcm);decoder.pcm=false;return &decoder;}
+tivoo_audio_playback_t *tivoo_audio_playback_open(uint32_t g,uint32_t pcm_rate) {assert(g==owner);assert(pcm_rate==(!strncmp(scenario,"pcm24",5) ? 24000U : !strcmp(scenario,"pcm32") ? 32000U : 0U));decoder.pcm=decoder.ended=false;return &decoder;}
 esp_err_t tivoo_audio_playback_feed(tivoo_audio_playback_t *p,uint8_t *d,size_t n,bool eof) {
-    (void)d;(void)eof;if(n)p->pcm=true;return ESP_OK;
+    (void)d;if(p->ended)return ESP_ERR_INVALID_STATE;p->ended=eof;if(n)p->pcm=true;return ESP_OK;
 }
 bool tivoo_audio_playback_has_pcm(const tivoo_audio_playback_t *p) {return p->pcm;}
 void tivoo_audio_playback_close(tivoo_audio_playback_t *p) {(void)p;}
@@ -117,7 +129,7 @@ int esp_http_client_open(esp_http_client_handle_t c,int n) {(void)c;(void)n;retu
 int esp_http_client_get_socket(esp_http_client_handle_t c) {(void)c;return sockets[0];}
 int esp_http_client_set_timeout_ms(esp_http_client_handle_t c,int n) {(void)c;(void)n;return ESP_OK;}
 int64_t esp_http_client_fetch_headers(esp_http_client_handle_t c) {
-    (void)c;esp_http_client_event_t e={config.user_data,HTTP_EVENT_ON_HEADER,"Content-Type","audio/mpeg"};
+    (void)c;esp_http_client_event_t e={config.user_data,HTTP_EVENT_ON_HEADER,"Content-Type",(char *)(!strcmp(scenario,"pcm_mismatch") ? TIVOO_PCM_MIME : request_mime())};
     config.event_handler(&e);return 8;
 }
 bool esp_http_client_is_chunked_response(esp_http_client_handle_t c) {(void)c;return false;}
@@ -125,6 +137,11 @@ int esp_http_client_get_status_code(esp_http_client_handle_t c) {(void)c;return 
 int esp_http_client_read(esp_http_client_handle_t c,char *p,int n) {
     (void)c;assert(n>=8);memset(p,1,8);
     ++reads;
+    if(!strcmp(scenario,"pcm24_full") || !strcmp(scenario,"pcm24_buffered")) {
+        http_eof=true;
+        if(reads==1) {memset(p,1,n);return n;}
+        return !strcmp(scenario,"pcm24_full") ? 0 : 8;
+    }
     if(!strcmp(scenario,"long_stream") && reads>1 && reads<=9) {
         clock_us+=1000000;
         return -ESP_ERR_HTTP_EAGAIN;
@@ -166,11 +183,16 @@ int main(int argc,char **argv) {
         assert(terminals==2 && opened==2 && stops==1 && completed && replies==1);
     } else if(!strcmp(scenario,"matching_stop")) {
         assert(terminals==1 && stops==1 && !completed && replies==1);
+    } else if(format_failure()) {
+        assert(terminals==1 && !completed && replies==1);
+        assert(stops==(!strcmp(scenario,"pcm_mismatch") ? 1U : 0U));
+        assert(opened==(!strcmp(scenario,"pcm_mismatch") ? 1U : 0U));
     } else if(!strcmp(scenario,"timeout")) {
         assert(terminals==1 && recoveries==1 && !completed && !tivoo_audio_resource_test_silent());
     } else {
         assert(terminals==1 && completed && replies==1 && !invalidations);
         assert(terminal_attempts==(!strcmp(scenario,"temporary")?4:1));
+        if(!strncmp(scenario,"pcm24_",6)) assert(reads==2);
         if(!strcmp(scenario,"long_stream")) assert(clock_us>=8000000 && reads==10 && !stops);
     }
     play(current_sid,!strcmp(current_sid,sid1)?pid1:pid2);

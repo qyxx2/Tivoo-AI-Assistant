@@ -496,9 +496,11 @@ static const char *read_audio(
         return "audio_content_type_mismatch";
     }
 
-    const bool raw_pcm = media_type_equal(request->mime_type, TIVOO_PCM_MIME);
+    const uint32_t pcm_rate = media_type_equal(request->mime_type, TIVOO_PCM_MIME) ? 32000 :
+        media_type_equal(request->mime_type, TIVOO_PCM_24K_MIME) ? 24000 : 0;
+    const bool raw_pcm = pcm_rate != 0;
     const char *format_error = raw_pcm ? "audio_pcm_invalid" : "audio_decode_failed";
-    tivoo_audio_playback_t *playback = tivoo_audio_playback_open(request->generation, raw_pcm);
+    tivoo_audio_playback_t *playback = tivoo_audio_playback_open(request->generation, pcm_rate);
     if (playback == NULL) {
         return format_error;
     }
@@ -538,7 +540,10 @@ static const char *read_audio(
         (void)vad_suppressed; /* b6 adds local prompt gate, b3 has no VAD. */
 #endif
         request->bytes_received += bytes;
-        if (tivoo_audio_playback_feed(playback, buffer, (size_t)bytes, eof) != ESP_OK) {
+        /* Complete HTTP data can still include buffered bytes. A full read
+         * needs another drain read before the converter sees its single EOF. */
+        const bool stream_eof = eof && bytes < sizeof(buffer);
+        if (tivoo_audio_playback_feed(playback, buffer, (size_t)bytes, stream_eof) != ESP_OK) {
             error = format_error;
             break;
         }
@@ -550,7 +555,7 @@ static const char *read_audio(
                 heap_caps_get_largest_free_block(caps));
             send_audio_state(request, "playing", NULL, true);
         }
-        if (eof && bytes < sizeof(buffer)) {
+        if (stream_eof) {
             if (!started) {
                 error = format_error;
             }
@@ -618,7 +623,8 @@ static audio_request_t *run_request(audio_request_t *request)
 #endif
     if (!atomic_load(&request->stop_requested)) {
         if (!media_type_equal(request->mime_type, "audio/mpeg") &&
-            !media_type_equal(request->mime_type, TIVOO_PCM_MIME)) {
+            !media_type_equal(request->mime_type, TIVOO_PCM_MIME) &&
+            !media_type_equal(request->mime_type, TIVOO_PCM_24K_MIME)) {
             error = "audio_format_unsupported";
         } else if (!tivoo_audio_output_begin(request->generation)) {
             error = "audio_output_unavailable";

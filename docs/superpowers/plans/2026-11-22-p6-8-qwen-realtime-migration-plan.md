@@ -109,13 +109,15 @@
 - Input: raw signed 16-bit little-endian mono PCM at the sample rate declared in the HTTP MIME / TTS_PLAY request; Qwen 3.8 current expected output is 24 kHz, verified from actual `audio.delta.sampleRate`.
 - Output: existing 32 kHz mono output queue / I2S bus; preserve existing playback_id, session_id, stop and completion receipts.
 
-- [ ] **Step 1: Add RED format tests.** Validate that existing 32 kHz MIME remains byte-for-byte passthrough; add a 24 kHz raw PCM format case; reject unsupported rates, misaligned sample bytes and MIME/rate mismatches.
-- [ ] **Step 2: Implement stateful raw PCM SRC.** Reuse the existing ESP Audio Effects SRC state for the raw PCM path; do not add a new resampler library. Carry SRC state across arbitrary HTTP chunk boundaries and flush/close only at the matching stream EOF.
-- [ ] **Step 3: Verify exact output duration and continuity.** Feed silence, constant level, impulse and swept/representative speech fixtures in irregular chunk sizes; assert the 24 kHz input yields the expected 32 kHz output duration and no discontinuity caused by resetting SRC per HTTP chunk.
-- [ ] **Step 4: Verify cancellation and generation fencing.** Stop a 24 kHz playback while streaming; ensure old SRC state/buffer cannot enqueue samples into the next playback generation.
-- [ ] **Step 5: Run ESP32 host tests and clean builds.** Build the current S3/Classic targets with locked ESP-IDF v6.1; capture flash manifest and test output. Do not flash hardware in this batch.
+- [x] **Step 1: Add RED format tests.** Validate that existing 32 kHz MIME remains byte-for-byte passthrough; add a 24 kHz raw PCM format case; reject unsupported rates, misaligned sample bytes and MIME/rate mismatches.
+- [x] **Step 2: Implement stateful raw PCM SRC.** Reuse the existing ESP Audio Effects SRC state for the raw PCM path; do not add a new resampler library. Carry SRC state across arbitrary HTTP chunk boundaries and flush/close only at the matching stream EOF.
+- [x] **Step 3: Verify exact output duration and continuity.** Feed silence, constant level, impulse and swept/representative speech fixtures in irregular chunk sizes; assert the 24 kHz input yields the expected 32 kHz output duration and no discontinuity caused by resetting SRC per HTTP chunk.
+- [x] **Step 4: Verify cancellation and generation fencing.** Stop a 24 kHz playback while streaming; ensure old SRC state/buffer cannot enqueue samples into the next playback generation.
+- [x] **Step 5: Run ESP32 host tests and clean builds.** Build the current S3/Classic targets with locked ESP-IDF v6.1; capture flash manifest and test output. Do not flash hardware in this batch.
 
 **Acceptance:** 24 kHz PCM is converted to 32 kHz by existing ESP Audio Effects SRC, 32 kHz compatibility is unchanged, chunk boundaries do not reset the converter, and old generations cannot leak PCM.
+
+**B8.4 软件验收（2026-11-22）：PASS。** 24 kHz raw PCM 复用锁定 ESP Audio Effects SRC；32 kHz 原样透传、分块/EOF/错误清理及 generation fence 通过专项验证。相关回归 **38 passed**，ESP-IDF v6.1 下 S3/Classic 两目标独立干净构建、ELF/分区/flash manifest/hash 校验通过；按本次用户要求未执行全量测试。主机 converter 使用确定性 double，实际 vendor SRC 输出/滤波尾部与 Tivoo AUX 音质保留硬件 GAP；本批不刷机、不部署、未连接 NAS。低优先级 raw SRC 日志统计遗留见 [B8.4 验收报告](../reports/2026-11-22-p6-8-b8-4-raw-pcm-src.md)。未进入 B8.5。
 
 ## B8.5 — HA Qwen Realtime Bridge（替换 STT/LLM/TTS 入口）
 
