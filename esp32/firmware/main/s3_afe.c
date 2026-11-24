@@ -395,7 +395,7 @@ static bool config_valid(const afe_config_t *c)
     return c && c->aec_init && c->aec_mode==AEC_MODE_SR_HIGH_PERF &&
         c->afe_type==AFE_TYPE_SR && c->afe_mode==AFE_MODE_HIGH_PERF &&
         c->se_init && !c->ns_init && c->vad_init && !c->vad_mute_playback &&
-        c->vad_min_speech_ms==128 && c->vad_min_noise_ms==500 && c->vad_delay_ms==128 &&
+        c->vad_mode==VAD_MODE_2 && c->vad_energy_threshold==-70.0f && c->vad_min_speech_ms==128 && c->vad_min_noise_ms==500 && c->vad_delay_ms==128 &&
         c->vad_model_name && !strcmp(c->vad_model_name,"vadnet1_medium") &&
         c->wakenet_init && c->wakenet_model_name &&
         !strcmp(c->wakenet_model_name,TIVOO_AFE_MODEL_ID) &&
@@ -437,6 +437,8 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
     config->vad_init=true;
     config->vad_model_name=models->model_name[vad];
     config->vad_mute_playback=false;
+    config->vad_mode=VAD_MODE_2;
+    config->vad_energy_threshold=-70.0f;
     config->vad_min_speech_ms=128;
     config->vad_min_noise_ms=500;
     config->vad_delay_ms=128;
@@ -455,6 +457,12 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
     afe_config_free(config);
     config=NULL;
     if (!data) goto fail;
+    float energy_before=afe->get_vad_energy_threshold(data);
+    int energy_result=afe->set_vad_energy_threshold(data,-70.0f);
+    float energy_after=afe->get_vad_energy_threshold(data);
+    ESP_LOGI(TAG,"runtime VAD energy before=%.1f after=%.1f result=%d",
+        (double)energy_before,(double)energy_after,energy_result);
+    if (energy_result!=1 || energy_after!=-70.0f) goto fail;
     int feed=afe->get_feed_chunksize(data), fetch=afe->get_fetch_chunksize(data);
     if (feed<=0 || fetch<=0 || afe->get_feed_channel_num(data)!=4 ||
         afe->get_fetch_channel_num(data)!=1 || afe->get_samp_rate(data)!=16000) goto fail;

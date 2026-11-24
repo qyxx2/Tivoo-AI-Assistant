@@ -60,9 +60,9 @@ static void gate_regression(void) {
     }
 }
 int main(void) {
-    int16_t l[]={1,2}, r[]={3,4}, ref[]={5,6}, mmnr[8];
-    tivoo_afe_interleave(mmnr,l,r,ref,2);
-    const int16_t expected[]={1,3,0,5,2,4,0,6};
+    int16_t l[]={1,2,20000,-20000,8191,-8192}, r[]={3,-4,-20000,20000,8192,-8193}, ref[]={5,6,32767,-32768,123,-456}, mmnr[24];
+    tivoo_afe_interleave(mmnr,l,r,ref,6);
+    const int16_t expected[]={4,12,0,5,8,-16,0,6,32767,-32768,0,32767,-32768,32767,0,-32768,32764,32767,0,123,-32768,-32768,0,-456};
     assert(memcmp(mmnr,expected,sizeof(expected))==0);
     tivoo_afe_flow_init(&flow,1,sink,0);
     frame(160,false,-1,2,1,1,0); assert(wakes==0);

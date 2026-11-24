@@ -1,12 +1,19 @@
 #include "p68_afe_flow.h"
 #include <string.h>
 
+/* Apply +12.04 dB only to the microphone channels, not the AEC reference. */
+static int16_t mic_gain(int16_t sample)
+{
+    int32_t scaled=(int32_t)sample*4;
+    return scaled>INT16_MAX ? INT16_MAX : scaled<INT16_MIN ? INT16_MIN : (int16_t)scaled;
+}
+
 void tivoo_afe_interleave(int16_t *out, const int16_t *left,
     const int16_t *right, const int16_t *ref, size_t count)
 {
     for (size_t i=0; i<count; ++i) {
-        out[4*i]=left[i];
-        out[4*i+1]=right[i];
+        out[4*i]=mic_gain(left[i]);
+        out[4*i+1]=mic_gain(right[i]);
         out[4*i+2]=0;
         out[4*i+3]=ref[i];
     }

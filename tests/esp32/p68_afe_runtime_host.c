@@ -32,7 +32,7 @@ static int fake_feed(esp_afe_sr_data_t *d,const int16_t *pcm) {
     if(worker_mode) {
         for(unsigned i=0;i<160;i++) {
             int16_t marker=(int16_t)(expected_feed_first+i);
-            assert(pcm[4*i]==marker && pcm[4*i+1]==-marker);
+            assert(pcm[4*i]==4*marker && pcm[4*i+1]==-4*marker);
             assert(pcm[4*i+2]==0 && pcm[4*i+3]==(int16_t)(100+marker));
         }
         expected_feed_first+=160;
@@ -187,13 +187,19 @@ int main(int argc,char **argv) {
             .aec_init=true,.aec_mode=AEC_MODE_SR_HIGH_PERF,
             .afe_type=AFE_TYPE_SR,.afe_mode=AFE_MODE_HIGH_PERF,
             .se_init=true,.ns_init=false,.vad_init=true,.vad_mute_playback=false,
-            .vad_min_speech_ms=128,.vad_min_noise_ms=500,.vad_delay_ms=128,
+            .vad_mode=VAD_MODE_2,.vad_energy_threshold=-70.0f,.vad_min_speech_ms=128,.vad_min_noise_ms=500,.vad_delay_ms=128,
             .vad_model_name="vadnet1_medium",.wakenet_init=true,
             .wakenet_model_name="wn9_hiwalle_tts2",.wakenet_model_name_2=NULL,
             .pcm_config={.total_ch_num=4,.mic_num=2,.ref_num=1,.sample_rate=16000,
                          .mic_ids=microphones,.ref_ids=reference}
         };
         assert(config_valid(&config));
+        config.vad_energy_threshold=-60.0f;
+        assert(!config_valid(&config));
+        config.vad_energy_threshold=-70.0f;
+        config.vad_mode=VAD_MODE_1;
+        assert(!config_valid(&config));
+        config.vad_mode=VAD_MODE_2;
         config.aec_mode=AEC_MODE_FD_HIGH_PERF;
         assert(!config_valid(&config));
         config.aec_mode=AEC_MODE_SR_HIGH_PERF;config.afe_type=AFE_TYPE_FD;
