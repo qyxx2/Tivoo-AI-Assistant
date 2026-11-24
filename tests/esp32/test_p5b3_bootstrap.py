@@ -59,7 +59,7 @@ def test_effective_target_configs_after_configure():
         "CONFIG_SPIRAM_MODE_OCT=y", "CONFIG_SPIRAM_SPEED_80M=y",
         "CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y",
         "CONFIG_MODEL_IN_FLASH=y", "CONFIG_SR_VADN_VADNET1_MEDIUM=y",
-        "CONFIG_SR_WN_WN9_HILEXIN=y",
+        "CONFIG_SR_WN_WN9_HIWALLE_TTS2=y",
         "CONFIG_ESP32S3_DATA_CACHE_SIZE=0x8000",
         "CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE=64",
     } <= s3

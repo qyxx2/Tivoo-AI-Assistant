@@ -189,7 +189,7 @@ int main(int argc,char **argv) {
             .se_init=true,.ns_init=false,.vad_init=true,.vad_mute_playback=false,
             .vad_min_speech_ms=128,.vad_min_noise_ms=500,.vad_delay_ms=128,
             .vad_model_name="vadnet1_medium",.wakenet_init=true,
-            .wakenet_model_name="wn9_hilexin",.wakenet_model_name_2=NULL,
+            .wakenet_model_name="wn9_hiwalle_tts2",.wakenet_model_name_2=NULL,
             .pcm_config={.total_ch_num=4,.mic_num=2,.ref_num=1,.sample_rate=16000,
                          .mic_ids=microphones,.ref_ids=reference}
         };

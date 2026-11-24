@@ -121,7 +121,7 @@ void vQueueDelete(QueueHandle_t);
     exe = tmp_path / "afe_runtime"
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                     "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                    "-DESP_PLATFORM", "-DCONFIG_TIVOO_P68_CALIBRATION_TRACE=1", '-DTIVOO_AFE_MODEL_ID="wn9_hilexin"',
+                    "-DESP_PLATFORM", "-DCONFIG_TIVOO_P68_CALIBRATION_TRACE=1", '-DTIVOO_AFE_MODEL_ID="wn9_hiwalle_tts2"',
                     "-I", str(tmp_path), "-I", str(MAIN),
                     "-I", str(sr / "include/esp32s3"), "-I", str(sr / "src/include"),
                     "-I", str(MAIN.parent / "managed_components/espressif__cjson/cJSON"),

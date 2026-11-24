@@ -147,7 +147,7 @@ def test_prompt_real_adapter_dma_and_owner(tmp_path):
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-Wno-sign-compare",
                     "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                     "-DESP_PLATFORM", "-DTIVOO_P68_B5_LOCAL", "-DTIVOO_P68_B3_AUDIO",
-                    '-DTIVOO_AFE_MODEL_ID="wn9_hilexin"',
+                    '-DTIVOO_AFE_MODEL_ID="wn9_hiwalle_tts2"',
                     "-I", str(tmp_path), "-I", str(MAIN),
                     "-I", str(sr / "include/esp32s3"), "-I", str(sr / "src/include"),
                     "-I", str(cjson), str(Path(__file__).with_name("p68_prompt_adapter_host.c")),

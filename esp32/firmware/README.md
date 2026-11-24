@@ -1,6 +1,6 @@
 # Tivoo ESP32-S3 firmware (P6.8 b6)
 
-**Do not flash these development images onto the current production ESP32.** The active project here now targets ESP32-S3 N16R8-M. The independent Classic ESP32 SPP project is [../bridge_firmware](../bridge_firmware/README.md). P6.8 b1–b6 implement the build scaffold, UART bridge, I2S/AFE, local wake/STT protocol and local prompt software. This is not yet a production voice assistant: physical calibration, interruption/follow-up and integrated acceptance remain pending. The packaged `wn9_hilexin` is only a smoke model. Physical acceptance is pending.
+**Do not flash these development images onto the current production ESP32.** The active project here now targets ESP32-S3 N16R8-M. The independent Classic ESP32 SPP project is [../bridge_firmware](../bridge_firmware/README.md). P6.8 b1–b6 implement the build scaffold, UART bridge, I2S/AFE, local wake/STT protocol and local prompt software. This is not yet a production voice assistant: physical calibration, interruption/follow-up and integrated acceptance remain pending. The packaged `wn9_hiwalle_tts2` uses the wake phrase Hi 瓦力 (Hi Wall E). Physical acceptance is pending.
 
 Build on the ARM64 development host with ESP-IDF v6.1 and FFmpeg (b6 converts the four frozen MP3 sources to aligned read-only PCM at CMake configure time), one project at a time and bounded build parallelism:
 

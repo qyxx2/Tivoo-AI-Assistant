@@ -51,7 +51,7 @@ static void probe_esp_sr_afe(void)
     if (models == NULL) {
         return;
     }
-    int wake = esp_srmodel_exists(models, "wn9_hilexin");
+    int wake = esp_srmodel_exists(models, TIVOO_AFE_MODEL_ID);
     int vad = esp_srmodel_exists(models, "vadnet1_medium");
     if (wake < 0 || vad < 0) {
         esp_srmodel_deinit(models);

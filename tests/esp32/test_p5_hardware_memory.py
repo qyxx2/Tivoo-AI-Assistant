@@ -73,7 +73,7 @@ def test_p68_independent_target_defaults_and_model_selection():
     assert "CONFIG_SR_VADN_VADNET1_MEDIUM=y" in s3_defaults
     assert [line for line in s3_defaults.splitlines()
             if line.startswith("CONFIG_SR_WN_") and line.endswith("=y")] == [
-                "CONFIG_SR_WN_WN9_HILEXIN=y"]
+                "CONFIG_SR_WN_WN9_HIWALLE_TTS2=y"]
     bridge_defaults = (bridge / "sdkconfig.defaults").read_text()
     assert "CONFIG_SPIRAM_MODE_QUAD=y" in bridge_defaults
     assert "CONFIG_SPIRAM_BANKSWITCH_ENABLE=y" in bridge_defaults
