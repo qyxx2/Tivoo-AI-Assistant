@@ -5,6 +5,7 @@ import base64
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from aiohttp import WSMsgType, web
@@ -13,7 +14,7 @@ from custom_components.tivoo import qwen_realtime as qwen
 
 
 class Socket:
-    def __init__(self, *, capabilities=None, rate=16000, reverse=False, session_id="entry"):
+    def __init__(self, *, capabilities=None, rate=16000, reverse=False, session_id=None):
         self.session_id = session_id
         self.incoming = asyncio.Queue()
         self.sent = []
@@ -65,6 +66,14 @@ async def spin_until(condition):
 def setup_bridge(hass, monkeypatch):
     ws = Socket()
     client = SimpleNamespace(ws_connect=AsyncMock(return_value=ws))
+
+    async def connect(url, **kwargs):
+        socket = client.ws_connect.return_value
+        if socket.session_id is None:
+            socket.session_id = parse_qs(urlsplit(url).query)["sessionId"][0]
+        return socket
+
+    client.ws_connect.side_effect = connect
     monkeypatch.setattr(qwen, "async_get_clientsession", lambda _: client)
     monkeypatch.setattr(qwen, "get_url", lambda *a, **k: "http://ha:8123")
     monkeypatch.setattr(qwen, "TAIL_FRAME_SECONDS", 0)
@@ -162,7 +171,7 @@ async def test_handshake_pcm_tail_and_physical_completion(setup_bridge):
     assert client.ws_connect.call_args.kwargs["headers"] == {
         "Authorization": "Bearer fixture-token"
     }
-    assert "sessionId=entry" in client.ws_connect.call_args.args[0]
+    assert parse_qs(urlsplit(client.ws_connect.call_args.args[0]).query)["sessionId"] == [owner.session_id]
     frames = [
         base64.b64decode(e["audio"])
         for e in ws.sent
@@ -200,10 +209,12 @@ async def test_handshake_pcm_tail_and_physical_completion(setup_bridge):
 
 
 @pytest.mark.parametrize(
-    "case", ["capability", "ordering", "rate", "gateway-error", "bad-json"]
+    "case", ["capability", "ordering", "rate", "gateway-error", "bad-json", "session-mismatch"]
 )
 async def test_invalid_handshake_fails_closed(setup_bridge, case):
     bridge, owner, ws, adapter, streams, _ = setup_bridge
+    if case == "session-mismatch":
+        ws.session_id = "entry"
     if case == "capability":
         ws.capabilities = ["input.audio"]
     if case == "ordering":
@@ -529,6 +540,7 @@ async def test_explicit_retention_reuses_socket_after_old_owner_retired(setup_br
     bridge.on_playback(next_owner.playback_id, "completed")
     assert (await second).turn_id == "t2"
     assert client.ws_connect.await_count == 1 and ws.closed
+    assert ws.session_id == owner.session_id != next_owner.session_id
 
 
 async def test_missing_parent_socket_never_reconnects_as_followup(setup_bridge):

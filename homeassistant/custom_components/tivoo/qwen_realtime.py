@@ -327,9 +327,12 @@ class QwenRealtimeBridge:
             or parsed.fragment
         ):
             raise ValueError("Invalid Qwen Gateway URL")
+        # Each independent wake starts a fresh Gateway history partition.
+        # Authorized follow-ups return above and keep the original socket.
+        conversation_id = owner.session_id
         query = [(k, v) for k, v in parse_qsl(parsed.query) if k != "sessionId"]
         url = urlunsplit(
-            parsed._replace(query=urlencode([*query, ("sessionId", self.entry_id)]))
+            parsed._replace(query=urlencode([*query, ("sessionId", conversation_id)]))
         )
         try:
             async with asyncio.timeout(20):
@@ -377,7 +380,7 @@ class QwenRealtimeBridge:
                 if event["type"] == "session.ready":
                     if (
                         event.get("request_event_id") != hello_id
-                        or event.get("session_id") != self.entry_id
+                        or event.get("session_id") != conversation_id
                         or event.get("protocol_version") != "7.0.0"
                         or not {
                             "input.audio",

@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from custom_components.tivoo import qwen_realtime as qwen
@@ -135,6 +136,7 @@ async def test_followup_handoff_new_identity_same_socket(live):
     assert next_owner.parent_session_id == SESSION_1
     await finish(live, next_owner, next_turn, text="完成。", tid="t2", rid="r2")
     assert client.ws_connect.await_count == 1
+    assert ws.session_id == SESSION_1
     assert ws.closed and manager.active_session_id is None
 
 
@@ -331,7 +333,7 @@ async def test_shutdown_during_followup_joins_retained_reader(live):
     assert manager.active_session_id is None
 
 
-async def test_independent_wakes_reconnect_with_stable_partition_and_instance(live):
+async def test_independent_wakes_reconnect_with_fresh_partition_and_stable_instance(live):
     from test_qwen_realtime import Socket
 
     _, _, _, _, first, _, client = live
@@ -343,19 +345,22 @@ async def test_independent_wakes_reconnect_with_stable_partition_and_instance(li
     turn, owner = await start(live, SESSION_2)
     await finish(live, owner, turn, text="完成。", tid="t2", rid="r2")
     assert client.ws_connect.await_count == 2
-    assert all(
-        "sessionId=entry" in c.args[0] for c in client.ws_connect.await_args_list
-    )
+    assert [
+        parse_qs(urlsplit(c.args[0]).query)["sessionId"][0]
+        for c in client.ws_connect.await_args_list
+    ] == [SESSION_1, SESSION_2]
+    assert first.session_id == SESSION_1
+    assert second.session_id == SESSION_2
     assert first.sent[0]["client"]["instance_id"] == "tivoo-entry"
     assert second.sent[0]["client"]["instance_id"] == "tivoo-entry"
     assert first.closed and second.closed
 
 
-async def test_different_entry_uses_separate_gateway_partition(setup_bridge):
+async def test_different_entry_keeps_its_own_client_instance(setup_bridge):
     from test_qwen_realtime import Socket, pcm
 
     old_bridge, _, _, adapter, streams, client = setup_bridge
-    ws = Socket(session_id="other-entry")
+    ws = Socket()
     client.ws_connect.return_value = ws
     bridge = qwen.QwenRealtimeBridge(old_bridge.hass, adapter, streams, "other-entry")
     owner = bridge.create_turn(SESSION_1, "fresh-context", current=lambda: True)
@@ -365,7 +370,7 @@ async def test_different_entry_uses_separate_gateway_partition(setup_bridge):
     await consume(owner)
     bridge.on_playback(owner.playback_id, "completed")
     await task
-    assert "sessionId=other-entry" in client.ws_connect.call_args.args[0]
+    assert parse_qs(urlsplit(client.ws_connect.call_args.args[0]).query)["sessionId"] == [SESSION_1]
     assert ws.sent[0]["client"]["instance_id"] == "tivoo-other-entry"
 
 
