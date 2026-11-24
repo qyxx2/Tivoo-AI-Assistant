@@ -181,6 +181,27 @@ static void capture_feed(unsigned calls) {
 }
 int main(int argc,char **argv) {
     assert(argc==2);
+    if (!strcmp(argv[1],"sr_config")) {
+        uint8_t microphones[]={0,1}, reference[]={3};
+        afe_config_t config={
+            .aec_init=true,.aec_mode=AEC_MODE_SR_HIGH_PERF,
+            .afe_type=AFE_TYPE_SR,.afe_mode=AFE_MODE_HIGH_PERF,
+            .se_init=true,.ns_init=false,.vad_init=true,.vad_mute_playback=false,
+            .vad_min_speech_ms=128,.vad_min_noise_ms=500,.vad_delay_ms=128,
+            .vad_model_name="vadnet1_medium",.wakenet_init=true,
+            .wakenet_model_name="wn9_hilexin",.wakenet_model_name_2=NULL,
+            .pcm_config={.total_ch_num=4,.mic_num=2,.ref_num=1,.sample_rate=16000,
+                         .mic_ids=microphones,.ref_ids=reference}
+        };
+        assert(config_valid(&config));
+        config.aec_mode=AEC_MODE_FD_HIGH_PERF;
+        assert(!config_valid(&config));
+        config.aec_mode=AEC_MODE_SR_HIGH_PERF;config.afe_type=AFE_TYPE_FD;
+        assert(!config_valid(&config));
+        config.afe_type=AFE_TYPE_SR;config.vad_mute_playback=true;
+        assert(!config_valid(&config));
+        return 0;
+    }
     cache[0]=-123;
     afe=&vendor; data=(esp_afe_sr_data_t *)1; input=in; feed_size=fetch_size=160;
     flow=&state; tivoo_afe_flow_init(flow,1,sink,NULL);

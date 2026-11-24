@@ -21,7 +21,7 @@ def test_s3_runs_real_afe_not_legacy_or_smoke():
     assert '"audio_frontend.c"' not in cmake
     assert "tivoo_s3_afe_start(" in main
     assert main.index("tivoo_s3_afe_start(") < main.index("tivoo_audio_capture_monitor_start()")
-    for token in ('"MMNR"', 'AFE_TYPE_FD', 'AFE_MODE_HIGH_PERF',
+    for token in ('"MMNR"', 'AFE_TYPE_SR', 'AFE_MODE_HIGH_PERF',
                   'get_feed_chunksize', 'get_fetch_chunksize',
                   'fetch_with_delay', 'print_pipeline', 'afe_config_check'):
         assert token in afe
@@ -127,8 +127,8 @@ void vQueueDelete(QueueHandle_t);
                     "-I", str(MAIN.parent / "managed_components/espressif__cjson/cJSON"),
                     str(Path(__file__).with_name("p68_afe_runtime_host.c")),
                     str(MAIN / "p68_afe_flow.c"), "-lm", "-o", str(exe)], check=True)
-    results = {case: subprocess.run([str(exe), case], capture_output=True, text=True)
-               for case in ("recover", "buffer_fail", "vad_fail", "gate", "gate_cross", "capture_stall")}
+    results = {case: subprocess.run([str(exe), case], check=False, capture_output=True, text=True)
+               for case in ("recover", "buffer_fail", "vad_fail", "gate", "gate_cross", "capture_stall", "sr_config")}
     assert all(r.returncode == 0 for r in results.values()), {
         case: r.stderr for case, r in results.items() if r.returncode
     }

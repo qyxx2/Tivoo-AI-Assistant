@@ -392,8 +392,8 @@ static void fetch_task(void *arg)
 
 static bool config_valid(const afe_config_t *c)
 {
-    return c && c->aec_init && c->aec_mode==AEC_MODE_FD_HIGH_PERF &&
-        c->afe_type==AFE_TYPE_FD && c->afe_mode==AFE_MODE_HIGH_PERF &&
+    return c && c->aec_init && c->aec_mode==AEC_MODE_SR_HIGH_PERF &&
+        c->afe_type==AFE_TYPE_SR && c->afe_mode==AFE_MODE_HIGH_PERF &&
         c->se_init && !c->ns_init && c->vad_init && !c->vad_mute_playback &&
         c->vad_min_speech_ms==128 && c->vad_min_noise_ms==500 && c->vad_delay_ms==128 &&
         c->vad_model_name && !strcmp(c->vad_model_name,"vadnet1_medium") &&
@@ -428,10 +428,10 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
         p=semi;
     }
     for (int i=0;i<word_count;i++) ESP_LOGI(TAG,"wake word[%d]=%s",i+1,words[i]);
-    config=afe_config_init("MMNR", models, AFE_TYPE_FD, AFE_MODE_HIGH_PERF);
+    config=afe_config_init("MMNR", models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     if (!config) goto fail;
     config->aec_init=true;
-    config->aec_mode=AEC_MODE_FD_HIGH_PERF;
+    config->aec_mode=AEC_MODE_SR_HIGH_PERF;
     config->se_init=true;
     config->ns_init=false;
     config->vad_init=true;
@@ -444,7 +444,7 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
     config->wakenet_model_name=models->model_name[wake];
     config->memory_alloc_mode=AFE_MEMORY_ALLOC_MORE_PSRAM;
     if (!afe_config_check(config) || !config_valid(config)) goto fail;
-    ESP_LOGI(TAG,"effective AFE FD HIGH_PERF MMNR BSS=%d NS=%d VAD mode=%d speech/noise/delay=%d/%d/%d energy=%.1f wake_mode=%d AGC=%d/%d AEC filter=%d mem=%d",
+    ESP_LOGI(TAG,"effective AFE SR HIGH_PERF MMNR BSS=%d NS=%d VAD mode=%d speech/noise/delay=%d/%d/%d energy=%.1f wake_mode=%d AGC=%d/%d AEC filter=%d mem=%d",
         config->se_init,config->ns_init,config->vad_mode,config->vad_min_speech_ms,
         config->vad_min_noise_ms,config->vad_delay_ms,(double)config->vad_energy_threshold,
         config->wakenet_mode,config->agc_init,config->agc_mode,config->aec_filter_length,
@@ -474,7 +474,7 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
             capture_queue_storage,&capture_queue_control);
     if (!input || !flow || !controls || !captured) goto fail;
     tivoo_afe_flow_init(flow,word_count,sink,ctx);
-    /* Hardware profiling: 2mic FD feed needs its own core. Keep capture
+    /* Hardware profiling: 2mic SR feed needs its own core. Keep capture
      * above fetch on core0 so vendor processing cannot stall the DMA drain. */
     if (xTaskCreatePinnedToCore(capture_task,"afe_capture",4096,NULL,8,&capture_handle,0)!=pdPASS ||
         xTaskCreatePinnedToCore(feed_task,"afe_feed",4096,NULL,7,&feed_handle,1)!=pdPASS ||

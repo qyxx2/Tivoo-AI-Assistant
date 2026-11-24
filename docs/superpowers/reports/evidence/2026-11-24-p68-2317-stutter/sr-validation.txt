@@ -1,0 +1,26 @@
+IO[7] -
+  InputEn: 0, OutputEn: 1, OpenDrain: 0
+  FuncSel: 1 (GPIO)
+  GPIO Matrix SigOut ID: 256 (simple GPIO output)
+I (1100) SILENT-LOAD: physical DAC DIN held low; I2S DOUT disconnected; wake sink disabled
+I (1350) s3_afe: effective AFE SR HIGH_PERF MMNR BSS=1 NS=0 VAD mode=0 speech/noise/delay=128/500/128 energy=-60.0 wake_mode=0 AGC=0/1 AEC filter=4 mem=3
+I (1530) AFE: AFE Pipeline: [input] -> |AEC(SR_HIGH_PERF, NLP_OFF)| -> |SE(BSS)| -> |VAD(vadnet1_medium)| -> |WakeNet(wn9_hilexin,)| -> [output]
+I (1560) AFE: AFE Pipeline: [input] -> |AEC(SR_HIGH_PERF, NLP_OFF)| -> |SE(BSS)| -> |VAD(vadnet1_medium)| -> |WakeNet(wn9_hilexin,)| -> [output]
+I (11590) s3_afe: feed=155 fetch=310 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=0 ring_free_pct=0.980 feed_max_us=52618 fetch_wait_max_us=187928 stack=2060/1784 internal_min=17984 internal_largest=9728 dma_largest=9728 psram_free=6898828
+I (16920) STUTTER-BENCH: begin round=0 priority=3 core=1 ps=0
+I (16950) audio_resource: generation=780001 internal_free=19423 largest=9728
+I (21630) s3_afe: feed=312 fetch=610 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=0 ring_free_pct=0.740 feed_max_us=63454 fetch_wait_max_us=187928 stack=2060/1784 internal_min=17116 internal_largest=9728 dma_largest=9728 psram_free=6882584
+I (23210) audio_resource: generation=780001 HTTP read_ms=4141 max_read_ms=62
+I (23330) audio_output: generation=780001 TX drained=1 underruns=41 queue_high_water=5120 missed_eofs=0 reference_peak=600
+I (23330) STUTTER-BENCH: end round=0 bytes=288000 elapsed_ms=6412 error=none affinity=1
+I (26710) STUTTER-BENCH: begin round=1 priority=3 core=1 ps=0
+I (26740) audio_resource: generation=780002 internal_free=19387 largest=7680
+I (31650) s3_afe: feed=468 fetch=925 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=0 ring_free_pct=0.760 feed_max_us=63454 fetch_wait_max_us=187928 stack=2060/1784 internal_min=10812 internal_largest=7680 dma_largest=7168 psram_free=6878676
+I (32880) audio_resource: generation=780002 HTTP read_ms=4518 max_read_ms=111
+I (33060) audio_output: generation=780002 TX drained=1 underruns=17 queue_high_water=5120 missed_eofs=0 reference_peak=600
+I (33060) STUTTER-BENCH: end round=1 bytes=288000 elapsed_ms=6349 error=none affinity=1
+I (36070) STUTTER-BENCH: complete
+I (41670) s3_afe: feed=625 fetch=1250 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=0 ring_free_pct=0.980 feed_max_us=63454 fetch_wait_max_us=187928 stack=2060/1784 internal_min=10812 internal_largest=16384 dma_largest=16384 psram_free=6898404
+I (51680) s3_afe: feed=782 fetch=1563 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=0 ring_free_pct=1.000 feed_max_us=63454 fetch_wait_max_us=187928 stack=2060/1784 internal_min=10812 internal_largest=16384 dma_largest=16384 psram_free=6898404
+I (61700) s3_afe: feed=938 fetch=1876 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=0 ring_free_pct=0.980 feed_max_us=63454 fetch_wait_max_us=187928 stack=2060/1784 internal_min=10812 internal_largest=16384 dma_largest=16384 psram_free=6898404
+I (71720) s3_afe: feed=1095 fetch=2189 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=39 missed_eof=0 capture_overruns=0 capture_stack=2768 cache_samples_ignored=9728 ring_free_pct=1.000 feed_max_us=63454 fetch_wait_max_us=187928 stack=2060/1784 internal_min=10812 internal_largest=16384 dma_largest=16384 psram_free=6898404

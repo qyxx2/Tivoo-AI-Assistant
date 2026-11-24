@@ -1,5 +1,7 @@
 # P6.8 B8.7 回复播放卡顿：调度定位与修复
 
+> 2317cd3 后续修订：用户确认恢复后的 FD 模式再次造成日常卡顿，并明确选择恢复此前流畅的 SR 模式。当前默认改为 SR HIGH_PERF，详见文末“基于 2317cd3 恢复 SR”。静默对照证明严重吞吐退化已解除，但仍存在少量断粮，不宣告零断粮或声学验收通过。
+
 > 后续状态更新：用户明确要求“直接重启”后，已通过 RTS 重启 S3。串口确认正常 app 启动、AFE available、Wi-Fi 获得 192.168.3.40。设备已退出下载模式并恢复运行；没有触发播放或唤醒测试。下文“暂留下载模式”是重启前的收尾记录。
 
 日期：2026-11-24（Asia/Shanghai）。分支 `feature/p6-8-s3-local-wake`，HEAD `a4469d7`；在原有 dirty 工作区上继续，保留此前所有改动。
@@ -92,3 +94,29 @@ python scripts/verify-p68-playback.py \
 - `long-benchmark-serial.log`、`long-fixture-server.log`
 - `final-build.txt`、`final-silent-flash.txt`、`read-before.txt`
 - `esp32-tests-final.txt`、`control-and-verifier-recheck.txt`、`esp32-tests-clean-recheck.txt`
+
+
+## 基于 2317cd3 恢复 SR（2026-11-24）
+
+用户反馈最新提交上的日常回答重新卡顿，并明确选择“恢复此前流畅的 SR 模式并提交”。此前流畅产物实际运行 `AFE_TYPE_SR / AEC_MODE_SR_HIGH_PERF`，2317cd3 中运行图与配置校验恢复为 `AFE_TYPE_FD / AEC_MODE_FD_HIGH_PERF`；旧移核结论不能直接覆盖不同 AFE 算法的实时预算。
+
+本次只恢复 SR HIGH_PERF 的运行图、严格配置校验、日志及编译探针，并补充实际 `config_valid()` 回归：接受正确 SR 配置，拒绝混入 FD mode、FD type 或开启 playback VAD mute。测试先在旧实现上 RED，再在 SR 实现上 GREEN。双麦 MMNR、AEC、BSS、VAD/WakeNet、采样率、缓存、任务布局与优先级均保持不变。试验中的文件级编译优化、SRC 内部 RAM 缓冲与 CPU 采样探针没有保留。
+
+所有本轮负载试验均把物理 DAC DIN（GPIO7）固定为低电平、I²S DOUT 设为 UNUSED，并禁用 wake 事件回调；GPIO dump 确认 SigOut=256（普通 GPIO 输出）。仅数字 DMA/reference 非零，没有播放测试音，也没有进行实际唤醒测试。该静默探针不代表声学 AEC 效果、打断或完整会话验收。
+
+相同 288000B / 24kHz mono S16LE / 6秒 PCM，播放任务均为 core1 / priority3：
+
+| 运行图 | 实际耗时 | 输出断粮 | 观测期 AFE 错误/丢帧增长 |
+|---|---:|---:|---|
+| FD HIGH_PERF | 93.064秒 | 17173 | 无 |
+| SR HIGH_PERF 第一轮 | 6.412秒 | 41 | 无 |
+| SR HIGH_PERF 第二轮 | 6.349秒 | 17 | 无 |
+
+SR 两轮期间 feed_errors/fetch_errors/resets/capture_overruns/missed_eof 均保持0；rx_gaps固定启动累计1，ISR overruns固定39。**本次恢复解决的是 FD 引入的严重吞吐退化；41/17 次短暂断粮仍保留为未通过的零断粮指标，不能写成完全消除卡顿。** FD 的额外非线性回声抑制不再作为当前默认路径能力声明；B8.7 声学/打断/长负载及 B9 仍 HOLD。
+
+定向回归10 passed，完整 ESP32 回归156 passed（37项既有warning）；正常 SR 固件构建成功，最终源代码不包含临时发声、静默探针或强制 wake/VAD 代码。五个代码/测试文件的独立审查未发现可操作问题。本次未修改 NAS HA/Qwen 配置。
+
+提交内保留的可审查证据：
+
+- [配置与时序的 RED](evidence/2026-11-24-p68-2317-stutter/sr-config-red.txt)、[定向 GREEN](evidence/2026-11-24-p68-2317-stutter/sr-config-green.txt)、[完整回归](evidence/2026-11-24-p68-2317-stutter/esp32-tests.txt)。
+- [FD 基线元数据](evidence/2026-11-24-p68-2317-stutter/fd-baseline.txt)、[SR 复验元数据](evidence/2026-11-24-p68-2317-stutter/sr-validation.txt)、[对照汇总](evidence/2026-11-24-p68-2317-stutter/sr-comparison.json)。原始未提交日志继续保留在该证据目录，未将其他历史音频/构建产物纳入本次提交。

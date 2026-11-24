@@ -1,0 +1,156 @@
+........................................................................ [ 46%]
+........................................................................ [ 92%]
+............                                                             [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: asyncio_mode
+
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: ha_test_root
+
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+tests/esp32/test_p5b1_network_listeners.py:61
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b1_network_listeners.py:61: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:167
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:167: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:195
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:195: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:228
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:228: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:252
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:252: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:271
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:271: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:304
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:304: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:335
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:335: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:360
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:360: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:406
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:406: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:425
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:425: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:451
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:451: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:474
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:474: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:500
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:500: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:560
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:560: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:586
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:586: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:616
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:616: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:633
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:633: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:658
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:658: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:677
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:677: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:719
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:719: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:759
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:759: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:832
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:832: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:875
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:875: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py:930
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b2_diagnostics.py:930: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b3_control_bridge.py:12
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b3_control_bridge.py:12: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = pytest.mark.enable_socket
+
+tests/esp32/test_p5b4_integration.py:14
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p5b4_integration.py:14: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    pytestmark = pytest.mark.enable_socket
+
+tests/esp32/test_p6_device_status.py:125
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p6_device_status.py:125: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p6_device_status.py:252
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p6_device_status.py:252: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p6_reverse_channel.py:112
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/test_p6_reverse_channel.py:112: PytestUnknownMarkWarning: Unknown pytest.mark.enable_socket - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.enable_socket
+
+tests/esp32/test_p5b2_diagnostics.py::test_p6_cross_language_golden_frames_match_python_codec
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/homeassistant/components/http/server.py:223: DeprecationWarning: Inheritance class HomeAssistantApplication from web.Application is discouraged
+    class HomeAssistantApplication(web.Application):
+
+tests/esp32/test_p5b2_diagnostics.py::test_p6_cross_language_golden_frames_match_python_codec
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_decorator.py:201: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(target):
+
+tests/esp32/test_p5b2_diagnostics.py::test_p6_cross_language_golden_frames_match_python_codec
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_async.py:11: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(coro_or_func):
+
+tests/esp32/test_p5b2_diagnostics.py::test_p6_cross_language_golden_frames_match_python_codec
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_async.py:127: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    assert not asyncio.iscoroutinefunction(max_tries)
+
+tests/esp32/test_p5b2_diagnostics.py::test_p6_cross_language_golden_frames_match_python_codec
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_async.py:128: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    assert not asyncio.iscoroutinefunction(jitter)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+156 passed, 37 warnings in 81.32s (0:01:21)

@@ -1,0 +1,47 @@
+{
+  "base_commit": "2317cd3",
+  "physical_output": "GPIO7 forced low; I2S DOUT disconnected; wake callback disabled",
+  "fixture_pcm_bytes": 288000,
+  "fixture_duration_seconds": 6,
+  "playback_priority": 3,
+  "rows": [
+    {
+      "mode": "FD_HIGH_PERF",
+      "round": 0,
+      "bytes": 288000,
+      "elapsed_ms": 93064,
+      "error": "none",
+      "core": 1,
+      "generation": 700001,
+      "drained": true,
+      "underruns": 17173,
+      "missed_eofs": 0
+    },
+    {
+      "mode": "SR_HIGH_PERF",
+      "round": 0,
+      "bytes": 288000,
+      "elapsed_ms": 6412,
+      "error": "none",
+      "core": 1,
+      "generation": 780001,
+      "drained": true,
+      "underruns": 41,
+      "missed_eofs": 0
+    },
+    {
+      "mode": "SR_HIGH_PERF",
+      "round": 1,
+      "bytes": 288000,
+      "elapsed_ms": 6349,
+      "error": "none",
+      "core": 1,
+      "generation": 780002,
+      "drained": true,
+      "underruns": 17,
+      "missed_eofs": 0
+    }
+  ],
+  "zero_underrun_acceptance": false,
+  "acoustic_wake_tested": false
+}

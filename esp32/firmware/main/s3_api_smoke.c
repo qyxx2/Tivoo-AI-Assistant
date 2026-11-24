@@ -58,10 +58,10 @@ static void probe_esp_sr_afe(void)
         return;
     }
     afe_config_t *config = afe_config_init(
-        "MMNR", models, AFE_TYPE_FD, AFE_MODE_HIGH_PERF);
+        "MMNR", models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     if (config != NULL) {
         config->aec_init = true;
-        config->aec_mode = AEC_MODE_FD_HIGH_PERF;
+        config->aec_mode = AEC_MODE_SR_HIGH_PERF;
         config->vad_init = true;
         config->vad_model_name = models->model_name[vad];
         config->vad_mute_playback = false;

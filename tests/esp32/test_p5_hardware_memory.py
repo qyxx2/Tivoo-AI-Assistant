@@ -100,8 +100,8 @@ def test_p68_independent_project_source_graph():
 def test_p68_s3_compile_probe_matches_frozen_afe_graph():
     source = (FIRMWARE_MAIN / "s3_api_smoke.c").read_text()
     assert 'esp_srmodel_init("model")' in source
-    assert '"MMNR", models, AFE_TYPE_FD, AFE_MODE_HIGH_PERF' in source
-    assert 'AEC_MODE_FD_HIGH_PERF' in source
+    assert '"MMNR", models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF' in source
+    assert 'AEC_MODE_SR_HIGH_PERF' in source
     assert 'config->se_init = true;' in source
     assert 'config->ns_init = false;' in source
     assert 'config->wakenet_init = true;' in source

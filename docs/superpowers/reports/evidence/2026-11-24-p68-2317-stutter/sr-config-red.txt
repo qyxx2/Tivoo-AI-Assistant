@@ -1,0 +1,24 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________________ test_afe_runtime_availability _________________________
+tests/esp32/test_p68_afe.py:132: in test_afe_runtime_availability
+    assert all(r.returncode == 0 for r in results.values()), {
+E   AssertionError: {'sr_config': "afe_runtime: /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_afe_runtime_host.c:196: main: Assertion `config_valid(&config)' failed.
+E     "}
+E   assert False
+E    +  where False = all(<generator object test_afe_runtime_availability.<locals>.<genexpr> at 0x7b29b5cd40>)
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: asyncio_mode
+
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: ha_test_root
+
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/esp32/test_p68_afe.py::test_afe_runtime_availability - Assertion...
+1 failed, 2 deselected, 2 warnings in 0.46s
