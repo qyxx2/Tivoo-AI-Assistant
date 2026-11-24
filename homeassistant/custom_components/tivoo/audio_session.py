@@ -202,7 +202,7 @@ class AudioSessionManager:
             return
 
         if session.local_mode and (
-            len(data) != 640 or not session.ready or session.gate_uptime is None
+            len(data) % 640 != 0 or not session.ready or session.gate_uptime is None
             or session.speech_uptime is None or session.input_finished
         ):
             await self.async_stop_session(session_id, "invalid_local_pcm")

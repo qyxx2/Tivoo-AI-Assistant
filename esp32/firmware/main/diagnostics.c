@@ -38,7 +38,9 @@
 #define TVIO_MAX_MIC_PCM_PAYLOAD (4U * 1024U)
 #define TVIO_MAX_LOG_JSON 1024U
 #define LOG_QUEUE_DEPTH 16U
-#define MESSAGE_QUEUE_DEPTH 4U
+/* 64 x 20 ms MIC frames = 1.28 s. Real hardware profiling measured
+ * ~0.95 s worst-case service gaps below the AFE priorities. */
+#define MESSAGE_QUEUE_DEPTH 64U
 #define LOG_MESSAGE_MAX 384U
 #define LOG_MODULE_MAX 48U
 #define ERROR_CODE_MAX 40U
@@ -119,6 +121,8 @@ static size_t s_rx_size;
 static SemaphoreHandle_t s_mutex;
 static SemaphoreHandle_t s_queue_mutex;
 static TaskHandle_t s_worker_task;
+static TaskHandle_t s_realtime_task;
+static atomic_bool s_realtime_alive = ATOMIC_VAR_INIT(false);
 #else
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t s_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -686,16 +690,9 @@ static bool enqueue_message(
         return false;
     }
 
-    uint8_t *copy = NULL;
-    if (size > 0U) {
-        copy = malloc(size);
-        if (copy == NULL) {
-            return false;
-        }
-        memcpy(copy, payload, size);
-    }
+    /* Failed retries are expected while a bounded audio backlog drains.
+     * Reject them before allocation/copy so the AFE producer stays cheap. */
     if (!queue_mutex_take(false)) {
-        free(copy);
         return false;
     }
     if (!atomic_load(&s_running) || !atomic_load(&s_ack_accepted) ||
@@ -704,8 +701,24 @@ static bool enqueue_message(
         (generation && type == TVIO_TYPE_MIC_PCM &&
          s_message_count == MESSAGE_QUEUE_DEPTH - 1)) {
         queue_mutex_give();
-        free(copy);
         return false;
+    }
+
+    uint8_t *copy = NULL;
+    if (size > 0U) {
+#ifdef ESP_PLATFORM
+        /* A full MIC backlog is about 40 KiB; keep it out of internal RAM. */
+        copy = type == TVIO_TYPE_MIC_PCM
+            ? heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+            : malloc(size);
+#else
+        copy = malloc(size);
+#endif
+        if (copy == NULL) {
+            queue_mutex_give();
+            return false;
+        }
+        memcpy(copy, payload, size);
     }
 
     const size_t tail = (s_message_head + s_message_count) % MESSAGE_QUEUE_DEPTH;
@@ -714,6 +727,9 @@ static bool enqueue_message(
     s_message_queue[tail].payload = copy;
     s_message_count++;
     queue_mutex_give();
+#ifdef ESP_PLATFORM
+    if (s_realtime_task != NULL) xTaskNotifyGive(s_realtime_task);
+#endif
     return true;
 }
 
@@ -922,11 +938,15 @@ static void diagnostics_worker(void)
             worker_delay();
             continue;
         }
-
         const bool has_record = s_queue_count > 0U;
+#ifdef ESP_PLATFORM
+        const bool has_message = false;
+        const bool send_realtime = false;
+#else
         const bool has_message = s_message_count > 0U;
         const bool send_realtime =
             has_message && (!has_record || s_prefer_message);
+#endif
         diagnostic_record_t record = {0};
         realtime_message_t message = {0};
 
@@ -988,6 +1008,56 @@ static void diagnostics_worker(void)
 }
 
 #ifdef ESP_PLATFORM
+static void realtime_worker(void)
+{
+    while (atomic_load(&s_running)) {
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WORKER_DELAY_MS));
+        while (atomic_load(&s_running)) {
+            if (!mutex_take(true)) break;
+            if (!atomic_load(&s_running)) {
+                mutex_give();
+                break;
+            }
+            const int fd = s_client_fd;
+            if (fd < 0 || !s_hello_sent || !atomic_load(&s_ack_accepted)) {
+                mutex_give();
+                break;
+            }
+            if (!queue_mutex_take(true)) {
+                mutex_give();
+                break;
+            }
+            if (s_message_count == 0U) {
+                queue_mutex_give();
+                mutex_give();
+                break;
+            }
+            realtime_message_t message = s_message_queue[s_message_head];
+            memset(&s_message_queue[s_message_head], 0, sizeof(realtime_message_t));
+            s_message_head = (s_message_head + 1U) % MESSAGE_QUEUE_DEPTH;
+            s_message_count--;
+            queue_mutex_give();
+
+            const bool sent =
+                send_message_locked(fd, message.type, message.payload, message.size);
+            free(message.payload);
+            if (sent) s_tx_sequence++;
+            else disconnect_client_locked(fd);
+            mutex_give();
+            if (!sent) break;
+        }
+    }
+    atomic_store(&s_realtime_alive, false);
+}
+
+static void realtime_task(void *context)
+{
+    (void)context;
+    realtime_worker();
+    s_realtime_task = NULL;
+    vTaskDelete(NULL);
+}
+
 static void diagnostics_task(void *context)
 {
     (void)context;
@@ -1045,6 +1115,8 @@ esp_err_t tivoo_diagnostics_start(void)
     atomic_store(&s_running, true);
     atomic_store(&s_worker_alive, true);
 #ifdef ESP_PLATFORM
+    s_realtime_task = NULL;
+    atomic_store(&s_realtime_alive, false);
     if (xTaskCreate(
             diagnostics_task,
             "tivoo_diag",
@@ -1058,6 +1130,24 @@ esp_err_t tivoo_diagnostics_start(void)
         vSemaphoreDelete(s_queue_mutex);
         s_mutex = NULL;
         s_queue_mutex = NULL;
+        return ESP_FAIL;
+    }
+    atomic_store(&s_realtime_alive, true);
+    if (xTaskCreate(
+            realtime_task,
+            "tivoo_rt_tx",
+            4096,
+            NULL,
+            tskIDLE_PRIORITY + 4,
+            &s_realtime_task) != pdPASS) {
+        atomic_store(&s_realtime_alive, false);
+        atomic_store(&s_running, false);
+        while (atomic_load(&s_worker_alive)) vTaskDelay(1);
+        vSemaphoreDelete(s_mutex);
+        vSemaphoreDelete(s_queue_mutex);
+        s_mutex = NULL;
+        s_queue_mutex = NULL;
+        s_worker_task = NULL;
         return ESP_FAIL;
     }
 #else
@@ -1092,7 +1182,8 @@ void tivoo_diagnostics_stop(void)
     }
 
 #ifdef ESP_PLATFORM
-    while (atomic_load(&s_worker_alive)) {
+    if (s_realtime_task != NULL) xTaskNotifyGive(s_realtime_task);
+    while (atomic_load(&s_worker_alive) || atomic_load(&s_realtime_alive)) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     if (s_mutex != NULL) {
@@ -1104,6 +1195,7 @@ void tivoo_diagnostics_stop(void)
         s_queue_mutex = NULL;
     }
     s_worker_task = NULL;
+    s_realtime_task = NULL;
 #else
     (void)pthread_join(s_worker_thread, NULL);
 #endif

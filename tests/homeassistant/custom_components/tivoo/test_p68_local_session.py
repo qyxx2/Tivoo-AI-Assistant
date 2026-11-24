@@ -175,3 +175,19 @@ async def test_current_invalid_activity_is_not_ignored(patch):
     await manager.async_start_session(local_start(SESSION_2, 101), persistent=True, local_mode=True)
     await manager.async_handle_activity(dict(activity('speech_start'), **patch))
     assert manager.active_session_id == SESSION_2
+
+
+async def test_local_mode_accepts_batched_wire_pcm_without_changing_payload():
+    manager = AudioSessionManager(AsyncMock())
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    await manager.async_handle_gate(gate())
+    async with manager.audio_subscription(SESSION_1, start=0, on_pull=AsyncMock()) as audio:
+        first = asyncio.create_task(anext(audio))
+        await asyncio.sleep(0)
+        await manager.async_handle_activity(activity("speech_start"))
+        frames = [bytes([i]) * 640 for i in range(6)]
+        await manager.async_push_pcm(SESSION_1, b"".join(frames))
+        assert await first == b"".join(frames)
+        assert manager.active_session_id == SESSION_1
+        await manager.async_handle_activity(activity("speech_end", pcm_samples=1920))
+        assert [part async for part in audio] == []

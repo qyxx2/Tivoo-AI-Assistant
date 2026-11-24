@@ -117,11 +117,19 @@ void tivoo_turn_tick(tivoo_local_turn_t *t, uint64_t now, tivoo_turn_send_t send
         if(!try_send(t,send,ctx,TIVOO_TURN_SPEECH_START,NULL,0,t->speech_ms,NULL)) return;
         t->speech_sent=true; t->last_progress_ms=now;
     }
+    /* Coalesce up to six 20-ms PCM frames per wire packet (3840 B).
+     * Wait for a full batch while recording; flush the tail at speech_end.
+     * Do not cross the ring boundary in a single packet. */
     for(unsigned i=0;i<8 && t->pending>=TIVOO_TURN_FRAME;++i) {
-        /* Ring size and read index are multiples of the wire frame size. */
-        if(!try_send(t,send,ctx,TIVOO_TURN_PCM,t->ring+t->read,TIVOO_TURN_FRAME,now,NULL)) return;
-        t->read=(t->read+TIVOO_TURN_FRAME)%TIVOO_TURN_PENDING;
-        t->pending-=TIVOO_TURN_FRAME; t->sent+=TIVOO_TURN_FRAME;
+        size_t frames=t->pending/TIVOO_TURN_FRAME;
+        if(frames<6 && !t->ended) break;
+        if(frames>6) frames=6;
+        const size_t contiguous=(TIVOO_TURN_PENDING-t->read)/TIVOO_TURN_FRAME;
+        if(frames>contiguous) frames=contiguous;
+        const size_t samples=frames*TIVOO_TURN_FRAME;
+        if(!try_send(t,send,ctx,TIVOO_TURN_PCM,t->ring+t->read,samples,now,NULL)) return;
+        t->read=(t->read+samples)%TIVOO_TURN_PENDING;
+        t->pending-=samples; t->sent+=samples;
         t->last_progress_ms=now;
     }
     if(t->ended && !t->pending && try_send(t,send,ctx,TIVOO_TURN_SPEECH_END,NULL,t->sent,t->end_ms,NULL)) t->complete=true;

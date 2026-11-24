@@ -153,6 +153,12 @@ esp_err_t tivoo_wifi_station_start(void)
         return err;
     }
 
+    /* Real-time PCM must not wait for the AP DTIM/listen interval. */
+    err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (err != ESP_OK) {
+        return err;
+    }
+
     return esp_wifi_start();
 }
 

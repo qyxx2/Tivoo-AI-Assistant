@@ -49,13 +49,13 @@ bool tivoo_diagnostics_send_mic(uint32_t epoch,uint8_t type,const void *ptr,size
     assert(epoch==connection);
     assert(type!=0x32); // short prompt never emits ordinary AUDIO_STATE
     if(type==TVIO_TYPE_MIC_PCM) {
-        assert(n==640);
+        assert(n>=640 && n<=3840 && n%640==0);
         const int16_t *pcm=ptr;
-        for(unsigned i=0;i<320;i++) {
+        for(size_t i=0;i<n/2;i++) {
             unsigned k=speech_frames*320+i;
             assert(pcm[i]==(k<443?(int16_t)(k+1):0));
         }
-        ++speech_frames;
+        speech_frames += n/640;
         return true;
     }
     cJSON *o=cJSON_ParseWithLength(ptr,n);assert(o);

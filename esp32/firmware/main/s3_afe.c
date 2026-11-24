@@ -25,7 +25,15 @@ static char *word_storage;
 static const char *words[AFE_MAX_WAKEWORD_NUM];
 static int word_count;
 static tivoo_afe_flow_t *flow;
-static TaskHandle_t feed_handle, fetch_handle;
+static TaskHandle_t capture_handle, feed_handle, fetch_handle;
+/* 160 ms of owned, already aligned PCM. This is task-to-task PSRAM
+ * storage, separate from the short internal ISR queue and DMA ring. */
+#define CAPTURE_QUEUE_FRAMES 32U
+typedef struct { tivoo_capture_frame_t frame; bool valid; } captured_frame_t;
+static QueueHandle_t captured;
+static StaticQueue_t capture_queue_control;
+static uint8_t *capture_queue_storage;
+static atomic_uint capture_overruns, capture_stack;
 typedef struct { tivoo_afe_control_t control; uint64_t index; } gate_control_t;
 static QueueHandle_t controls;
 static bool vad_gate_pending; /* fetch owner; new gate must have fresh vendor VAD */
@@ -128,11 +136,51 @@ static void request_reset(void)
     atomic_store(&reset_requested,true);
 }
 
+static void capture_task(void *arg)
+{
+    (void)arg;
+    ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+    captured_frame_t packet;
+    bool pending_gap=false;
+    while (!atomic_load(&fatal)) {
+        packet.valid=tivoo_audio_capture_next(&packet.frame)==ESP_OK;
+        tivoo_capture_frame_t *frame=&packet.frame;
+        if (packet.valid) {
+            /* These raw pointers are transient. Trace on the capture owner,
+             * before the next read, never forward pointers to the feed task. */
+            tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_RAW,
+                .index=frame->first_sample*2,.epoch=frame->epoch_first_raw,
+                .aux=frame->tx_first_sample,.count=2*TIVOO_CAPTURE_SAMPLES,
+                .extra=2*TIVOO_CAPTURE_SAMPLES,
+                .flags=(frame->gap?TIVOO_TRACE_GAP:0)|
+                       (frame->reference_valid?TIVOO_TRACE_REFERENCE_VALID:0)}),
+                frame->raw_slots,frame->raw_tx);
+        } else {
+            *frame=(tivoo_capture_frame_t){.gap=true};
+            tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_CAPTURE_ERROR,
+                .index=UINT64_MAX,.epoch=UINT64_MAX,.aux=UINT64_MAX,
+                .flags=TIVOO_TRACE_GAP}),NULL,NULL);
+        }
+        frame->raw_slots=NULL;
+        frame->raw_tx=NULL;
+        frame->gap|=pending_gap;
+        if (xQueueSend(captured,&packet,0)!=pdTRUE) {
+            ++capture_overruns;
+            pending_gap=true;
+        } else pending_gap=false;
+        atomic_store(&capture_stack,uxTaskGetStackHighWaterMark(NULL));
+    }
+    /* Only this task owns capture, including transfer after fatal AFE. */
+    if (tivoo_audio_capture_monitor_start()!=ESP_OK)
+        TIVOO_LOGE(TAG,"AFE fatal; capture monitor unavailable");
+    vTaskDelete(NULL);
+}
+
 static void feed_task(void *arg)
 {
     (void)arg;
     ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
-    tivoo_capture_frame_t frame;
+    captured_frame_t packet;
     size_t filled=0;
     uint64_t chunk_first=0, expected=0;
     bool contiguous=false;
@@ -140,25 +188,18 @@ static void feed_task(void *arg)
         if (atomic_load(&reset_requested)) {
             filled=0;
             contiguous=false;
+            xQueueReset(captured);
             atomic_store(&feed_paused,true);
             while (atomic_load(&reset_requested) && !atomic_load(&fatal)) vTaskDelay(1);
             continue;
         }
-        if (tivoo_audio_capture_next(&frame)!=ESP_OK) {
+        bool received=xQueueReceive(captured,&packet,pdMS_TO_TICKS(100))==pdTRUE;
+        if (!received || !packet.valid) {
             ++rx_gaps;
-            tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_CAPTURE_ERROR,
-                .index=UINT64_MAX,.epoch=UINT64_MAX,.aux=UINT64_MAX,
-                .flags=TIVOO_TRACE_GAP}),NULL,NULL);
             if (contiguous || atomic_load(&streaming)) request_reset();
             continue;
         }
-        /* Copy both transient raw pointers before capture_next can reuse them. */
-        tivoo_trace_record((&(tivoo_trace_header_t){.kind=TIVOO_TRACE_RAW,
-            .index=frame.first_sample*2,.epoch=frame.epoch_first_raw,
-            .aux=frame.tx_first_sample,.count=2*TIVOO_CAPTURE_SAMPLES,.extra=2*TIVOO_CAPTURE_SAMPLES,
-            .flags=((frame.gap || (contiguous && expected!=frame.first_sample))?TIVOO_TRACE_GAP:0)|
-                   (frame.reference_valid?TIVOO_TRACE_REFERENCE_VALID:0)}),
-            frame.raw_slots,frame.raw_tx);
+        const tivoo_capture_frame_t frame=packet.frame;
         if (frame.gap || !frame.reference_valid ||
             (contiguous && expected!=frame.first_sample)) {
             ++rx_gaps;
@@ -197,10 +238,6 @@ static void feed_task(void *arg)
         }
         atomic_store(&feed_stack,uxTaskGetStackHighWaterMark(NULL));
     }
-    /* Keep draining RX for the shared DAC/recovery even if vendor AFE dies.
-     * This task was the sole capture consumer; transfer ownership once. */
-    if (tivoo_audio_capture_monitor_start()!=ESP_OK)
-        TIVOO_LOGE(TAG,"AFE fatal; capture monitor unavailable");
     vTaskDelete(NULL);
 }
 
@@ -335,11 +372,12 @@ static void fetch_task(void *arg)
         cursor+=count;
         if (esp_timer_get_time()-report>=10000000) {
             report=esp_timer_get_time();
-            ESP_LOGI(TAG,"feed=%u fetch=%llu feed_errors=%u fetch_errors=%llu rx_gaps=%u resets=%llu overruns=%u missed_eof=%u cache_samples_ignored=%llu ring_free_pct=%.3f feed_max_us=%u fetch_wait_max_us=%u stack=%u/%u internal_min=%zu internal_largest=%zu dma_largest=%zu psram_free=%zu",
+            ESP_LOGI(TAG,"feed=%u fetch=%llu feed_errors=%u fetch_errors=%llu rx_gaps=%u resets=%llu overruns=%u missed_eof=%u capture_overruns=%u capture_stack=%u cache_samples_ignored=%llu ring_free_pct=%.3f feed_max_us=%u fetch_wait_max_us=%u stack=%u/%u internal_min=%zu internal_largest=%zu dma_largest=%zu psram_free=%zu",
                 atomic_load(&feed_calls),(unsigned long long)fetch_calls,
                 atomic_load(&feed_errors),(unsigned long long)fetch_errors,
                 atomic_load(&rx_gaps),(unsigned long long)resets,
                 tivoo_audio_capture_overruns(),tivoo_audio_capture_missed_eofs(),
+                atomic_load(&capture_overruns),atomic_load(&capture_stack),
                 (unsigned long long)flow->cache_ignored,(double)r->ringbuff_free_pct,
                 atomic_load(&feed_max_us),fetch_max_us,atomic_load(&feed_stack),
                 (unsigned)uxTaskGetStackHighWaterMark(NULL),
@@ -426,23 +464,35 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
     ESP_LOGI(TAG,"feed=%d x4 fetch=%d x1 rate=16000 VAD threshold=%.3f (smoke until hardware acceptance)",
         feed,fetch,(double)afe->get_vadnet_threshold(data));
     err=ESP_ERR_NO_MEM;
-    input=heap_caps_malloc(feed_size*4*sizeof(int16_t),MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    input=heap_caps_malloc(feed_size*4*sizeof(int16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     flow=heap_caps_malloc(sizeof(*flow),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     controls=xQueueCreate(4,sizeof(gate_control_t));
-    if (!input || !flow || !controls) goto fail;
+    capture_queue_storage=heap_caps_malloc(CAPTURE_QUEUE_FRAMES*sizeof(captured_frame_t),
+        MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if (capture_queue_storage)
+        captured=xQueueCreateStatic(CAPTURE_QUEUE_FRAMES,sizeof(captured_frame_t),
+            capture_queue_storage,&capture_queue_control);
+    if (!input || !flow || !controls || !captured) goto fail;
     tivoo_afe_flow_init(flow,word_count,sink,ctx);
-    if (xTaskCreatePinnedToCore(feed_task,"afe_feed",4096,NULL,7,&feed_handle,1)!=pdPASS ||
-        xTaskCreatePinnedToCore(fetch_task,"afe_fetch",4096,NULL,5,&fetch_handle,1)!=pdPASS) goto fail;
+    /* Hardware profiling: 2mic FD feed needs its own core. Keep capture
+     * above fetch on core0 so vendor processing cannot stall the DMA drain. */
+    if (xTaskCreatePinnedToCore(capture_task,"afe_capture",4096,NULL,8,&capture_handle,0)!=pdPASS ||
+        xTaskCreatePinnedToCore(feed_task,"afe_feed",4096,NULL,7,&feed_handle,1)!=pdPASS ||
+        xTaskCreatePinnedToCore(fetch_task,"afe_fetch",4096,NULL,5,&fetch_handle,0)!=pdPASS) goto fail;
     tivoo_trace_start();
     xTaskNotifyGive(fetch_handle);
     xTaskNotifyGive(feed_handle);
+    xTaskNotifyGive(capture_handle);
     return ESP_OK;
 fail:
     ESP_LOGE(TAG,"local AFE initialization failed (%s), model=%s; no remote KWS fallback",
         esp_err_to_name(err),TIVOO_AFE_MODEL_ID);
     if (feed_handle) { vTaskDelete(feed_handle); feed_handle=NULL; }
+    if (capture_handle) { vTaskDelete(capture_handle); capture_handle=NULL; }
     if (fetch_handle) { vTaskDelete(fetch_handle); fetch_handle=NULL; }
     if (controls) { vQueueDelete(controls); controls=NULL; }
+    if (captured) { vQueueDelete(captured); captured=NULL; }
+    free(capture_queue_storage); capture_queue_storage=NULL;
     free(input); input=NULL;
     free(flow); flow=NULL;
     if (data) { afe->destroy(data); data=NULL; }

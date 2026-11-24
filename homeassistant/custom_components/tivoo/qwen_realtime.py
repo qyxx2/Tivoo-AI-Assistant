@@ -469,12 +469,22 @@ class QwenRealtimeBridge:
 
     def _handle(self, owner, event, on_event):
         kind = event["type"]
-        if kind in {
-            "playback.clear",
-            "input.suspend",
-            "voice.deactivated",
-            "response.interrupted",
-        }:
+        if kind == "playback.clear":
+            initial_clear = (
+                event.get("reason") == "user_interruption"
+                and owner.turn_id is None
+                and not owner.responses
+                and owner.stream is None
+                and owner.playback_id is None
+                and not owner.dispatched
+                and owner.final_response is None
+            )
+            if initial_clear:
+                on_event(event)
+                return
+            owner.keep_socket = False
+            raise RuntimeError("Qwen response delivery was revoked")
+        if kind in {"input.suspend", "voice.deactivated", "response.interrupted"}:
             owner.keep_socket = False
             raise RuntimeError("Qwen response delivery was revoked")
         tid = event.get("turnId")

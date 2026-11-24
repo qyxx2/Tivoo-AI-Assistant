@@ -195,7 +195,15 @@
 
 **B8.7 当前验收状态（2026-11-22）：** Step 1–7、10–12 已完成；Step 8 与 Step 9 中依赖真实 ESP32-S3 物理播放/打断/follow-up 的项目因 S3 未连接而保持 GAP/未勾选。Qwen↔HA MCP 读写、专用用户/allowlist、Prompt、same-socket/reconnect/lease、HA restart、冷启动 tools/list gate、真 rollback→redeploy 均已验收。B9 仍 HOLD。详见 [B8.7 验收报告](../reports/2026-11-22-p6-8-qwen-realtime-acceptance.md)。
 
+**2026-11-23 声学校准续验：** 当前真实 S3/DAC/Tivoo/双麦自动校准 PASS，四组 indexed TX/RX/AFE 采集通过；已在正常固件设置 AEC reference=800、AFE offset=+519、prompt tail=1600（16 kHz 样本），calibrated=y，trace/test gate 均关闭。刷写后90秒日志、8份telemetry连续70.12秒严格PASS，定向软件回归11 passed。见 [B8.7 验收报告 §13](../reports/2026-11-22-p6-8-qwen-realtime-acceptance.md#13-2026-11-23-自动声学延迟校准)。Step 8/9 真人唤醒、Qwen实际播放/打断/续聊仍未核销，B9 HOLD。
+
 **B9 release gate:** B8.1–B8.7 accepted; Qwen tool calls through HA work; real device Qwen audio playback and interruption are verified; rollback is tested. B9 remains a separate user-authorized batch.
+
+**2026-11-23 持续数字流续验：** 最终S3固件已验证capture/feed解耦、显式PSRAM有界PCM queue、capture0/feed1/fetch0及32KB cache/64B line组合；无临时统计或-O2。330秒实机日志中32份telemetry连续310.52秒满足严格最低300秒要求，feed/fetch约15.625/31.251次每秒，无新增gap/drop/reset，内部min29256/largest20480。ESP32回归145 passed。仅关闭数字流阻塞项；提示音声学校准、真实Qwen→AUX播放、barge-in和4秒follow-up仍未验，Step 8/9不勾选，B9 HOLD。见[持续数字流修复与长测](../reports/2026-11-23-p6-8-stream-throughput-fix.md)。
+
+**2026-11-23 后续内存修复：** 已定位 fetch task 4096-byte 内部栈受 largest block=1792 限制而分配失败。按 IDF v6.1 文档将普通 malloc 优先内部阈值降为 1024，保留内部栈/DMA；最终 S3 刷写校验与初始化检查 PASS，内部 free=37363/largest=24576。Python/host 软件回归 957 passed；持续 RX gap/reset 实机检查仍 FAIL，缓存/分核/-O2 三组未通过试验均撤回。Step 8/9 不勾选，B9 HOLD；最新证据见 [AFE 内存修复与续验](../reports/2026-11-23-p6-8-afe-memory-fix.md)。
+
+**2026-11-23 实机续验：** S3 已由 NAS `tivoo-esptool` 识别并刷写校验成功，Wi-Fi/双麦采集及诊断拒绝/重连子集通过；AFE 初始化 `ESP_ERR_NO_MEM`，未宣告 local-wake 能力，提示音未校准，HA 仍指向旧板。Step 8/9 保持未勾选，B9 HOLD；HA/Qwen 定向回归 102 passed，ESP32 定向回归 49 passed/1 config mismatch failed。详见 [实机自动化续验报告](../reports/2026-11-23-p6-8-b8-7-hardware-automation.md)。
 
 ---
 
@@ -230,3 +238,8 @@
 - 本项目 HA 侧 MCP HTTP 回归：[test_tivoo_p4b5_mcp_http.py](../../../tests/homeassistant/custom_components/tivoo/test_tivoo_p4b5_mcp_http.py)；AssistSatellite 的当前 Context/turn 语义以现有 `assist_satellite.py` 和 HA Core 2026.11.0 源码为准。当前集成未使用 HA ChatSession。
 
 **版本边界：** 上述 Qwen GitHub 文件固定到 v2.1.0 tag；官方 Alibaba 文档是当前在线文档，实施时仍需对照 NAS 当前模型、Workspace endpoint 和实际返回的 Gateway events。若 NAS 不是 v2.1.0 或模型 profile 不一致，先更新技术预检，不得直接照搬配置。
+
+
+### 2026-11-24 B8.7 回复卡顿续验
+
+用户实测日常回复已不卡顿；保留HTTP/SRC播放任务移至core1且保持priority3、关闭Wi-Fi省电两处最小修复。固定6秒播放对照通过，30秒连续负载仍有AFE过载，不能升级为Step 8/9或B9通过。用户最新限制：禁止物理设备发声，暂不能唤醒测试；已移除自动探针，刷回正常固件后保持下载模式，不再开展实机播放/唤醒测试。最终离线ESP32回归156 passed。证据与剩余项见[本次报告](../reports/2026-11-24-p68-playback-stutter.md)。

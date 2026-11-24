@@ -25,6 +25,10 @@ def test_s3_runs_real_afe_not_legacy_or_smoke():
                   'get_feed_chunksize', 'get_fetch_chunksize',
                   'fetch_with_delay', 'print_pipeline', 'afe_config_check'):
         assert token in afe
+    assert (
+        "input=heap_caps_malloc(feed_size*4*sizeof(int16_t),"
+        "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);"
+    ) in afe
 
 
 def afe_headers():
@@ -95,6 +99,20 @@ static inline void xQueueReset(QueueHandle_t q) {(void)q;}
 def test_afe_runtime_availability(tmp_path):
     """Actual vendor call sites, capture failures and recovery; RTOS is scripted."""
     headers = afe_headers()
+    headers["freertos/queue.h"] = """#pragma once
+#include "freertos/task.h"
+#include <stdlib.h>
+#include <stddef.h>
+typedef struct { unsigned char *data; size_t n,size,head,count; } TestQueue;
+typedef TestQueue *QueueHandle_t;
+typedef TestQueue StaticQueue_t;
+QueueHandle_t xQueueCreate(size_t,size_t);
+QueueHandle_t xQueueCreateStatic(size_t,size_t,unsigned char *,StaticQueue_t *);
+int xQueueSend(QueueHandle_t,const void *,TickType_t);
+int xQueueReceive(QueueHandle_t,void *,TickType_t);
+void xQueueReset(QueueHandle_t);
+void vQueueDelete(QueueHandle_t);
+"""
     for name, content in headers.items():
         p = tmp_path / name
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -110,7 +128,7 @@ def test_afe_runtime_availability(tmp_path):
                     str(Path(__file__).with_name("p68_afe_runtime_host.c")),
                     str(MAIN / "p68_afe_flow.c"), "-lm", "-o", str(exe)], check=True)
     results = {case: subprocess.run([str(exe), case], capture_output=True, text=True)
-               for case in ("recover", "buffer_fail", "vad_fail", "gate", "gate_cross")}
+               for case in ("recover", "buffer_fail", "vad_fail", "gate", "gate_cross", "capture_stall")}
     assert all(r.returncode == 0 for r in results.values()), {
         case: r.stderr for case, r in results.items() if r.returncode
     }

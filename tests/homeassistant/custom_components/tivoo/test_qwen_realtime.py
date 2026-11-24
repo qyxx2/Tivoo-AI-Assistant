@@ -21,6 +21,7 @@ class Socket:
         self.capabilities = capabilities
         self.rate = rate
         self.reverse = reverse
+        self.initial_clear_turns = set()
 
     async def send_json(self, event):
         self.sent.append(event)
@@ -81,11 +82,22 @@ def setup_bridge(hass, monkeypatch):
 
 
 async def response(
-    ws, *, status="completed", rate=24000, final=True, tool=False, rid="r1", tid="t1"
+    ws,
+    *,
+    status="completed",
+    rate=24000,
+    final=True,
+    tool=False,
+    rid="r1",
+    tid="t1",
+    initial_clear=True,
 ):
     await spin_until(
         lambda: any(e["type"] == "input_audio_buffer.append" for e in ws.sent)
     )
+    if initial_clear and tid not in ws.initial_clear_turns:
+        ws.initial_clear_turns.add(tid)
+        ws.feed({"type": "playback.clear", "reason": "user_interruption"})
     ws.feed(
         {"type": "turn.started", "turnId": tid},
         {"type": "transcript.final", "role": "user", "content": "你好", "turnId": tid},
@@ -306,6 +318,82 @@ async def test_clear_suspend_and_second_turn_abort_owned_playback(setup_bridge, 
     assert stops[-1]["expected_audio_id"] == owner.playback_id
     assert stops[-1]["session_id"] == owner.session_id
     assert not streams and ws.closed
+
+
+async def test_initial_clear_after_local_eof_is_noop_until_gateway_turn(setup_bridge):
+    bridge, owner, ws, _, _, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    await spin_until(lambda: owner.input_drained)
+    ws.feed({"type": "playback.clear", "reason": "user_interruption"})
+    await asyncio.sleep(0)
+    assert not task.done() and owner.turn_id is None
+    await response(ws, initial_clear=False)
+    await spin_until(lambda: owner.playback_id is not None)
+    await consume(owner)
+    bridge.on_playback(owner.playback_id, "completed")
+    assert (await task).turn_id == "t1"
+
+
+async def test_clear_after_response_started_aborts_without_audio(setup_bridge):
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    await spin_until(
+        lambda: any(e["type"] == "input_audio_buffer.append" for e in ws.sent)
+    )
+    ws.feed(
+        {"type": "turn.started", "turnId": "t1"},
+        {"type": "response.started", "turnId": "t1", "responseId": "r1"},
+        {"type": "playback.clear", "reason": "user_interruption"},
+    )
+    with pytest.raises(RuntimeError, match="revoked"):
+        await task
+    assert ws.closed and not streams
+
+
+async def test_clear_with_buffered_audio_before_dispatch_aborts(setup_bridge):
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    eof = asyncio.Event()
+
+    async def audio():
+        yield b"\0\0" * 320
+        await eof.wait()
+
+    task = asyncio.create_task(bridge.async_run(owner, audio(), lambda _: None))
+    await spin_until(
+        lambda: any(e["type"] == "input_audio_buffer.append" for e in ws.sent)
+    )
+    ws.feed(
+        {"type": "turn.started", "turnId": "t1"},
+        {"type": "response.started", "turnId": "t1", "responseId": "r1"},
+        {
+            "type": "audio.delta",
+            "turnId": "t1",
+            "responseId": "r1",
+            "sampleRate": 24000,
+            "audio": base64.b64encode(b"\x02\x00" * 40).decode(),
+        },
+        {"type": "playback.clear", "reason": "user_interruption"},
+    )
+    with pytest.raises(RuntimeError, match="revoked"):
+        await task
+    eof.set()
+    assert ws.closed and not streams
+
+
+@pytest.mark.parametrize("kind", ["input.suspend", "voice.deactivated"])
+async def test_initial_clear_does_not_mask_later_revocation(setup_bridge, kind):
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    await spin_until(
+        lambda: any(e["type"] == "input_audio_buffer.append" for e in ws.sent)
+    )
+    ws.feed(
+        {"type": "playback.clear", "reason": "user_interruption"},
+        {"type": kind},
+    )
+    with pytest.raises(RuntimeError, match="revoked"):
+        await task
+    assert ws.closed and not streams
 
 
 async def test_byte_bound_finish_abort_never_wait_for_queue_space():

@@ -261,7 +261,7 @@ static void begin_turn(uint32_t current, const char *wake_phrase, bool followup,
     portEXIT_CRITICAL(&lock);
 }
 
-void tivoo_s3_local_turn_tick(void)
+static void local_turn_tick_impl(void)
 {
     if(!turn) return;
     if(!turn->active) { poll_prompt(); return; }
@@ -304,7 +304,11 @@ void tivoo_s3_local_turn_tick(void)
     } else if(turn->complete) log_turn_metrics("input_complete");
     if(!turn->active) invalidate();
 }
-void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
+void tivoo_s3_local_turn_tick(void)
+{
+    local_turn_tick_impl();
+}
+static void local_turn_event_impl(void *ctx, const tivoo_afe_event_t *event)
 {
     (void)ctx;
     if(!turn) return;
@@ -328,6 +332,10 @@ void tivoo_s3_local_turn_event(void *ctx, const tivoo_afe_event_t *event)
     case TIVOO_AFE_WAKE: break;
     }
     tivoo_s3_local_turn_tick();
+}
+void tivoo_s3_local_turn_event(void *ctx,const tivoo_afe_event_t *event)
+{
+    local_turn_event_impl(ctx,event);
 }
 bool tivoo_s3_local_turn_ready_message(const uint8_t *payload, size_t size)
 {

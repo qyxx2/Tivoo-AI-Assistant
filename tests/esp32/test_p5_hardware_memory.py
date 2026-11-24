@@ -138,13 +138,19 @@ def test_active_targets_boot_and_memory():
             < s3_boot.index("tivoo_diagnostics_start()")
             < s3_boot.index("network_listeners_start(7777, 7778)")
             < s3_boot.index("tivoo_wifi_station_start()"))
+    assert (s3_boot.index("tivoo_wifi_station_start()")
+            < s3_boot.index("tivoo_audio_resource_init()"))
     nvs_guard = s3_boot.split("tivoo_wifi_station_init_nvs()", 1)[1].split(
         "tivoo_audio_resource_init()", 1
     )[0]
     assert "if (err != ESP_OK)" in nvs_guard and "return;" in nvs_guard
     nvs = (FIRMWARE_MAIN / "wifi_station.c").read_text()
     assert "nvs_flash_init()" in nvs and "nvs_flash_erase" not in nvs
-    assert "tivoo_board_rgb_off(" not in s3_boot  # GPIO38 revision gate
+    s3_defaults = (s3 / "sdkconfig.defaults").read_text()
+    # Effective Wi-Fi/PSRAM budget versus defaults is checked after configure
+    # in test_p5b3_bootstrap, rather than pinning a second conflicting value.
+    assert "CONFIG_SPIRAM_USE_MALLOC=y" in s3_defaults
+    assert "tivoo_board_rgb_off(GPIO_NUM_38)" in s3_boot
 
     classic_boot = (classic / "main/main.c").read_text().split("void app_main(void)", 1)[1]
     assert (classic_boot.index("tivoo_board_rgb_off(GPIO_NUM_27)")

@@ -960,3 +960,27 @@ def test_terminal_loss_invalidates_only_own_diagnostic_epoch(tmp_path):
         if control is not None:
             control.close()
         _stop(process)
+
+
+def test_s3_realtime_uplink_is_bounded_and_separated_from_diagnostics_worker():
+    source = (FIRMWARE / "diagnostics.c").read_text()
+    assert "#define MESSAGE_QUEUE_DEPTH 64U" in source
+    assert '"tivoo_rt_tx"' in source
+    assert "tskIDLE_PRIORITY + 4" in source
+    assert "xTaskNotifyGive(s_realtime_task)" in source
+    assert "heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)" in source
+
+    enqueue = source[
+        source.index("static bool enqueue_message("):
+        source.index("bool tivoo_diagnostics_send_message(")
+    ]
+    # A full queue must reject cheaply before a MIC frame allocation/copy.
+    assert enqueue.index("queue_mutex_take(false)") < enqueue.index("heap_caps_malloc")
+    assert enqueue.index("s_message_count == MESSAGE_QUEUE_DEPTH") < enqueue.index("heap_caps_malloc")
+
+    worker = source[
+        source.index("static void diagnostics_worker(void)"):
+        source.index("static void realtime_worker(void)")
+    ]
+    assert "const bool has_message = false;" in worker
+    assert "const bool send_realtime = false;" in worker

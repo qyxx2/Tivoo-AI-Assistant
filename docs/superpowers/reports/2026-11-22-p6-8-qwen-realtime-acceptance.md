@@ -1,5 +1,15 @@
 # P6.8 B8.7 — Qwen Realtime 迁移端到端验收与 NAS 部署
 
+> 2026-11-24 最新：已定位严重回复卡顿为 core0 HTTP/SRC 与 AFE 调度竞争，播放任务移至 core1 / priority3，并关闭 Wi-Fi Modem-sleep。固定6秒对照零断粮，用户反馈日常回复已不卡顿；30秒连续压测仍有AFE过载，B8.7整体/B9继续HOLD。用户禁止后续发声，已刷回无探针正常固件并暂留下载模式。详见[卡顿定位与修复](2026-11-24-p68-playback-stutter.md)。
+
+> 2026-11-23 声学校准续验：当前 S3/DAC/Tivoo/双麦装配的自动延迟校准 PASS，四组真实回采验证后已刷入正常固件，AEC 参考延迟 800、AFE 偏移 +519、安全尾音 1600（均为 16 kHz 样本）；90 秒启动复验 PASS。详见本文 §13。Step 8/9 的真人唤醒、真实 Qwen 播放/打断/续聊尚未核销，B9 继续 HOLD。
+
+> 2026-11-23 最新：持续数字流故障已修复，最终无统计S3固件330秒日志中32份telemetry连续310.52秒严格PASS，无新增gap/drop/reset；ESP32回归145 passed。真实声学与物理播放/打断/follow-up尚未核销，Step 8/9及B9继续HOLD。见[持续数字流修复与实机长测](2026-11-23-p6-8-stream-throughput-fix.md)。
+
+> 2026-11-23 最新：AFE 内存初始化故障已修复并通过最终固件刷写复验；持续 RX gap/reset 仍 FAIL，B8.7/B9 HOLD。见 [AFE 内存修复与自动化续验](2026-11-23-p6-8-afe-memory-fix.md)。
+
+> 2026-11-23 自动化实机续验：S3 已连接并成功刷写；当前发现 AFE `ESP_ERR_NO_MEM`，提示音未校准，Step 8/9 仍阻塞，B9 HOLD。最新证据和限制见 [实机续验报告](2026-11-23-p6-8-b8-7-hardware-automation.md)。下文保留 11-22 原始验收记录。
+
 日期：2026-11-22；基线：`b22e9e9`；分支：`feature/p6-8-s3-local-wake`。
 
 **结论：B8.7 的软件、NAS 部署、真实 Qwen↔HA MCP、启动/回滚门已完成；真实 ESP32-S3 物理音频链路仍为明确 HARDWARE GAP，因此 B9 仍 HOLD。** 本报告严格区分软件证据、NAS 生产服务证据和物理硬件证据。缺失 S3 时不以旧 ESP32 classic 替代验收，不把 Gateway 音频生成完成视为设备播放完成。
@@ -139,3 +149,37 @@ B8.7 最终 diff 按设备上的 `review-agent` 只读规则人工复核：检�
 ## 12. Release gate
 
 **B9 仍 HOLD。** Step 7 controlled write 与 Step 10 rollback 已通过；剩余阻塞仅是 Step 8/9 所需真实 ESP32-S3 物理音频/打断/续聊证据缺口。B9 必须保持独立用户授权批次，且只有真实 S3 hardware acceptance 补齐后才能放行。
+
+## 13. 2026-11-23 自动声学延迟校准
+
+**本轮校准 PASS，已刷入真实 S3；不据此核销整项 B8.7。** 用户确认 DAC 已可出声后，在当前音量、麦克风位置及 AUX 布置下，通过已有的一次性 P68TRACE 接口和临时本地播放刺激测量。没有制造 MIC session、唤醒事件或播放完成事件；没有开启 `TIVOO_P68_TEST_GATE`。
+
+### 实测方法与结果
+
+临时测量固件在四个独立 4 秒窗口内，分别播放 100 ms、400–3600 Hz 扫频标记及 `ready_01/02/03/followup_01` 原始嵌入资产。同步记录最终 TX reference、双麦原始 RX 和 AFE enhanced PCM，保留各自绝对样本索引。标记和资产均真实写入输出队列并 drain，播放日志没有 underrun、missed EOF 或失败。
+
+- 四组原始采集各 800 块，AFE 各 125/125/125/124 块；全部样本索引连续、reference valid、trace dropped=0。AFE 为独立异步 32 ms fetch，4 秒窗口可排除一个边界块；末组 124 块覆盖 3.968 秒，不是中间丢帧。
+- 四次扫频的 TX→RX 相关峰完全一致：左路 1603、右路 1602 个 32 kHz 样本，即 50.09375/50.0625 ms；相关系数绝对值 0.749–0.845，均反相。共同参考取 800 个 16 kHz 样本（50 ms），没有分别移动两路麦克风或修改极性来抹除空间信息。
+- 四组双麦原始时钟→AFE 输出索引的互相关偏移均为 **+519** 个 16 kHz 样本（32.4375 ms），相关系数 0.222–0.550。TX→enhanced 的直接相关在 AEC 适应后很弱，不以其低置信峰值代替索引映射；使用保留绝对索引的 raw→enhanced 关联，避免把声学传播延迟重复加进 AFE 偏移。
+- 独立扫频标记在数字 drain 后的可检测尾音上界为 **672 个 16 kHz 样本（42 ms）**。实际四个提示音资产在其保守数字 drain 后未检出超过阈值的额外残留。选择 **1600 样本（100 ms）** 安全尾音，较本轮最大可检测标记尾音多 58 ms。
+- 尾音不是“绝对无声”证明：原始提示音使用 10 ms RMS、阈值为前置背景 RMS 的 99 分位数三倍与峰值 RMS 的 1% 两者较大值；扫频尾音使用 5 ms RMS、前置背景 95 分位数三倍。背景变化及低于噪声阈值的残响不计作精确零。该校准对应当前实际装配和音量，未验证不同音量、双讲或真人近端保留质量。
+
+结果与重放工具：[校准汇总](evidence/2026-11-23-p68-calibration/measurement-result.json)、[严格检查](evidence/2026-11-23-p68-calibration/verify_measurements.py)、[原始完整采集 gzip](evidence/2026-11-23-p68-calibration/round2.log.gz)、[采集工具](evidence/2026-11-23-p68-calibration/capture.py)、[窗口拆分](evidence/2026-11-23-p68-calibration/split.py)、[索引/相关分析](evidence/2026-11-23-p68-calibration/analyze.py)、[尾音分析](evidence/2026-11-23-p68-calibration/metrics.py)。每组 `round2-assetN.analysis.json` / `.metrics.json` 保存实际数值。原始采集压缩前后逐字节核对，派生大文件已删除，可从 gzip 解压后重建；分析依赖 NumPy/SciPy。合成索引数据已验证相关符号和已知延迟恢复，见 [分析验证](evidence/2026-11-23-p68-calibration/analysis-validation.txt)。首轮串口波特率未同步的无效采集不计入以上四组。
+
+### 已安装配置与正常固件复验
+
+当前私有 `esp32/firmware/sdkconfig` 已设置，板级测量值另存 [非秘密配置快照](evidence/2026-11-23-p68-calibration/measured-settings.txt)，没有覆盖通用未校准 defaults：
+
+| 配置 | 当前值 | 单位/作用 |
+|---|---:|---|
+| `TIVOO_AEC_REFERENCE_DELAY_SAMPLES` | 800 | 16 kHz 样本，50 ms |
+| `TIVOO_P68_PROMPT_AFE_OFFSET_SAMPLES` | +519 | 物理采样时钟→AFE 索引，32.4375 ms |
+| `TIVOO_P68_PROMPT_TAIL_SAMPLES` | 1600 | 数字 drain 后安全余量，100 ms |
+| `TIVOO_P68_PROMPT_CALIBRATED` | y | 真实测量前置条件已满足 |
+| `TIVOO_P68_TEST_GATE` / `TIVOO_P68_CALIBRATION_TRACE` | n / n | 正常固件无测试 bypass 或音频追踪 |
+
+临时刺激、任务栈和串口提速修改均已撤回；`p68_trace.c` 与本轮开始前逐字节一致。[临时测量 patch](evidence/2026-11-23-p68-calibration/temporary-stimulus.patch) 仅作证据。正常 app 构建成功，SHA256 为 `00359440fa199e9a9e172162c2baeae8f335743bbfdef2f8b2e20c15677288af`；只刷 S3 `/dev/ttyACM1` 的 `0x10000` app，esptool 确认 Hash verified，未擦除 NVS 或改动模型/分区。
+
+最终正常固件 **90 秒启动日志，8 份 telemetry 覆盖 70.12 秒，严格检查 PASS**（显式要求 `--min-runtime-seconds 60`）。feed/fetch 持续增长，feed/fetch errors=0、reset=0、capture overrun=0、missed EOF=0；rx_gaps=1、ISR overruns=40 为启动期累计值，观测期间没有增长。internal_min=29256、largest=20480 bytes。真实 TCP HELLO 宣告 `local_wake_stt_v1`，PING/PONG、GET_STATUS 成功，Wi-Fi `.40` connected，SPP connected、audio resource idle。定向 trace/prompt/AFE/turn 软件回归 **11 passed**；`git diff --check` 通过。
+
+证据：[正常构建](evidence/2026-11-23-p68-calibration/candidate-normal-build.txt)、[刷写](evidence/2026-11-23-p68-calibration/normal-flash.txt)、[正常启动](evidence/2026-11-23-p68-calibration/normal-boot.txt)、[严格启动判定](evidence/2026-11-23-p68-calibration/normal-boot-result.json)、[真实状态](evidence/2026-11-23-p68-calibration/normal-status.txt)、[定向回归](evidence/2026-11-23-p68-calibration/focused-tests.txt)。本轮没有迁移 HA 目标地址或执行真人 turn；Step 8/9 和 B9 保持未通过，接下来仍须真实 wake→prompt→Qwen→AUX、播放中打断及 matching completed 后的问号续聊实测。

@@ -770,8 +770,10 @@ static esp_err_t start_request(audio_request_t *request)
 
     s_active_request = request;
     // Keep MP3/SRC off the core that owns the time-sensitive microphone AFE.
+    /* Share core1 below AFE feed. Core0 capture/fetch can starve this
+     * HTTP/SRC worker; raising its priority there instead starves fetch. */
     if (xTaskCreatePinnedToCore(audio_resource_task, "tivoo_audio", AUDIO_TASK_STACK,
-            request, tskIDLE_PRIORITY + 3, NULL, 0) != pdPASS) {
+            request, tskIDLE_PRIORITY + 3, NULL, 1) != pdPASS) {
         s_active_request = NULL;
         atomic_store(&s_output_claimed,false);
         send_audio_state(request, "failed", "audio_task_failed", false);

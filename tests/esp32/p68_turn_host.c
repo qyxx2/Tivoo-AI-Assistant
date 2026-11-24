@@ -10,7 +10,7 @@ static bool send(void *ctx, tivoo_turn_event_t type, const int16_t *pcm, size_t 
     if (w->blocked) return false;
     w->events[w->n++]=type;
     if (type==TIVOO_TURN_PCM) {
-        assert(samples==320);
+        assert(samples>=320 && samples<=1920 && samples%320==0);
         for (size_t i=0;i<samples;++i) assert(pcm[i]==(w->samples+i<321 ? 7 : 0));
         w->samples+=samples;
     }
@@ -34,8 +34,8 @@ int main(void)
         tivoo_turn_tick(&t,300,send,&w);
         if(!first) { assert(w.n==2); tivoo_turn_ready(&t,300); }
         tivoo_turn_tick(&t,301,send,&w);
-        assert(w.n==6 && w.events[1]==TIVOO_TURN_GATE && w.events[2]==TIVOO_TURN_SPEECH_START);
-        assert(w.events[3]==TIVOO_TURN_PCM && w.events[4]==TIVOO_TURN_PCM && w.events[5]==TIVOO_TURN_SPEECH_END);
+        assert(w.n==5 && w.events[1]==TIVOO_TURN_GATE && w.events[2]==TIVOO_TURN_SPEECH_START);
+        assert(w.events[3]==TIVOO_TURN_PCM && w.events[4]==TIVOO_TURN_SPEECH_END);
         assert(t.complete && t.active && w.samples==640 && w.ends==1 && !w.aborts);
         assert(t.valid_samples==321 && t.pad_samples==319);
     }
@@ -79,7 +79,7 @@ int main(void)
     tivoo_turn_end(&t,300,1321); w.blocked=true;
     tivoo_turn_tick(&t,300,send,&w); assert(w.n==2 && t.pending==640);
     w.blocked=false; tivoo_turn_tick(&t,301,send,&w);
-    assert(w.n==6 && w.events[2]==TIVOO_TURN_SPEECH_START && w.events[3]==TIVOO_TURN_PCM && w.events[4]==TIVOO_TURN_PCM && w.events[5]==TIVOO_TURN_SPEECH_END && t.complete);
+    assert(w.n==5 && w.events[2]==TIVOO_TURN_SPEECH_START && w.events[3]==TIVOO_TURN_PCM && w.events[4]==TIVOO_TURN_SPEECH_END && t.complete);
     memset(&w,0,sizeof(w)); tivoo_turn_begin(&t,100); tivoo_turn_gate(&t,200);
     tivoo_turn_tick(&t,200,send,&w); w.blocked=true;
     tivoo_turn_tick(&t,1201,send,&w); assert(t.active && w.n==2);

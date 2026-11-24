@@ -60,7 +60,23 @@ def test_effective_target_configs_after_configure():
         "CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y",
         "CONFIG_MODEL_IN_FLASH=y", "CONFIG_SR_VADN_VADNET1_MEDIUM=y",
         "CONFIG_SR_WN_WN9_HILEXIN=y",
+        "CONFIG_ESP32S3_DATA_CACHE_SIZE=0x8000",
+        "CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE=64",
     } <= s3
+    # A private sdkconfig must not silently override the checked-in memory
+    # budget and measured AFE cache policy. A private config must not bring
+    # back the buffer/window drift or the slower 32-byte cache lines.
+    defaults = dict(
+        line.split("=", 1)
+        for line in (FIRMWARE / "sdkconfig.defaults").read_text().splitlines()
+        if line.startswith("CONFIG_") and "=" in line
+    )
+    for key in ("CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM",
+                "CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM", "CONFIG_ESP_WIFI_RX_BA_WIN",
+                "CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL",
+                "CONFIG_ESP32S3_DATA_CACHE_32KB", "CONFIG_ESP32S3_DATA_CACHE_LINE_64B"):
+        assert key in defaults, f"{key} needs a persistent default"
+        assert f"{key}={defaults[key]}" in s3, f"reconfigure stale {key}"
     assert "CONFIG_BT_ENABLED=y" not in s3
     assert {
         'CONFIG_IDF_TARGET="esp32"', "CONFIG_ESPTOOLPY_FLASHFREQ_40M=y",
