@@ -558,6 +558,11 @@ class QwenRealtimeBridge:
                 owner.final_has_tools = event["hasFunctionCall"]
                 if owner.final_has_tools:
                     owner.keep_socket = False
+                    if any(
+                        tool_rid == rid and status == "failed"
+                        for tool_rid, status in owner.tools.values()
+                    ):
+                        raise RuntimeError("Qwen terminal tool execution failed")
                 if owner.stream is None:
                     raise RuntimeError("Qwen completed without PCM")
                 owner.stream.finish()
@@ -571,8 +576,18 @@ class QwenRealtimeBridge:
                 raise ValueError("Invalid Qwen tool lifecycle")
             owner.tools[call_id] = (rid, status)
             if status == "failed":
-                on_event(event)
-                raise RuntimeError("Qwen tool execution failed")
+                # Ordinary MCP errors are function outputs. Let Gateway send
+                # them back to the model and produce its final spoken reply.
+                # A terminal tool-only acceptance has no such follow-up.
+                result = event.get("result")
+                _LOGGER.warning(
+                    "Qwen tool failed: %s (%s)",
+                    event.get("name", "unknown"),
+                    result[:512] if isinstance(result, str) else "unknown",
+                )
+                if owner.final_has_tools and owner.final_response == rid:
+                    on_event(event)
+                    raise RuntimeError("Qwen terminal tool execution failed")
         elif kind in {"transcript.final", "transcript.delta"}:
             if event.get("role") not in ("assistant", "user") or not isinstance(
                 event.get("content"), str
@@ -631,7 +646,7 @@ class QwenRealtimeBridge:
                         and owner.stream.http_finished.is_set()
                         and set(owner.responses).issubset(owner.completed_responses)
                         and all(
-                            status == "completed" for _, status in owner.tools.values()
+                            status in {"completed", "failed"} for _, status in owner.tools.values()
                         )
                         and (
                             not owner.final_has_tools

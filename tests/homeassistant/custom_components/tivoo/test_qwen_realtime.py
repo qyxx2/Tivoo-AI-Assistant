@@ -795,3 +795,45 @@ async def test_tool_acceptance_without_second_response_finishes_delivery_only(
         consumer.cancel()
         await asyncio.gather(task, consumer, return_exceptions=True)
     assert ws.closed and not streams
+
+
+@pytest.mark.parametrize("retry", [False, True])
+async def test_failed_mcp_tool_allows_gateway_error_summary(setup_bridge, retry):
+    """A tool error is a model result, not a transport error."""
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    seen = []
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), seen.append))
+    try:
+        await spin_until(lambda: any(e["type"] == "input_audio_buffer.append" for e in ws.sent))
+        ws.feed(
+            {"type": "turn.started", "turnId": "t1"},
+            {"type": "transcript.final", "role": "user", "content": "查询不存在的设备", "turnId": "t1"},
+            {"type": "response.started", "responseId": "r1", "turnId": "t1"},
+            {"type": "tool.call", "turnId": "t1", "responseId": "r1", "callId": "c1", "status": "received"},
+            {"type": "audio.done", "turnId": "t1", "responseId": "r1", "responseStatus": "completed",
+             "hasFunctionCall": True, "awaitsToolFollowUp": True},
+            {"type": "tool.call", "turnId": "t1", "responseId": "r1", "callId": "c1", "status": "failed",
+             "name": "mcp__homeassistant__homeassistant__GetLiveContext",
+             "result": "No entities matched"},
+        )
+        await spin_until(lambda: owner.tools.get("c1") == ("r1", "failed"))
+        assert not task.done() and not ws.closed
+        if retry:
+            ws.feed(
+                {"type": "response.started", "responseId": "retry", "turnId": "t1"},
+                {"type": "tool.call", "turnId": "t1", "responseId": "retry", "callId": "c2", "status": "received"},
+                {"type": "tool.call", "turnId": "t1", "responseId": "retry", "callId": "c2", "status": "completed"},
+                {"type": "audio.done", "turnId": "t1", "responseId": "retry", "responseStatus": "completed",
+                 "hasFunctionCall": True, "awaitsToolFollowUp": True},
+            )
+        await response(ws, rid="r2", initial_clear=False)
+        await spin_until(lambda: owner.playback_id is not None)
+        assert await consume(owner) == b"\x02\x00" * 40
+        bridge.on_playback(owner.playback_id, "completed")
+        result = await asyncio.wait_for(task, 2)
+        assert result.response_id == "r2" and result.followup_eligible
+        assert owner.success
+        assert not streams and ws.closed
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
