@@ -211,6 +211,51 @@ async def test_handshake_pcm_tail_and_physical_completion(setup_bridge):
     }
 
 
+async def test_b88_output_path_baseline_unchanged(setup_bridge):
+    """B8.8 input changes must converge on the existing PCM/TTS_PLAY owner."""
+    bridge, owner, ws, adapter, streams, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    await spin_until(lambda: owner.input_drained)
+    ws.feed(
+        {"type": "turn.started", "turnId": "t1"},
+        {"type": "response.started", "turnId": "t1", "responseId": "r1"},
+        {
+            "type": "audio.delta",
+            "turnId": "t1",
+            "responseId": "r1",
+            "sampleRate": 24000,
+            "audio": base64.b64encode(bytes.fromhex("0200") * 40).decode(),
+        },
+        {
+            "type": "transcript.final",
+            "role": "assistant",
+            "content": "baseline",
+            "turnId": "t1",
+            "responseId": "r1",
+        },
+        {
+            "type": "audio.done",
+            "turnId": "t1",
+            "responseId": "r1",
+            "responseStatus": "completed",
+            "hasFunctionCall": False,
+            "awaitsToolFollowUp": False,
+        },
+    )
+    await spin_until(lambda: owner.playback_id is not None)
+    assert list(streams) == [owner.playback_id]
+    assert await consume(owner) == bytes.fromhex("0200") * 53
+    adapter.async_send_tts_play.assert_awaited_once()
+    args = adapter.async_send_tts_play.call_args
+    assert args.args[0] == owner.playback_id
+    assert args.args[2] == "audio/x-tivoo-pcm-s16le-32000-mono"
+    bridge.on_playback(owner.playback_id, "completed")
+    result = await task
+    assert result.transcript == "baseline"
+    assert result.response_id == "r1"
+    assert ws.closed and not streams
+
+
 @pytest.mark.parametrize(
     "case", ["capability", "ordering", "rate", "gateway-error", "bad-json", "session-mismatch"]
 )

@@ -912,6 +912,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         entity._ask_question_future = None
         await hass.async_block_till_done(wait_background_tasks=True)
         assert [e.type for e in wire[:2]] == ["transcribe", "audio-start"]
+        assert tuple(wire[1].data[key] for key in ("rate", "width", "channels")) == (16000, 2, 1)
         assert b"".join(e.payload for e in wire if e.type == "audio-chunk") == expected
         assert [e.type for e in wire].count("audio-stop") == 1
         assert PipelineEventType.STT_END in [e.type for e in events]
@@ -1004,3 +1005,13 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             await tts_server.wait_closed()
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.enable_socket
+async def test_b88_s3_pcm_reaches_device_endpoint_byte_exact(
+    hass, monkeypatch, aiohttp_client, advance_clock
+):
+    """B8.8 keeps the existing S3 PCM -> HA -> Wyoming path byte exact."""
+    await test_public_satellite_stt_device_endpoint_preserves_tail(
+        hass, monkeypatch, aiohttp_client, None, advance_clock
+    )
