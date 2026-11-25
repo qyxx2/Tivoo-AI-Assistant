@@ -1,4 +1,4 @@
-"""Qwen local turns retain the existing ingress and cleanup owner boundaries."""
+"""B8.8 local turns: Sherpa STT precedes any Qwen fallback."""
 
 import asyncio
 from types import SimpleNamespace
@@ -9,57 +9,70 @@ from custom_components.tivoo.assist_satellite import TivooAssistSatellite
 from custom_components.tivoo.audio_session import AudioSessionManager
 from custom_components.tivoo.diagnostics import TYPE_STT_READY
 from custom_components.tivoo.display_state import ExpressionCoordinator
-from custom_components.tivoo.qwen_realtime import QwenResult
+from homeassistant.components.assist_pipeline.models import (
+    PipelineEvent,
+    PipelineEventType as Event,
+    PipelineStage,
+)
 from test_audio_session import SESSION_1, SESSION_2
 from test_display_state import RecordingAdapter
 from test_p68_local_session import activity, gate, local_start
 
 
 class Bridge:
+    """Record Qwen admission without making Qwen part of STT tests."""
+
     def __init__(self):
-        self.started = asyncio.Event()
-        self.finish = asyncio.Event()
-        self.closed = asyncio.Event()
-        self.owner = SimpleNamespace(
-            playback_id="qwen-playback",
+        self.pipeline_started = asyncio.Event()
+        self.frames = []
+        self.pipeline_calls = []
+        self.create_calls = []
+        self.audio_calls = 0
+        self.text_calls = []
+        self.released = []
+        self.playback = []
+        self.stt_text = "打开客厅灯"
+        self.provider_error = False
+        self.inject_vad = False
+        self.input_drained_at_stt_end = False
+
+    def create_turn(
+        self,
+        session_id,
+        generation,
+        *,
+        current,
+        prompt_player=None,
+        parent_session_id=None,
+    ):
+        self.create_calls.append((session_id, generation, parent_session_id))
+        return SimpleNamespace(
+            session_id=session_id,
+            generation=generation,
+            parent_session_id=parent_session_id,
+            playback_id=None,
             send_failed=False,
+            keep_socket=False,
+            tools={},
             stop_dispatch=Mock(),
             async_stop_playback=AsyncMock(),
-            async_close=AsyncMock(side_effect=self.closed.set),
+            async_close=AsyncMock(),
+            on_connection_lost=None,
         )
-        self.frames = []
-        self.error = None
-        self.on_event = None
-        self.current = None
-        self.playback = []
-
-    def create_turn(self, session_id, generation, *, current, prompt_player=None, parent_session_id=None):
-        self.session_id, self.generation = session_id, generation
-        self.current = current
-        return self.owner
 
     async def async_run(self, owner, audio, on_event, *, on_result=None):
-        assert owner is self.owner
-        self.on_event = on_event
-        self.started.set()
-        async for chunk in audio:
-            self.frames.append(chunk)
-        on_event({"type": "transcript.final", "role": "user", "content": "开灯"})
-        await self.finish.wait()
-        if self.error:
-            raise self.error
-        result = QwenResult("好了。", "t1", "r1")
-        if on_result:
-            on_result(result)
-        return result
+        self.audio_calls += 1
+        raise AssertionError("B8.8 local STT must not send PCM to Qwen")
+
+    async def async_run_text(self, owner, text, on_event, *, on_result=None):
+        self.text_calls.append(text)
+        raise AssertionError("Task 3 must not submit Qwen text yet")
 
     async def async_release_parent(self, session_id):
-        pass
+        self.released.append(session_id)
 
     def on_playback(self, playback_id, state):
         self.playback.append((playback_id, state))
-        if playback_id == self.owner.playback_id and state == "completed":
-            self.finish.set()
 
 
 @pytest.fixture
@@ -79,140 +92,170 @@ async def qwen_satellite(hass):
     )
     entity.hass = hass
     entity.async_write_ha_state = Mock()
-    entity.async_accept_pipeline_from_satellite = AsyncMock(
-        side_effect=AssertionError("legacy pipeline")
-    )
-    entity.validate_local_pipeline = Mock(side_effect=AssertionError("legacy STT"))
     entity.tts_response_finished = Mock()
+    entity.validate_local_pipeline = Mock(
+        return_value=("select.tivoo_pipeline", "pipeline-local")
+    )
+
+    async def pipeline(audio, stage, **kwargs):
+        bridge.pipeline_calls.append((stage, kwargs))
+        assert stage is PipelineStage.STT
+        assert kwargs["end_stage"] is PipelineStage.STT
+        entity.on_pipeline_event(
+            PipelineEvent(Event.RUN_START, {"pipeline": "pipeline-local"})
+        )
+        entity.on_pipeline_event(PipelineEvent(Event.STT_START))
+        bridge.pipeline_started.set()
+        if bridge.inject_vad:
+            entity.on_pipeline_event(PipelineEvent(Event.STT_VAD_START))
+        async for chunk in audio:
+            bridge.frames.append(chunk)
+        bridge.input_drained_at_stt_end = manager.local_input_drained(
+            manager.active_session_id
+        )
+        if bridge.provider_error:
+            entity.on_pipeline_event(
+                PipelineEvent(
+                    Event.ERROR,
+                    {"code": "stt-provider", "message": "fixture provider error"},
+                )
+            )
+            return
+        entity.on_pipeline_event(
+            PipelineEvent(Event.STT_END, {"stt_output": {"text": bridge.stt_text}})
+        )
+        entity.on_pipeline_event(PipelineEvent(Event.RUN_END))
+
+    entity.async_accept_pipeline_from_satellite = AsyncMock(side_effect=pipeline)
     await entity.async_added_to_hass()
     yield entity, manager, stop, bridge
     await entity.async_will_remove_from_hass()
     await display.async_shutdown()
 
 
-async def feed_turn(entity, manager, bridge):
-    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
-    await asyncio.wait_for(bridge.started.wait(), 1)
-    await manager.async_handle_gate(gate())
-    await manager.async_handle_activity(activity("speech_start"))
-    await manager.async_push_pcm(SESSION_1, b"a" * 640)
-    await manager.async_handle_activity(activity("speech_end", pcm_samples=320))
-    await asyncio.sleep(0)
-
-
-async def test_qwen_local_pcm_eof_waits_for_physical_completion(
-    qwen_satellite, hass, monkeypatch
-):
-    entity, manager, stop, bridge = qwen_satellite
-    monkeypatch.setattr(
-        "custom_components.tivoo.assist_satellite.PipelineTtsEvents",
-        Mock(side_effect=AssertionError("legacy TTS owner")),
+async def begin_turn(entity, manager, bridge, session_id=SESSION_1, sequence=100):
+    bridge.pipeline_started.clear()
+    await manager.async_start_session(
+        local_start(session_id, sequence), persistent=True, local_mode=True
     )
-    await feed_turn(entity, manager, bridge)
     turn = entity.coordinator._turn
-    assert bridge.frames == [b"a" * 640]
-    assert manager.local_input_drained(SESSION_1)
+    assert turn is not None
+    await asyncio.wait_for(bridge.pipeline_started.wait(), 1)
+    await manager.async_handle_gate(gate(session_id))
+    await manager.async_handle_activity(activity("speech_start", session_id))
+    return turn
+
+
+async def finish_turn(manager, turn, *, pcm=b"a" * 640):
+    await manager.async_push_pcm(turn.session_id, pcm)
+    await manager.async_handle_activity(
+        activity("speech_end", turn.session_id, pcm_samples=len(pcm) // 2)
+    )
+    await asyncio.wait_for(turn.task, 2)
+
+
+async def test_b88_qwen_present_still_runs_sherpa_before_fallback(qwen_satellite):
+    entity, manager, stop, bridge = qwen_satellite
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+
+    assert turn.transcript == "打开客厅灯"
     assert turn.valid_stt and turn.stt_started
-    assert bridge.session_id == SESSION_1 and bridge.generation == turn.context.id
-    assert bridge.current()
+    assert bridge.frames == [b"a" * 640]
+    assert bridge.input_drained_at_stt_end
+    assert len(bridge.pipeline_calls) == 1
+    _, kwargs = bridge.pipeline_calls[0]
+    assert kwargs["context"] is turn.context
+    assert kwargs["wake_word_phrase"] == "嗨，乐鑫"
+    entity.validate_local_pipeline.assert_called_once()
+    assert not bridge.create_calls
+    assert bridge.audio_calls == 0
+    assert not bridge.text_calls
     entity.adapter.async_send_message.assert_awaited_once()
     assert entity.adapter.async_send_message.call_args.args[0] == TYPE_STT_READY
-    stop.assert_not_awaited()
-    entity.coordinator.on_playback("wrong-playback", "completed")
-    await asyncio.sleep(0)
-    assert not turn.playback_completed
-    stop.assert_not_awaited()
-    entity.coordinator.on_playback("qwen-playback", "completed")
-    await hass.async_block_till_done(wait_background_tasks=True)
-    assert turn.run_end and turn.intent_finished and turn.run_returned
-    assert turn.response_finished
-    # An ordinary final answer closes without follow-up.
-    assert not turn.continue_conversation
-    stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
-    assert bridge.closed.is_set()
-    entity.validate_local_pipeline.assert_not_called()
-    entity.async_accept_pipeline_from_satellite.assert_not_awaited()
     entity.adapter.async_send_tts_play.assert_not_awaited()
+    stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
 
 
-async def test_qwen_failure_retires_current_owner(qwen_satellite, hass):
-    entity, manager, stop, bridge = qwen_satellite
-    await feed_turn(entity, manager, bridge)
-    bridge.error = RuntimeError("Gateway failed")
-    bridge.finish.set()
-    await hass.async_block_till_done(wait_background_tasks=True)
-    stop.assert_awaited_once_with(SESSION_1, "pipeline_failed")
-    assert bridge.closed.is_set()
-    bridge.owner.stop_dispatch.assert_called_once()
-    bridge.owner.async_stop_playback.assert_awaited_once()
-    assert manager.active_session_id is None
-
-
-async def test_user_transcript_cancels_stt_deadline_while_playback_pending(
-    qwen_satellite, hass
+@pytest.mark.parametrize("text", ["", "   "])
+async def test_b88_empty_sherpa_transcript_never_reaches_qwen(
+    qwen_satellite, text
 ):
-    from datetime import timedelta
-
-    from homeassistant.util import dt
-    from pytest_homeassistant.common import async_fire_time_changed
-
-    entity, manager, stop, bridge = qwen_satellite
-    await feed_turn(entity, manager, bridge)
-    turn = entity.coordinator._turn
-    assert turn.valid_stt and not turn.run_returned
-    assert "stt_finalize_timeout" not in entity.coordinator._timers
-    async_fire_time_changed(hass, dt.utcnow() + timedelta(seconds=46))
-    await hass.async_block_till_done()
-    stop.assert_not_awaited()
-    assert manager.active_session_id == SESSION_1 and not turn.task.done()
-
-
-async def test_qwen_shutdown_fences_late_transcript_and_joins_owner(qwen_satellite):
     entity, manager, _stop, bridge = qwen_satellite
-    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
-    await asyncio.wait_for(bridge.started.wait(), 1)
-    turn = entity.coordinator._turn
-    await entity.coordinator.async_shutdown()
-    bridge.on_event({"type": "transcript.final", "role": "user", "content": "late"})
-    assert not bridge.current()
+    bridge.stt_text = text
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+
+    assert turn.transcript is None
     assert not turn.valid_stt
-    assert bridge.closed.is_set()
-    assert turn.task.done()
-    bridge.owner.async_stop_playback.assert_awaited_once()
+    assert not bridge.create_calls
+    assert not bridge.text_calls
 
 
-async def test_qwen_new_wake_waits_for_old_owner_and_rejects_late_events(
+async def test_b88_provider_error_never_reaches_qwen(qwen_satellite):
+    entity, manager, stop, bridge = qwen_satellite
+    bridge.provider_error = True
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+
+    assert turn.transcript is None
+    assert turn.error
+    assert not bridge.create_calls
+    assert not bridge.text_calls
+    stop.assert_awaited_once_with(SESSION_1, "pipeline_failed")
+
+
+async def test_b88_unexpected_ha_vad_never_reaches_qwen(qwen_satellite):
+    entity, manager, stop, bridge = qwen_satellite
+    bridge.inject_vad = True
+    await manager.async_start_session(
+        local_start(), persistent=True, local_mode=True
+    )
+    turn = entity.coordinator._turn
+    assert turn is not None
+    await asyncio.wait_for(bridge.pipeline_started.wait(), 1)
+    await asyncio.gather(turn.task, return_exceptions=True)
+
+    assert turn.transcript is None
+    assert turn.error
+    assert not bridge.create_calls
+    assert not bridge.text_calls
+    stop.assert_awaited_once_with(SESSION_1, "pipeline_failed")
+
+
+async def test_b88_disconnect_before_normal_eof_has_no_transcript_or_qwen(
     qwen_satellite,
 ):
     entity, manager, _stop, bridge = qwen_satellite
-    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
-    await asyncio.wait_for(bridge.started.wait(), 1)
-    old_turn = entity.coordinator._turn
-    old_current, late_event = bridge.current, bridge.on_event
-    closing, release = asyncio.Event(), asyncio.Event()
+    turn = await begin_turn(entity, manager, bridge)
+    await manager.async_push_pcm(SESSION_1, b"x" * 640)
+    await manager.async_disconnect()
+    await asyncio.gather(turn.task, return_exceptions=True)
 
-    async def close_old():
-        closing.set()
-        await release.wait()
+    assert turn.transcript is None
+    assert not turn.valid_stt
+    assert not bridge.create_calls
+    assert not bridge.text_calls
 
-    bridge.owner.async_close.side_effect = close_old
-    bridge.started.clear()
-    try:
-        await manager.async_start_session(
-            local_start(SESSION_2, 101), persistent=True, local_mode=True
-        )
-        await asyncio.wait_for(closing.wait(), 1)
-        current = entity.coordinator._turn
-        assert current is not old_turn
-        assert not old_current()
-        assert not bridge.started.is_set()
-        late_event({"type": "transcript.final", "role": "user", "content": "stale"})
-        assert not old_turn.valid_stt and not current.valid_stt
-        release.set()
-        await asyncio.wait_for(bridge.started.wait(), 1)
-        assert manager.active_session_id == SESSION_2
-    finally:
-        release.set()
+
+async def test_b88_superseded_stt_cannot_publish_old_transcript(qwen_satellite):
+    entity, manager, _stop, bridge = qwen_satellite
+    old = await begin_turn(entity, manager, bridge)
+    await manager.async_push_pcm(SESSION_1, b"x" * 640)
+
+    bridge.pipeline_started.clear()
+    await manager.async_start_session(
+        local_start(SESSION_2, 101), persistent=True, local_mode=True
+    )
+    new = entity.coordinator._turn
+    assert new is not old
+    await asyncio.wait_for(bridge.pipeline_started.wait(), 1)
+    await asyncio.gather(old.task, return_exceptions=True)
+
+    assert old.transcript is None
+    assert not old.valid_stt
+    assert not bridge.create_calls
+    assert not bridge.text_calls
 
 
 async def test_entry_reload_reuses_global_pcm_view_and_closes_bridge(

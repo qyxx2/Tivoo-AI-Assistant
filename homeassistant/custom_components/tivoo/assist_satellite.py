@@ -104,6 +104,8 @@ class _Turn:
     stop_unconfirmed: bool = False
     local_pipeline_id: str | None = None
     stt_started: bool = False
+    transcript: str | None = None
+    qwen_parent_session_id: str | None = None
 
 
 class AudioSessionCoordinator:
@@ -289,21 +291,12 @@ class AudioSessionCoordinator:
             start = self.ingress.ingress_offset(session_id)
         player = self.entity.prompt_player
         context = Context()
-        if local_mode and self.entity.qwen_bridge is not None:
-            tts = self.entity.qwen_bridge.create_turn(
-                session_id,
-                context.id,
-                current=lambda: self._turn is turn and not turn.error,
-                prompt_player=player,
-                parent_session_id=parent_session_id,
-            )
-        else:
-            tts = PipelineTtsEvents(
-                self.entity.hass,
-                self.entity.adapter,
-                player.async_yield_to_tts if player is not None and not local_mode else None,
-                session_id=session_id if local_mode else None,
-            )
+        tts = PipelineTtsEvents(
+            self.entity.hass,
+            self.entity.adapter,
+            player.async_yield_to_tts if player is not None and not local_mode else None,
+            session_id=session_id if local_mode else None,
+        )
         turn = _Turn(
             session_id,
             context,
@@ -313,6 +306,7 @@ class AudioSessionCoordinator:
             prompt_before_command=prompt_before_command,
             local_phrase=local_phrase,
             local_mode=local_mode,
+            qwen_parent_session_id=parent_session_id,
         )
         previous = self._turn
         self._turn = turn
@@ -419,74 +413,24 @@ class AudioSessionCoordinator:
                         await asyncio.shield(asyncio.gather(prior, return_exceptions=True))
                 if self._turn is not turn:
                     return
-                qwen = self.entity.qwen_bridge if turn.local_mode else None
-                if turn.local_mode and qwen is None:
+                if turn.local_mode:
                     _, turn.local_pipeline_id = self.entity.validate_local_pipeline()
                 self._event_turn = turn
                 try:
-                    if qwen is not None:
-                        turn.stt_started = True
-
-                        def on_qwen_event(event: dict) -> None:
-                            if self._turn is not turn or turn.error:
-                                return
-                            if (
-                                event.get("type") == "transcript.final"
-                                and event.get("role") == "user"
-                                and isinstance(event.get("content"), str)
-                                and event["content"].strip()
-                            ):
-                                turn.valid_stt = True
-                                self._cancel_timer("stt_finalize_timeout")
-                                self.display.update_voice(
-                                    turn.context.id,
-                                    clear=(DisplayState.WAKE_CONFIRMED, DisplayState.ACTIVE_LISTENING,
-                                           DisplayState.FOLLOWUP_WAIT),
-                                    state=DisplayState.THINKING, preset="thinking", reply_active=True,
-                                )
-                            elif event.get("type") == "tool.call":
-                                if any(
-                                    status in {"received", "running"}
-                                    for _, status in turn.tts.tools.values()
-                                ):
-                                    self.display.update_voice(
-                                        turn.context.id, state=DisplayState.TOOLUSE, preset="tooluse"
-                                    )
-                                else:
-                                    self.display.update_voice(
-                                        turn.context.id, clear=(DisplayState.TOOLUSE,)
-                                    )
-
-                        def on_qwen_result(result: QwenResult) -> None:
-                            # Bridge supplies only the correlated, normally completed
-                            # final response after input/HTTP/physical playback drain.
-                            if self._turn is not turn or turn.error:
-                                return
-                            turn.continue_conversation = bool(
-                                result.followup_eligible and turn.valid_stt
-                                and result.transcript.rstrip().endswith(("？", "?"))
+                    if turn.local_mode:
+                        await turn.tts.async_run(
+                            self.entity.async_accept_pipeline_from_satellite(
+                                audio,
+                                PipelineStage.STT,
+                                end_stage=PipelineStage.STT,
+                                context=turn.context,
+                                wake_word_phrase=turn.local_phrase,
                             )
-                            turn.tts.keep_socket = turn.continue_conversation
-
-                        def connection_lost() -> None:
-                            if self._turn is turn:
-                                turn.continue_conversation = False
-                                self.entity.hass.async_create_task(
-                                    self.ingress.async_stop_session(turn.session_id, "qwen_connection_lost"),
-                                    "Tivoo retained Qwen connection ended",
-                                )
-
-                        turn.tts.on_connection_lost = connection_lost
-                        await qwen.async_run(turn.tts, audio, on_qwen_event, on_result=on_qwen_result)
-                        if self._turn is turn:
-                            turn.run_end = True
-                            turn.intent_finished = True
-                            self._cancel_timer("stt_finalize_timeout")
+                        )
                     else:
                         await turn.tts.async_run(
                             self.entity.async_accept_pipeline_from_satellite(
-                                audio, stage, context=turn.context,
-                                **({"wake_word_phrase": turn.local_phrase} if turn.local_mode else {}),
+                                audio, stage, context=turn.context
                             )
                         )
                 finally:
@@ -796,6 +740,8 @@ class AudioSessionCoordinator:
                         and text.strip()
                     ):
                         turn.valid_stt = True
+                        if turn.local_mode:
+                            turn.transcript = text.strip()
                         if turn.local_mode:
                             self.display.update_voice(
                                 turn.context.id,

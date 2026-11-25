@@ -39,6 +39,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
     wire = []
     transcript = "what time is it"
     chats = []
+    baseline_only = fault == "b88_pcm"
     display_wire = fault in {"display_wire_on", "display_wire_off"}
     full = display_wire or fault in {"full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
     held_tts = fault in {"cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
@@ -84,7 +85,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
     got_stop = asyncio.Event()
     allow_reply = asyncio.Event()
     peer_closed = asyncio.Event()
-    peer_fault = fault
+    peer_fault = None if baseline_only else fault
     async def connection(reader, writer):
         mode = peer_fault
         early_sent = False
@@ -759,7 +760,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             print(f"R09 {fault}: events={types!r} playback={play} context={turn.context.id} device={frames!r}")
             return
 
-        if fault is not None:
+        if fault is not None and not baseline_only:
             from uuid import uuid4
             from homeassistant.components.assist_pipeline import default_pipeline as core
             from homeassistant.components.assist_pipeline.const import WAKE_WORD_COOLDOWN
@@ -921,6 +922,8 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         stop.assert_awaited_once_with(SESSION_2,"conversation_complete")
         adapter.async_send_tts_play.assert_not_awaited()
         assert entity.pipeline_entity_id is None
+        if baseline_only:
+            return
 
         # Actual Core cancellation after a partial upload must never emit
         # AudioStop or an actionable Transcript from the incomplete command.
@@ -1013,5 +1016,5 @@ async def test_b88_s3_pcm_reaches_device_endpoint_byte_exact(
 ):
     """B8.8 keeps the existing S3 PCM -> HA -> Wyoming path byte exact."""
     await test_public_satellite_stt_device_endpoint_preserves_tail(
-        hass, monkeypatch, aiohttp_client, None, advance_clock
+        hass, monkeypatch, aiohttp_client, "b88_pcm", advance_clock
     )
