@@ -10,7 +10,7 @@ import logging
 import os
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from time import monotonic
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -391,6 +391,7 @@ class QwenRealtimeBridge:
                 },
                 "capabilities": [
                     "input.audio",
+                    "input.text",
                     "session.heartbeat",
                     TERMINAL_CAPABILITY,
                 ],
@@ -415,6 +416,7 @@ class QwenRealtimeBridge:
                         or event.get("protocol_version") != "7.0.0"
                         or not {
                             "input.audio",
+                            "input.text",
                             "session.heartbeat",
                             TERMINAL_CAPABILITY,
                         }.issubset(event.get("capabilities", []))
@@ -473,6 +475,19 @@ class QwenRealtimeBridge:
                 }
             )
             await asyncio.sleep(TAIL_FRAME_SECONDS)
+
+    async def _input_text(self, owner: QwenTurnOwner, text: str) -> None:
+        if owner.stopped or not owner.current():
+            raise RuntimeError("Qwen text generation was superseded")
+        await self._send(
+            {
+                "type": "conversation.item.create",
+                "parts": [{"type": "text", "text": text}],
+            }
+        )
+        owner.input_drained = True
+        owner.mark("input_eof")
+        owner.changed.set()
 
     async def _open_output(self, owner):
         stream = owner.stream
@@ -649,6 +664,38 @@ class QwenRealtimeBridge:
         *,
         on_result: Callable[[QwenResult], None] | None = None,
     ) -> QwenResult:
+        return await self._async_run(
+            owner,
+            lambda: self._input(owner, audio),
+            on_event,
+            on_result=on_result,
+        )
+
+    async def async_run_text(
+        self,
+        owner: QwenTurnOwner,
+        text: str,
+        on_event: Callable[[dict], None],
+        *,
+        on_result: Callable[[QwenResult], None] | None = None,
+    ) -> QwenResult:
+        if not isinstance(text, str) or not (text := text.strip()):
+            raise ValueError("Qwen text input must be non-empty")
+        return await self._async_run(
+            owner,
+            lambda: self._input_text(owner, text),
+            on_event,
+            on_result=on_result,
+        )
+
+    async def _async_run(
+        self,
+        owner: QwenTurnOwner,
+        input_sender: Callable[[], Awaitable[None]],
+        on_event: Callable[[dict], None],
+        *,
+        on_result: Callable[[QwenResult], None] | None = None,
+    ) -> QwenResult:
         sender = receiver = waiter = get_waiter = None
         if self._owner is not None:
             raise RuntimeError("Previous Qwen owner has not been retired")
@@ -656,7 +703,7 @@ class QwenRealtimeBridge:
         try:
             async with asyncio.timeout(TURN_TIMEOUT):
                 await self._connect(owner)
-                sender = asyncio.create_task(self._input(owner, audio))
+                sender = asyncio.create_task(input_sender())
                 receiver = asyncio.create_task(self._receive())
                 while True:
                     if owner.stopped or not owner.current():

@@ -131,7 +131,7 @@ class GatewayConnection {
         instance_id: this.instanceId,
         label: "P6.8 B8.2 isolated no-hardware probe",
       },
-      capabilities: ["input.audio"],
+      capabilities: ["input.audio", "input.text"],
       locale: "zh-CN",
       time_zone: "Asia/Shanghai",
       connection: {
@@ -170,6 +170,13 @@ class GatewayConnection {
     if (voiceReady.inputSampleRate !== SAMPLE_RATE) {
       fail(`Gateway input sample rate ${voiceReady.inputSampleRate}, expected ${SAMPLE_RATE}`);
     }
+    if (
+      !Array.isArray(readySession.capabilities) ||
+      !readySession.capabilities.includes("input.audio") ||
+      !readySession.capabilities.includes("input.text")
+    ) {
+      fail("Gateway did not negotiate both input.audio and input.text");
+    }
     this.handshake = {
       gcp_version: readySession.protocol_version,
       session_id: readySession.session_id,
@@ -185,17 +192,20 @@ class GatewayConnection {
 
   async runTurn(turn) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) fail("Same active WebSocket is required for this turn");
-    const pcm = Buffer.from(turn.pcm_base64, "base64");
-    if (!pcm.length || pcm.length % 2) fail("Input must be non-empty PCM16");
-    const tailMs = turn.tail_ms ?? 240;
+    const textInput = typeof turn.text === "string" ? turn.text.trim() : "";
+    const pcm = textInput ? Buffer.alloc(0) : Buffer.from(turn.pcm_base64 || "", "base64");
+    if (!textInput && (!pcm.length || pcm.length % 2)) fail("Input must be non-empty PCM16 or text");
+    const tailMs = textInput ? 0 : (turn.tail_ms ?? 240);
     if (tailMs < 0 || tailMs % FRAME_MS) fail("tail_ms must be a multiple of 20 ms");
     const frames = [];
-    for (let offset = 0; offset < pcm.length; offset += FRAME_BYTES) {
-      const frame = Buffer.alloc(FRAME_BYTES);
-      pcm.copy(frame, 0, offset, Math.min(offset + FRAME_BYTES, pcm.length));
-      frames.push(frame);
+    if (!textInput) {
+      for (let offset = 0; offset < pcm.length; offset += FRAME_BYTES) {
+        const frame = Buffer.alloc(FRAME_BYTES);
+        pcm.copy(frame, 0, offset, Math.min(offset + FRAME_BYTES, pcm.length));
+        frames.push(frame);
+      }
+      for (let offset = 0; offset < tailMs; offset += FRAME_MS) frames.push(Buffer.alloc(FRAME_BYTES));
     }
-    for (let offset = 0; offset < tailMs; offset += FRAME_MS) frames.push(Buffer.alloc(FRAME_BYTES));
 
     const startedAt = Date.now();
     let sendFinishedAt = null;
@@ -217,22 +227,31 @@ class GatewayConnection {
     const responseIds = new Set();
 
     const sender = (async () => {
-      for (let index = 0; index < frames.length; index += 1) {
-        if (aborted) fail("Turn sender aborted");
+      if (textInput) {
         await this.send({
-          type: "input_audio_buffer.append",
-          event_id: makeId("evt_b82"),
-          audio: frames[index].toString("base64"),
+          type: "conversation.item.create",
+          event_id: makeId("evt_b88"),
+          parts: [{ type: "text", text: textInput }],
         });
-        sentBytes += frames[index].length;
-        if (index === Math.ceil(pcm.length / FRAME_BYTES) - 1) speechFramesSentAt = Date.now();
-        await delay(FRAME_MS);
+        sentBytes = Buffer.byteLength(textInput, "utf8");
+      } else {
+        for (let index = 0; index < frames.length; index += 1) {
+          if (aborted) fail("Turn sender aborted");
+          await this.send({
+            type: "input_audio_buffer.append",
+            event_id: makeId("evt_b82"),
+            audio: frames[index].toString("base64"),
+          });
+          sentBytes += frames[index].length;
+          if (index === Math.ceil(pcm.length / FRAME_BYTES) - 1) speechFramesSentAt = Date.now();
+          await delay(FRAME_MS);
+        }
       }
       sendFinishedAt = Date.now();
       senderDone = true;
     })();
 
-    const deadline = Date.now() + frames.length * FRAME_MS + 20000;
+    const deadline = Date.now() + (textInput ? 0 : frames.length * FRAME_MS) + 20000;
     try {
       while (Date.now() < deadline) {
         let event;
@@ -295,7 +314,7 @@ class GatewayConnection {
         );
         if (senderDone && assistantFinals.length) break;
       }
-      if (!senderDone) fail("Audio sender did not finish");
+      if (!senderDone) fail("Turn sender did not finish");
       await sender;
     } catch (error) {
       aborted = true;
@@ -338,7 +357,12 @@ class GatewayConnection {
       session_id: this.sessionId,
       instance_id: this.instanceId,
       probe_socket_marker: this.probeSocketMarker,
-      turn: {
+      turn: textInput ? {
+        input_type: "text",
+        text: textInput,
+        input_bytes: sentBytes,
+      } : {
+        input_type: "audio",
         speech_frames: Math.ceil(pcm.length / FRAME_BYTES),
         tail_ms: tailMs,
         input_bytes: sentBytes,

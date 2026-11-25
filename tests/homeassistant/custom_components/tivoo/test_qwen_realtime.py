@@ -256,6 +256,88 @@ async def test_b88_output_path_baseline_unchanged(setup_bridge):
     assert ws.closed and not streams
 
 
+async def test_b88_text_turn_uses_single_gcp_user_message(setup_bridge):
+    bridge, owner, ws, adapter, streams, _ = setup_bridge
+    seen = []
+    task = asyncio.create_task(
+        bridge.async_run_text(owner, "  讲一个火星故事  ", seen.append)
+    )
+    await spin_until(
+        lambda: any(e["type"] == "conversation.item.create" for e in ws.sent)
+    )
+    hello = ws.sent[0]
+    assert "input.audio" in hello["capabilities"]
+    assert "input.text" in hello["capabilities"]
+    assert [e for e in ws.sent if e["type"] == "conversation.item.create"] == [
+        {
+            "event_id": next(
+                e["event_id"] for e in ws.sent if e["type"] == "conversation.item.create"
+            ),
+            "type": "conversation.item.create",
+            "parts": [{"type": "text", "text": "讲一个火星故事"}],
+        }
+    ]
+    assert not any(e["type"] == "input_audio_buffer.append" for e in ws.sent)
+    assert not any(e["type"] == "response.create" for e in ws.sent)
+    ws.feed(
+        {"type": "turn.started", "turnId": "t-text"},
+        {
+            "type": "transcript.final",
+            "role": "user",
+            "content": "讲一个火星故事",
+            "turnId": "t-text",
+        },
+        {"type": "response.started", "turnId": "t-text", "responseId": "r-text"},
+        {
+            "type": "audio.delta",
+            "turnId": "t-text",
+            "responseId": "r-text",
+            "sampleRate": 32000,
+            "audio": base64.b64encode(bytes.fromhex("0200") * 40).decode(),
+        },
+        {
+            "type": "transcript.final",
+            "role": "assistant",
+            "content": "火星故事",
+            "turnId": "t-text",
+            "responseId": "r-text",
+        },
+        {
+            "type": "audio.done",
+            "turnId": "t-text",
+            "responseId": "r-text",
+            "responseStatus": "completed",
+            "hasFunctionCall": False,
+            "awaitsToolFollowUp": False,
+        },
+    )
+    await spin_until(lambda: owner.playback_id is not None)
+    assert await consume(owner) == bytes.fromhex("0200") * 40
+    bridge.on_playback(owner.playback_id, "completed")
+    result = await task
+    assert result.transcript == "火星故事"
+    adapter.async_send_tts_play.assert_awaited_once()
+    assert any(e.get("role") == "user" for e in seen)
+    assert ws.closed and not streams
+
+
+async def test_b88_text_handshake_rejects_missing_input_text(setup_bridge):
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    ws.capabilities = ["input.audio", "session.heartbeat", qwen.TERMINAL_CAPABILITY]
+    with pytest.raises(RuntimeError, match="handshake capability"):
+        await bridge.async_run_text(owner, "你好", lambda _: None)
+    assert ws.closed and not streams
+
+
+@pytest.mark.parametrize("text", ["", "   "])
+async def test_b88_text_turn_rejects_empty_input(setup_bridge, text):
+    bridge, owner, ws, _, streams, client = setup_bridge
+    with pytest.raises(ValueError, match="text"):
+        await bridge.async_run_text(owner, text, lambda _: None)
+    client.ws_connect.assert_not_awaited()
+    assert not ws.sent and not streams
+
+
 @pytest.mark.parametrize(
     "case", ["capability", "ordering", "rate", "gateway-error", "bad-json", "session-mismatch"]
 )
