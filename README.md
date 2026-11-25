@@ -2,7 +2,7 @@
 
 > 基于 Divoom Tivoo、ESP32、Home Assistant 和 AstrBot 的个人 AI 语音终端。
 >
-> 当前执行阶段：**P6.8 双板 ESP32-S3 + 经典 ESP32、原生 WakeNet 改造（b0.1–b0.6 设计完成，尚未实施）**。见 [P6.8 总体路线](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)。设计阶段 b0.1–b0.6，实施阶段 b1–b10，共 16 批；[b0.1 总体设计与基线](docs/superpowers/specs/2026-11-18-p6-8-b0-1-overall-design-baseline.md)及[历史合同迁移索引](docs/superpowers/specs/2026-11-18-p6-8-legacy-contract-migration-index.md)已完成；见[b0.6 交叉审计](docs/superpowers/reports/2026-11-18-p6-8-b0-6-cross-audit.md)与[b1–b10 实施计划](docs/superpowers/plans/2026-11-18-p6-8-b1-b10-execution-plan.md)，下一步仅展开 P6.8b1；旧 P7/P8 不再单独实施，P10 并发验收并入 P6.8b10，P9 剩余主动对话后置。旧文档的远程 KWS、单板拓扑和 HA 下发提示音均为迁移前基线；新目标与旧合同的冲突及 GAP 归属按路线处理，现有部署尚未改变。
+> 当前分支进展（2026-11-25）：**P6.8 双板本地唤醒与 Qwen 流式语音已在实机运行；本次持续播放卡顿修复已部署，真人复测顺畅。** 构建标识、HA 决策、验证范围与回退信息见 [本次构建摘要](docs/superpowers/reports/2026-11-25-p68-build-summary-and-ha-decisions.md)。总体阶段与后续验收仍按 [P6.8 路线](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)管理，不代表全部阶段已经验收。
 >
 > 历史阶段基线：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署；P5 ESP32 最小固件已实现，16MB Flash / 8MB PSRAM 与全 himem bank 实测通过，隔夜完全断电后 Wi-Fi 自动恢复，HA 后续 SPP 命令执行成功，P5 final 16MiB 镜像与 manifest 已生成。用户已实测 HA 语音助手成功调用 Tivoo 工具并执行命令。JTAG `esp_restart()`、第二台 Tivoo 正向替换和最终长滚动专项观察仍留有记录，但不阻止进入 P6；P6 继续实现双向状态/事件及 HTTP 音频资源通道，真实音频链路继续按 P7/P8 验收。**
 
