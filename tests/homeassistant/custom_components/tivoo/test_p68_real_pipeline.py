@@ -37,9 +37,9 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         requires_external_vad=False, supports_transcript_streaming=False,
     )])
     wire = []
-    transcript = "what time is it"
-    chats = []
     baseline_only = fault == "b88_pcm"
+    transcript = "tell me a story about Mars" if baseline_only else "what time is it"
+    chats = []
     display_wire = fault in {"display_wire_on", "display_wire_off"}
     full = display_wire or fault in {"full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
     held_tts = fault in {"cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed"}
@@ -909,7 +909,7 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             await manager.async_push_pcm(SESSION_2, expected[i:i+640])
         await manager.async_handle_activity(activity("speech_end", SESSION_2, pcm_samples=32000))
         # Count is wire samples, not bytes.
-        assert await asyncio.wait_for(entity._ask_question_future, 5) == "what time is it"
+        assert await asyncio.wait_for(entity._ask_question_future, 5) == transcript
         entity._ask_question_future = None
         await hass.async_block_till_done(wait_background_tasks=True)
         assert [e.type for e in wire[:2]] == ["transcribe", "audio-start"]

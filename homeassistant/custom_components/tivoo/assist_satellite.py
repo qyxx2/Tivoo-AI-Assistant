@@ -10,7 +10,7 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from homeassistant.components import stt, wake_word
+from homeassistant.components import conversation, stt, wake_word
 from homeassistant.components.assist_pipeline import (
     async_get_pipeline,
     async_get_pipelines,
@@ -22,13 +22,14 @@ from homeassistant.components.assist_pipeline.models import (
     PipelineEventType,
     PipelineStage,
 )
+from homeassistant.components.assist_pipeline.pipeline import PipelineInput, PipelineRun
 from homeassistant.components.assist_satellite import (
     AssistSatelliteConfiguration,
     AssistSatelliteEntity,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Context, Event, HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import chat_session, entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
@@ -71,6 +72,15 @@ async def async_setup_entry(
             )
         ]
     )
+
+
+@dataclass(frozen=True, slots=True)
+class LocalRouteResult:
+    """Result of HA-only sentence/local-intent routing."""
+
+    handled: bool
+    speech: str
+    continue_conversation: bool
 
 
 @dataclass(eq=False, slots=True)
@@ -354,6 +364,93 @@ class AudioSessionCoordinator:
             "Tivoo satellite Pipeline",
         )
 
+    async def _async_route_local_transcript(
+        self, turn: _Turn
+    ) -> LocalRouteResult:
+        """Run only HA sentence triggers and strict local intents."""
+        text = turn.transcript
+        if not isinstance(text, str) or not (text := text.strip()):
+            return LocalRouteResult(False, "", False)
+
+        pipeline = async_get_pipeline(self.entity.hass, turn.local_pipeline_id)
+        language = (
+            pipeline.conversation_language
+            or pipeline.language
+            or self.entity.hass.config.language
+        )
+        await conversation.async_prepare_intents(self.entity.hass, language)
+
+        registry_entry = self.entity.registry_entry
+        user_input = conversation.ConversationInput(
+            text=text,
+            context=turn.context,
+            conversation_id=None,
+            device_id=registry_entry.device_id if registry_entry else None,
+            satellite_id=self.entity.entity_id,
+            language=language,
+            agent_id=(
+                pipeline.conversation_engine
+                or conversation.HOME_ASSISTANT_AGENT
+            ),
+        )
+        with (
+            chat_session.async_get_chat_session(
+                self.entity.hass, None, context=turn.context
+            ) as session,
+            conversation.async_get_chat_log(
+                self.entity.hass, session, user_input
+            ) as chat_log,
+        ):
+            trigger_response = (
+                await conversation.async_handle_sentence_triggers(
+                    self.entity.hass, user_input, chat_log
+                )
+            )
+            if trigger_response:
+                return LocalRouteResult(True, trigger_response, False)
+
+            if pipeline.prefer_local_intents:
+                intent_response = await conversation.async_handle_intents(
+                    self.entity.hass, user_input, chat_log
+                )
+                if intent_response is not None:
+                    speech = intent_response.speech.get("plain", {}).get(
+                        "speech", ""
+                    )
+                    return LocalRouteResult(True, speech, False)
+
+        return LocalRouteResult(False, "", False)
+
+    async def _async_run_local_tts(self, turn: _Turn, speech: str) -> None:
+        """Synthesize a local-hit response with the selected HA pipeline only."""
+        pipeline = async_get_pipeline(self.entity.hass, turn.local_pipeline_id)
+        registry_entry = self.entity.registry_entry
+        run = PipelineRun(
+            hass=self.entity.hass,
+            context=turn.context,
+            pipeline=pipeline,
+            start_stage=PipelineStage.TTS,
+            end_stage=PipelineStage.TTS,
+            event_callback=self.entity._internal_on_pipeline_event,
+            tts_audio_output=self.entity.tts_options,
+        )
+        with chat_session.async_get_chat_session(
+            self.entity.hass, None, context=turn.context
+        ) as session:
+            pipeline_input = PipelineInput(
+                run=run,
+                session=session,
+                tts_input=speech,
+                device_id=registry_entry.device_id if registry_entry else None,
+                satellite_id=self.entity.entity_id,
+            )
+            previous_event_turn = self._event_turn
+            self._event_turn = turn
+            try:
+                await turn.tts.async_run(pipeline_input.execute())
+            finally:
+                self._event_turn = previous_event_turn
+
     async def _run_turn(
         self,
         turn: _Turn,
@@ -427,6 +524,24 @@ class AudioSessionCoordinator:
                                 wake_word_phrase=turn.local_phrase,
                             )
                         )
+                        if (
+                            self._turn is turn
+                            and not turn.error
+                            and turn.valid_stt
+                            and turn.transcript
+                        ):
+                            local_route = await self._async_route_local_transcript(
+                                turn
+                            )
+                            if local_route.handled:
+                                turn.intent_finished = True
+                                turn.continue_conversation = (
+                                    local_route.continue_conversation
+                                )
+                                if local_route.speech:
+                                    await self._async_run_local_tts(
+                                        turn, local_route.speech
+                                    )
                     else:
                         await turn.tts.async_run(
                             self.entity.async_accept_pipeline_from_satellite(
