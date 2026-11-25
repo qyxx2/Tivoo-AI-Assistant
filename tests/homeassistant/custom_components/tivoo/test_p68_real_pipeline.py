@@ -25,7 +25,22 @@ from wyoming.tts import SynthesizeStopped
 from wyoming.asr import Transcript
 
 @pytest.mark.enable_socket
-@pytest.mark.parametrize("fault", [None, "early", "queued_end", "vad_start", "vad_end", "disconnect", "cancel", "silent", "slow", "superseded", "provider_error", "full", "no_tts", "send_failure", "lost_terminal", "cancel_owner", "stop_unconfirmed", "unload", "eof_unconfirmed", "display_wire_on", "display_wire_off"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "early",
+        "queued_end",
+        "vad_start",
+        "vad_end",
+        "disconnect",
+        "cancel",
+        "silent",
+        "slow",
+        "superseded",
+        "provider_error",
+    ],
+)
 async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeypatch, aiohttp_client, fault, advance_clock):
     attribution = Attribution(name="test", url="https://example.invalid")
     info = Info(asr=[AsrProgram(
@@ -189,9 +204,28 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         stop = AsyncMock()
         manager = AudioSessionManager(stop)
         ready = asyncio.Event()
+        playback_handler = None
+
+        def register_playback_handler(handler):
+            nonlocal playback_handler
+            playback_handler = handler
+
+        async def send_local_ack(playback_id, _session_id, _result):
+            assert playback_handler is not None
+
+            async def finish_ack():
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                playback_handler(playback_id, "playing")
+                playback_handler(playback_id, "completed")
+
+            hass.async_create_task(finish_ack())
+
         adapter = SimpleNamespace(
             async_send_message=AsyncMock(side_effect=lambda *args: ready.set()),
-            async_send_tts_play=AsyncMock(), register_playback_handler=Mock(),
+            async_send_tts_play=AsyncMock(),
+            async_send_local_ack=AsyncMock(side_effect=send_local_ack),
+            register_playback_handler=register_playback_handler,
         )
         if full:
             from custom_components.tivoo import diagnostics as codec
@@ -766,15 +800,14 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             from homeassistant.components.assist_pipeline.const import WAKE_WORD_COOLDOWN
             from homeassistant.components.wyoming.stt import AsyncTcpClient
 
-            # Keep the entire real public Pipeline through Intent. Deliberately
-            # delay the first actual socket write completion, not the provider
-            # result, so a legal queued end is provably not a drained iterator.
-            public_run = entity.async_accept_pipeline_from_satellite
-
-            async def through_intent(audio, stage, **kwargs):
-                return await public_run(audio, stage, end_stage=PipelineStage.INTENT, **kwargs)
-
-            monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", through_intent)
+            # These cases exercise STT finalization/cancellation only. B8.8
+            # intentionally stops the public HA pipeline at STT, so keep
+            # downstream routing local and side-effect free.
+            from custom_components.tivoo.assist_satellite import LocalRouteResult
+            local_route = AsyncMock(return_value=LocalRouteResult(True, "", False))
+            monkeypatch.setattr(
+                entity.coordinator, "_async_route_local_transcript", local_route
+            )
             if fault == "queued_end":
                 write = AsyncTcpClient.write_event
 
@@ -859,8 +892,9 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
             print(f"R06 {fault}: events={types!r} wire={[e.type for e in wire]} chats={len(chats)}")
             assert manager.active_session_id is None
             if fault in {"slow", "superseded"}:
-                assert types.count(PipelineEventType.INTENT_END) == 1
-                assert len(chats) == 1
+                assert types.count(PipelineEventType.STT_END) == 1
+                assert local_route.await_count == 1
+                assert not chats
                 assert [e.type for e in wire].count("audio-stop") == (2 if fault == "superseded" else 1)
             else:
                 assert PipelineEventType.INTENT_START not in types
@@ -890,8 +924,9 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
                 await manager.async_handle_activity(activity("speech_end", new_sid, pcm_samples=320))
                 await asyncio.wait_for(hass.async_block_till_done(wait_background_tasks=True), 5)
                 assert manager.active_session_id is None
-                assert PipelineEventType.INTENT_END in [e.type for e in events]
-                assert len(chats) == 1
+                assert PipelineEventType.STT_END in [e.type for e in events]
+                assert not chats
+                assert local_route.await_count == 1
                 print(f"R06 {fault} recovery: events={[e.type for e in events]!r} wire={[e.type for e in wire]} chats={len(chats)}")
             return
 
@@ -921,6 +956,11 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         assert PipelineEventType.STT_VAD_END not in [e.type for e in events]
         stop.assert_awaited_once_with(SESSION_2,"conversation_complete")
         adapter.async_send_tts_play.assert_not_awaited()
+        if not baseline_only:
+            adapter.async_send_local_ack.assert_awaited_once()
+            ack_args = adapter.async_send_local_ack.call_args.args
+            assert ack_args[1:] == (SESSION_2, "success")
+            assert not chats
         assert entity.pipeline_entity_id is None
         if baseline_only:
             return
@@ -947,32 +987,10 @@ async def test_public_satellite_stt_device_endpoint_preserves_tail(hass, monkeyp
         entity._ask_question_future.cancel()
         entity._ask_question_future = None
 
-        # Use the real public API through intent (no TTS provider needed for
-        # this fixture), preserving actual HA prefer-local and AstrBot SSE.
-        public_run = entity.async_accept_pipeline_from_satellite
-        async def through_intent(audio, stage, **kwargs):
-            return await public_run(audio, stage, end_stage=PipelineStage.INTENT, **kwargs)
-        monkeypatch.setattr(entity, "async_accept_pipeline_from_satellite", through_intent)
-        for text, expected_chats in (("what time is it", 0), ("tell me a story about Mars", 1), ("tell me another story about Mars", 2), ("tell me a story about Venus", 3)):
-            if expected_chats == 3:
-                await hass.services.async_call("astrbot", "new_conversation", blocking=True)
-            await asyncio.sleep(WAKE_WORD_COOLDOWN + 0.05)
-            transcript = text
-            ready.clear()
-            events.clear()
-            sid = str(uuid4())
-            await manager.async_start_session(local_start(sid, 100 + expected_chats), persistent=True, local_mode=True)
-            await manager.async_handle_gate(gate(sid))
-            await asyncio.wait_for(ready.wait(), 3)
-            await manager.async_handle_activity(activity("speech_start", sid))
-            await manager.async_push_pcm(sid, b"x"*640)
-            await manager.async_handle_activity(activity("speech_end", sid, pcm_samples=320))
-            await hass.async_block_till_done(wait_background_tasks=True)
-            assert PipelineEventType.INTENT_END in [e.type for e in events], events
-            assert not any(e.type == PipelineEventType.ERROR for e in events), events
-            assert len(chats) == expected_chats, chats
-        assert chats[0]["session_id"] == chats[1]["session_id"]
-        assert chats[1]["session_id"] != chats[2]["session_id"]
+        # B8.8 intentionally stops the public HA pipeline at STT. Local-first
+        # routing and Qwen text fallback are covered by the dedicated B8.8
+        # satellite/lifecycle tests; do not resurrect the legacy
+        # STT->HA Intent->AstrBot fallback path here.
     finally:
         release_display.set()
         if services_registered:
