@@ -17,6 +17,7 @@ static bool app_message_handler(uint8_t type, const uint8_t *payload, size_t siz
 {
     if (type == TVIO_TYPE_FOLLOWUP_OPEN) return tivoo_s3_local_turn_followup_message(payload,size);
     if (type == TVIO_TYPE_STT_READY) return tivoo_s3_local_turn_ready_message(payload,size);
+    if (type == TVIO_TYPE_LOCAL_ACK_PLAY) return tivoo_s3_local_turn_ack_message(payload,size);
     if (type == 0x30U || type == 0x31U)
         return tivoo_audio_resource_handle_message(type, payload, size);
     return tivoo_device_status_handle_message(type, payload, size);

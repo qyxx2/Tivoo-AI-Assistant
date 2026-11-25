@@ -13,6 +13,7 @@ ASSETS = Path(__file__).resolve().parents[4] / "homeassistant" / "prompt_assets"
 NAMES = tuple(f"ready_{number:02d}.mp3" for number in range(1, 4)) + (
     "followup_01.mp3",
 )
+ACK_NAMES = ("local_success_01.mp3", "local_failure_01.mp3")
 
 
 def _check_asset(path: Path) -> None:
@@ -93,6 +94,45 @@ def test_versioned_prompt_asset_keeps_leading_and_trailing_silence(name):
     assert starts and ends
     assert starts[0] <= 0.01
     assert ends[0] >= 0.10
+    assert duration - starts[-1] >= 0.15
+    assert abs(ends[-1] - duration) <= 0.03
+
+
+@pytest.mark.parametrize("name", ACK_NAMES)
+def test_local_ack_asset_is_short_mono_mp3(name):
+    path = ASSETS / name
+    assert path.is_file(), f"missing prompt asset: {path.name}"
+    result = subprocess.run(
+        ["ffprobe", "-v", "error",
+         "-show_entries", "stream=codec_name,sample_rate,channels:format=duration",
+         "-of", "json", str(path)], capture_output=True, text=True, check=True
+    )
+    probe = json.loads(result.stdout)
+    audio = probe["streams"][0]
+    assert audio["codec_name"] == "mp3"
+    assert audio["sample_rate"] == "32000"
+    assert audio["channels"] == 1
+    assert 0.08 < float(probe["format"]["duration"]) <= 1.5
+
+
+@pytest.mark.parametrize("name", ACK_NAMES)
+def test_local_ack_asset_keeps_leading_and_trailing_silence(name):
+    path = ASSETS / name
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    duration = float(probe.stdout.strip())
+    detected = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
+         "-af", "silencedetect=noise=-45dB:d=0.03", "-f", "null", "-"],
+        capture_output=True, text=True, check=True,
+    ).stderr
+    starts = [float(v) for v in re.findall(r"silence_start: ([0-9.]+)", detected)]
+    ends = [float(v) for v in re.findall(r"silence_end: ([0-9.]+)", detected)]
+    assert starts and ends
+    assert starts[0] <= 0.01 and ends[0] >= 0.10
     assert duration - starts[-1] >= 0.15
     assert abs(ends[-1] - duration) <= 0.03
 

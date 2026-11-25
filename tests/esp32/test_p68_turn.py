@@ -49,6 +49,7 @@ def test_local_lifecycle_adapter(tmp_path):
     subprocess.run([str(exe), "prompt_fault"], check=True)
     subprocess.run([str(exe), "normal_end"], check=True)
     subprocess.run([str(exe), "stale_fault"], check=True)
+    subprocess.run([str(exe), "ack"], check=True)
 
     metrics = subprocess.run([str(exe), "metrics"], check=True, text=True, capture_output=True)
     lines = [line for line in metrics.stdout.splitlines() if line.startswith("turn_metrics ")]

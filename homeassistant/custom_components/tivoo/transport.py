@@ -17,11 +17,12 @@ from .diagnostics import (
     HA_TO_ESP32_MESSAGE_TYPES,
     SUPPORTED_MESSAGE_TYPES,
     TYPE_AUDIO_INTERRUPTED,
-    TYPE_COMMAND_GATE,
-    TYPE_STT_READY,
-    TYPE_FOLLOWUP_OPEN,
-    TYPE_AUDIO_STOP,
     TYPE_AUDIO_STATE,
+    TYPE_AUDIO_STOP,
+    TYPE_COMMAND_GATE,
+    TYPE_FOLLOWUP_OPEN,
+    TYPE_LOCAL_ACK_PLAY,
+    TYPE_STT_READY,
     TYPE_DEVICE_EVENT,
     TYPE_DEVICE_STATUS,
     TYPE_DIAGNOSTIC_LOG,
@@ -380,7 +381,7 @@ class Esp32ConnectionAdapter:
                     or state not in {"buffering", "playing", "completed", "stopped", "interrupted", "failed"}
                 ):
                     return
-            if payload.get("source") == "tts_http":
+            if payload.get("source") in {"tts_http", "local_ack"}:
                 if state in {"failed", "stopped", "interrupted"}:
                     _LOGGER.warning(
                         "ESP32 TTS playback terminal state=%s audio_id=%s "
@@ -424,9 +425,9 @@ class Esp32ConnectionAdapter:
                     raise HomeAssistantError("ESP32 audio resource capability is unavailable")
                 if message_type not in {TYPE_GET_STATUS, TYPE_PING, TYPE_TTS_PLAY} and "audio_control" not in self._diagnostic_capabilities:
                     raise HomeAssistantError("ESP32 audio control capability is unavailable")
-            if message_type in {TYPE_STT_READY, TYPE_FOLLOWUP_OPEN} and not self.local_wake_capable:
+            if message_type in {TYPE_STT_READY, TYPE_FOLLOWUP_OPEN, TYPE_LOCAL_ACK_PLAY} and not self.local_wake_capable:
                 raise HomeAssistantError("ESP32 local wake capability is unavailable")
-            if self.local_wake_capable and message_type in {TYPE_TTS_PLAY, TYPE_STT_READY, TYPE_AUDIO_STOP, TYPE_FOLLOWUP_OPEN}:
+            if self.local_wake_capable and message_type in {TYPE_TTS_PLAY, TYPE_STT_READY, TYPE_AUDIO_STOP, TYPE_FOLLOWUP_OPEN, TYPE_LOCAL_ACK_PLAY}:
                 manager = self._audio_session_manager
                 descriptor = self._decode_json(payload)
                 if message_type == TYPE_AUDIO_STOP:
@@ -454,6 +455,27 @@ class Esp32ConnectionAdapter:
                 raise HomeAssistantError(
                     "ESP32 diagnostic channel failed while sending a message"
                 ) from err
+
+    async def async_send_local_ack(
+        self, playback_id: str, session_id: str, result: str
+    ) -> None:
+        """Request one S3-resident local action acknowledgement."""
+        try:
+            uuid.UUID(playback_id)
+            uuid.UUID(session_id)
+        except (ValueError, TypeError, AttributeError) as err:
+            raise ValueError("local ACK requires playback/session UUIDs") from err
+        if result not in {"success", "failure"}:
+            raise ValueError("local ACK result must be success or failure")
+        payload = json.dumps(
+            {
+                "session_id": session_id,
+                "playback_id": playback_id,
+                "result": result,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        await self.async_send_message(TYPE_LOCAL_ACK_PLAY, payload)
 
     async def async_send_tts_play(
         self,
@@ -703,15 +725,15 @@ class Esp32ConnectionAdapter:
                                 "message type 0x%02x",
                                 message.message_type,
                             )
-                        if self.local_wake_capable and message.message_type in {TYPE_STT_READY, TYPE_FOLLOWUP_OPEN}:
-                            raise ValueError("STT_READY has invalid direction")
+                        if self.local_wake_capable and message.message_type in {TYPE_STT_READY, TYPE_FOLLOWUP_OPEN, TYPE_LOCAL_ACK_PLAY}:
+                            raise ValueError("local control message has invalid direction")
                         if handler := self._message_handlers.get(message.message_type):
                             await handler(message)
                         # Supported messages without a registered handler are ignored.
                     except (ValueError, TypeError) as err:
                         manager = self._audio_session_manager
                         if self.local_wake_capable and manager and manager.active_session_id and message.message_type in {
-                            TYPE_MIC_PCM, TYPE_MIC_ACTIVITY, TYPE_COMMAND_GATE, TYPE_STT_READY, TYPE_FOLLOWUP_OPEN,
+                            TYPE_MIC_PCM, TYPE_MIC_ACTIVITY, TYPE_COMMAND_GATE, TYPE_STT_READY, TYPE_FOLLOWUP_OPEN, TYPE_LOCAL_ACK_PLAY,
                         }:
                             await manager.async_stop_session(manager.active_session_id, "invalid_local_message")
                         _LOGGER.warning(

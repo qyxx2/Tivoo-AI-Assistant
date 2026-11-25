@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
@@ -81,6 +82,7 @@ class LocalRouteResult:
     handled: bool
     speech: str
     continue_conversation: bool
+    response_type: str | None = None
 
 
 @dataclass(eq=False, slots=True)
@@ -115,6 +117,7 @@ class _Turn:
     local_pipeline_id: str | None = None
     stt_started: bool = False
     transcript: str | None = None
+    local_ack_playback_id: str | None = None
     qwen_parent_session_id: str | None = None
 
 
@@ -417,9 +420,27 @@ class AudioSessionCoordinator:
                     speech = intent_response.speech.get("plain", {}).get(
                         "speech", ""
                     )
-                    return LocalRouteResult(True, speech, False)
+                    return LocalRouteResult(
+                        True,
+                        speech,
+                        False,
+                        intent_response.response_type.value,
+                    )
 
         return LocalRouteResult(False, "", False)
+
+    async def _async_run_local_ack(self, turn: _Turn, result: str) -> None:
+        """Start one S3-resident local action acknowledgement."""
+        playback_id = str(uuid.uuid4())
+        turn.local_ack_playback_id = playback_id
+        turn.tts_attempted = True
+        await self.entity.adapter.async_send_local_ack(
+            playback_id, turn.session_id, result
+        )
+
+    @staticmethod
+    def _response_playback_id(turn: _Turn) -> str | None:
+        return turn.local_ack_playback_id or turn.tts.playback_id
 
     async def _async_run_local_tts(self, turn: _Turn, speech: str) -> None:
         """Synthesize a local-hit response with the selected HA pipeline only."""
@@ -538,7 +559,13 @@ class AudioSessionCoordinator:
                                 turn.continue_conversation = (
                                     local_route.continue_conversation
                                 )
-                                if local_route.speech:
+                                if local_route.response_type == "action_done":
+                                    await self._async_run_local_ack(turn, "success")
+                                elif local_route.response_type in {
+                                    "partial_action_done", "error"
+                                }:
+                                    await self._async_run_local_ack(turn, "failure")
+                                elif local_route.speech:
                                     await self._async_run_local_tts(
                                         turn, local_route.speech
                                     )
@@ -567,9 +594,10 @@ class AudioSessionCoordinator:
         elif turn.error or not turn.command_started or turn.tts.send_failed:
             await self.ingress.async_stop_session(turn.session_id, "pipeline_failed")
         elif turn.local_mode:
-            if turn.tts.playback_id is None and turn.tts_attempted:
+            playback_id = self._response_playback_id(turn)
+            if playback_id is None and turn.tts_attempted:
                 await self.ingress.async_stop_session(turn.session_id, "tts_missing")
-            elif turn.tts.playback_id is None or turn.playback_completed:
+            elif playback_id is None or turn.playback_completed:
                 await self._complete_response(turn)
         elif turn.tts.playback_id is None and not self._followup:
             await self._complete_response(turn)
@@ -581,7 +609,7 @@ class AudioSessionCoordinator:
         if turn.local_mode:
             if not turn.run_returned or turn.response_finished:
                 return
-            if turn.tts.playback_id is not None and not turn.playback_completed:
+            if self._response_playback_id(turn) is not None and not turn.playback_completed:
                 return
             turn.response_finished = True
             self.display.end_generation(turn.context.id)
@@ -902,7 +930,11 @@ class AudioSessionCoordinator:
         if player is not None and player.on_playback(playback_id, state):
             return
         turn = self._turn
-        if turn is None or turn.tts.playback_id != playback_id or self._followup:
+        if (
+            turn is None
+            or self._response_playback_id(turn) != playback_id
+            or self._followup
+        ):
             return
         if turn.local_mode and turn.playback_terminal:
             return

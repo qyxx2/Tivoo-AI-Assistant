@@ -73,5 +73,5 @@ execute_process(COMMAND "${_prompt_python}" "${CMAKE_CURRENT_LIST_DIR}/generate_
     "${_prompt_src}" "${_prompt_out}" COMMAND_ERROR_IS_FATAL ANY)
 set(_prompt_asm "${_prompt_out}/p68_prompt_assets.S")
 set_property(SOURCE "${_prompt_asm}" PROPERTY OBJECT_DEPENDS
-    "${_prompt_out}/ready_01.pcm;${_prompt_out}/ready_02.pcm;${_prompt_out}/ready_03.pcm;${_prompt_out}/followup_01.pcm")
+    "${_prompt_out}/ready_01.pcm;${_prompt_out}/ready_02.pcm;${_prompt_out}/ready_03.pcm;${_prompt_out}/followup_01.pcm;${_prompt_out}/local_success_01.pcm;${_prompt_out}/local_failure_01.pcm")
 target_sources(${COMPONENT_LIB} PRIVATE "${_prompt_asm}")

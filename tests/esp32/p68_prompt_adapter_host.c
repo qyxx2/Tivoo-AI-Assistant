@@ -11,7 +11,8 @@ static void observe_tx(const uint32_t *slots);
 #include "diagnostics.h"
 #include "cJSON.h"
 
-static unsigned transmitted, starts, gates, ends, random_choice, marker_length;
+static unsigned transmitted, starts, gates, ends, random_choice, marker_length, ack_states;
+static char ack_state[16], ack_audio[37];
 static bool verifying, marker_finished;
 static uint32_t connection=1;
 static uint64_t gate_index, observed_end;
@@ -31,7 +32,8 @@ static void observe_tx(const uint32_t *slots)
         if(transmitted==marker_length) {
             assert(sample==0); marker_finished=true; continue;
         }
-        int expected=(transmitted%2)?-(int)(transmitted+1):(int)(transmitted+1);
+        int marker=(int)(transmitted%30000)+1;
+        int expected=(transmitted%2)?-marker:marker;
         assert(sample==expected);
         ++transmitted;
         if(transmitted==marker_length)
@@ -47,7 +49,6 @@ void tivoo_log_write(esp_log_level_t l,const char *m,const char *f,...) {(void)l
 bool tivoo_diagnostics_send_mic(uint32_t epoch,uint8_t type,const void *ptr,size_t n)
 {
     assert(epoch==connection);
-    assert(type!=0x32); // short prompt never emits ordinary AUDIO_STATE
     if(type==TVIO_TYPE_MIC_PCM) {
         assert(n>=640 && n<=3840 && n%640==0);
         const int16_t *pcm=ptr;
@@ -61,7 +62,13 @@ bool tivoo_diagnostics_send_mic(uint32_t epoch,uint8_t type,const void *ptr,size
     cJSON *o=cJSON_ParseWithLength(ptr,n);assert(o);
     const char *id=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"session_id"));
     assert(id && strlen(id)==36);
-    if(type==TVIO_TYPE_MIC_SESSION_START) {
+    if(type==TVIO_TYPE_AUDIO_STATE) {
+        const char *source=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"source"));
+        const char *state_name=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"state"));
+        const char *audio=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"audio_id"));
+        assert(source && !strcmp(source,"local_ack") && state_name && audio);
+        strcpy(ack_state,state_name); strcpy(ack_audio,audio); ++ack_states;
+    } else if(type==TVIO_TYPE_MIC_SESSION_START) {
         ++starts;strcpy(session,id);
     } else if(type==TVIO_TYPE_COMMAND_GATE) {
         assert(strcmp(id,session)==0 && state.gate_open);
@@ -101,6 +108,26 @@ static void msg(bool followup)
     int n=snprintf(body,sizeof(body),"{\"session_id\":\"%s\"}",session);
     if(followup) tivoo_s3_local_turn_followup_message((const uint8_t*)body,n);
     else tivoo_s3_local_turn_ready_message((const uint8_t*)body,n);
+}
+
+static bool ack(const char *result)
+{
+    const char *pid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    char body[192];
+    int n=snprintf(body,sizeof(body),
+        "{\"session_id\":\"%s\",\"playback_id\":\"%s\",\"result\":\"%s\"}",
+        session,pid,result);
+    return tivoo_s3_local_turn_ack_message((const uint8_t *)body,(size_t)n);
+}
+
+static void run_until_ack_terminal(void)
+{
+    for(unsigned i=0;i<400 && (!ack_states || strcmp(ack_state,"completed"));i++) pump();
+    assert(ack_states>=2 && !strcmp(ack_state,"completed"));
+    assert(!strcmp(ack_audio,"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+    assert(transmitted==marker_length && marker_finished);
+    assert(tivoo_audio_resource_test_silent());
+    verifying=false;
 }
 
 static void finish_command(void)
@@ -188,6 +215,32 @@ int main(int argc,char **argv)
         state.next=frame.first_sample;
         expect_prompt(23892);wake();run_until_gate(1);
         assert(starts==2);
+        return 0;
+    }
+    if(!strcmp(argv[1],"ack_busy")) {
+        run_until_gate(1); finish_command();
+        assert(tivoo_audio_resource_prompt_begin()!=0);
+        assert(ack("success")); tivoo_s3_local_turn_tick();
+        assert(ack_states==1 && !strcmp(ack_state,"failed"));
+        return 0;
+    }
+    if(!strcmp(argv[1],"ack_fault")) {
+        run_until_gate(1); finish_command(); expect_prompt(26976);
+        assert(ack("success")); tivoo_s3_local_turn_tick();
+        assert(ack_states==1 && !strcmp(ack_state,"playing"));
+        verifying=false; skip_tx=true; step(); step();
+        for(unsigned i=0;i<80 && strcmp(ack_state,"failed");i++) pump();
+        assert(ack_states>=2 && !strcmp(ack_state,"failed"));
+        return 0;
+    }
+    if(!strcmp(argv[1],"ack_success") || !strcmp(argv[1],"ack_failure")) {
+        run_until_gate(1);
+        finish_command();
+        expect_prompt(!strcmp(argv[1],"ack_success")?26976:41894);
+        assert(ack(!strcmp(argv[1],"ack_success")?"success":"failure"));
+        tivoo_s3_local_turn_tick();
+        run_until_ack_terminal();
+        assert(gates==1);
         return 0;
     }
     run_until_gate(1);

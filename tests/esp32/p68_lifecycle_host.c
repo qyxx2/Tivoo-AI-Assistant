@@ -24,11 +24,14 @@ void tivoo_test_log(const char *tag,const char *fmt,...) {
     if(strncmp(fmt,"turn_metrics ",13)) return;
     va_list args; va_start(args,fmt); vprintf(fmt,args); va_end(args); puts("");
 }
-static unsigned starts, gates, retired, pcm_frames, ends;
+static unsigned starts, gates, retired, pcm_frames, ends, ack_states;
+static char ack_state[16], ack_source[16], ack_audio[37];
 static char sid[37], parent[37], retired_id[37];
 static const char playback[]="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const int16_t ready_01_start[1]={0}, ready_01_end[1]={0}, ready_02_start[1]={0}, ready_02_end[1]={0};
 const int16_t ready_03_start[1]={0}, ready_03_end[1]={0}, followup_01_start[1]={0}, followup_01_end[1]={0};
+const int16_t local_success_01_start[2]={1,0}, local_success_01_end[1]={0};
+const int16_t local_failure_01_start[2]={2,0}, local_failure_01_end[1]={0};
 void *heap_caps_calloc(size_t n,size_t s,unsigned caps) { (void)caps; return calloc(n,s); }
 void esp_fill_random(void *p,size_t n) { static unsigned v; memset(p,++v,n); }
 uint32_t esp_random(void) { return 0; }
@@ -114,7 +117,13 @@ bool tivoo_diagnostics_send_mic(uint32_t e,uint8_t type,const void *data,size_t 
         assert(strcmp(source,p?"local_followup":"local_wake")==0);
         assert((cJSON_GetObjectItemCaseSensitive(o,"wake_word_phrase")!=NULL)==(p==NULL));
     } else if(type==TVIO_TYPE_COMMAND_GATE) { assert(drained && gate_open); ++gates; }
-    else if(type==TVIO_TYPE_MIC_SESSION_END) {
+    else if(type==TVIO_TYPE_AUDIO_STATE) {
+        const char *state=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"state"));
+        const char *source=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"source"));
+        const char *audio=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"audio_id"));
+        assert(state && source && audio);
+        strcpy(ack_state,state); strcpy(ack_source,source); strcpy(ack_audio,audio); ++ack_states;
+    } else if(type==TVIO_TYPE_MIC_SESSION_END) {
         assert(strcmp(id,sid)==0);
         const char *reason=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"reason"));
         assert(reason);
@@ -155,6 +164,11 @@ static void message(bool followup,const char *id) {
     if(followup) tivoo_s3_local_turn_followup_message((const uint8_t *)json,n);
     else tivoo_s3_local_turn_ready_message((const uint8_t *)json,n);
 }
+static bool ack(const char *id,const char *pid,const char *result) {
+    char json[192]; int n=snprintf(json,sizeof(json),
+        "{\"session_id\":\"%s\",\"playback_id\":\"%s\",\"result\":\"%s\"}",id,pid,result);
+    return tivoo_s3_local_turn_ack_message((const uint8_t *)json,(size_t)n);
+}
 static void command(void) {
     int16_t pcm[320]={0};
     message(false,sid); tivoo_s3_local_turn_tick();
@@ -164,6 +178,21 @@ static void command(void) {
     tivoo_s3_local_turn_event(NULL,&(tivoo_afe_event_t){.type=TIVOO_AFE_END,.index=320});
 }
 int main(int argc, char **argv) {
+    if(argc==2 && strcmp(argv[1],"ack")==0) {
+        assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);
+        wake(); command();
+        assert(!ack("00000000-0000-4000-8000-000000000000",playback,"success"));
+        assert(!ack(sid,"bad","success"));
+        assert(!ack(sid,playback,"other"));
+        prompt_mode=true;
+        assert(ack(sid,playback,"success"));
+        assert(!ack(sid,playback,"success"));
+        tivoo_s3_local_turn_tick();
+        assert(ack_states>=2 && !strcmp(ack_source,"local_ack") && !strcmp(ack_audio,playback));
+        assert(!strcmp(ack_state,"completed"));
+        assert(!ack(sid,"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","failure"));
+        return 0;
+    }
     if(argc==2 && strcmp(argv[1],"normal_end")==0) {
         start_wire();
         assert(tivoo_s3_local_turn_init(true,false,0,0)==ESP_OK);

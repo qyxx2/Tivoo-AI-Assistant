@@ -2196,3 +2196,77 @@ async def test_old_diagnostic_write_waiter_cannot_commit_on_new_socket():
         await queued
     old.write.assert_not_called()
     new.write.assert_not_called()
+
+async def test_local_ack_transport_uses_dedicated_wire_contract(monkeypatch):
+    import json
+
+    from custom_components.tivoo.diagnostics import TYPE_LOCAL_ACK_PLAY
+
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    sent = []
+
+    async def send(message_type, payload):
+        sent.append((message_type, json.loads(payload)))
+
+    monkeypatch.setattr(adapter, "async_send_message", send)
+    playback_id = "55555555-5555-4555-8555-555555555555"
+    session_id = "66666666-6666-4666-8666-666666666666"
+
+    await adapter.async_send_local_ack(playback_id, session_id, "success")
+
+    assert sent == [(
+        TYPE_LOCAL_ACK_PLAY,
+        {"session_id": session_id, "playback_id": playback_id, "result": "success"},
+    )]
+
+
+@pytest.mark.parametrize(
+    ("playback_id", "session_id", "result"),
+    [
+        ("bad", "66666666-6666-4666-8666-666666666666", "success"),
+        ("55555555-5555-4555-8555-555555555555", "bad", "success"),
+        ("55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666", "other"),
+    ],
+)
+async def test_local_ack_transport_rejects_invalid_contract(
+    playback_id, session_id, result
+):
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    with pytest.raises(ValueError):
+        await adapter.async_send_local_ack(playback_id, session_id, result)
+
+async def test_local_ack_audio_state_dispatches_on_active_local_session():
+    import json
+
+    from custom_components.tivoo.audio_session import AudioSessionManager
+    from custom_components.tivoo.diagnostics import TYPE_AUDIO_STATE, DiagnosticMessage
+    from test_audio_session import SESSION_1
+    from test_p68_local_session import local_start
+
+    manager = AudioSessionManager()
+    adapter = transport.Esp32ConnectionAdapter("127.0.0.1", "11:75:58:97:49:98")
+    adapter._diagnostic_capabilities = (transport.LOCAL_WAKE_CAPABILITY,)
+    adapter.register_audio_session_manager(manager)
+    states = []
+    adapter.register_playback_handler(lambda *args: states.append(args))
+    await manager.async_start_session(local_start(), persistent=True, local_mode=True)
+    audio_id = "44444444-4444-4444-8444-444444444444"
+
+    await adapter._message_handlers[TYPE_AUDIO_STATE](
+        DiagnosticMessage(
+            TYPE_AUDIO_STATE,
+            0,
+            1,
+            json.dumps(
+                {
+                    "session_id": SESSION_1,
+                    "audio_id": audio_id,
+                    "source": "local_ack",
+                    "state": "completed",
+                }
+            ).encode(),
+        )
+    )
+
+    assert states == [(audio_id, "completed")]
+    await manager.async_shutdown()

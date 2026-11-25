@@ -9,7 +9,10 @@ ASSETS = {
     "ready_02": ("f4e90f5588f87d23b49adf76fca2907422bf92e41da77ab76b8c352326a88c67", 47784),
     "ready_03": ("22e7ec8ce43ee406de94f95b46a988ac7a44cf0c838d93b05cfed80a166634a7", 53254),
     "followup_01": ("67b5d7ccced82fa74b52dc0e0fe56388dbc6386022f662f54f855b66674cb978", 30720),
+    "local_success_01": ("0a4b1d793bb085b3425a1f6d4194925acc7a9035c38277a2e4e7c55e1ece3e50", 53952),
+    "local_failure_01": ("6dd0c6c3a215dcca78855da52bd8bd266bf02973bee9627da287c8b49957dc83", 83788),
 }
+REQUIRED_ASSETS = {"local_success_01", "local_failure_01"}
 
 
 def generate(source: pathlib.Path, target: pathlib.Path):
@@ -28,6 +31,8 @@ def generate(source: pathlib.Path, target: pathlib.Path):
             if len(pcm) != size:
                 raise ValueError(f"{src.name}: unexpected PCM size {len(pcm)}")
         else:
+            if name in REQUIRED_ASSETS:
+                raise FileNotFoundError(f"required prompt asset missing: {src.name}")
             print(f"{src.name}: missing, embed empty asset (skip)")
             pcm = b""
         if not dst.exists() or dst.read_bytes() != pcm:

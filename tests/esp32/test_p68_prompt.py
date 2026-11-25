@@ -12,17 +12,34 @@ def test_prompt_assets(tmp_path):
                     str(ROOT / "homeassistant/prompt_assets"), str(tmp_path)], check=True)
     first = {p.name: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
              for p in tmp_path.glob("*.pcm")}
-    assert {key: value[0] for key, value in first.items()} == {
+    sizes = {key: value[0] for key, value in first.items()}
+    assert {key: sizes[key] for key in (
+        "ready_01.pcm", "ready_02.pcm", "ready_03.pcm", "followup_01.pcm"
+    )} == {
         "ready_01.pcm": 47402, "ready_02.pcm": 47784,
         "ready_03.pcm": 53254, "followup_01.pcm": 30720}
+    assert sizes["local_success_01.pcm"] > 0 and sizes["local_success_01.pcm"] % 2 == 0
+    assert sizes["local_failure_01.pcm"] > 0 and sizes["local_failure_01.pcm"] % 2 == 0
     subprocess.run(["python3", str(MAIN / "generate_prompts.py"),
                     str(ROOT / "homeassistant/prompt_assets"), str(tmp_path)], check=True)
     assert first == {p.name: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
                      for p in tmp_path.glob("*.pcm")}
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    subprocess.run(["python3", str(MAIN / "generate_prompts.py"), str(empty), str(tmp_path)], check=True)
-    assert all(p.stat().st_size == 0 for p in tmp_path.glob("*.pcm"))
+    source = tmp_path / "legacy_missing"
+    source.mkdir()
+    for name in ("local_success_01.mp3", "local_failure_01.mp3"):
+        shutil.copyfile(ROOT / "homeassistant/prompt_assets" / name, source / name)
+    subprocess.run(["python3", str(MAIN / "generate_prompts.py"), str(source), str(tmp_path)], check=True)
+    assert all((tmp_path / name).stat().st_size == 0 for name in (
+        "ready_01.pcm", "ready_02.pcm", "ready_03.pcm", "followup_01.pcm"
+    ))
+    required_missing = tmp_path / "required_missing"
+    required_missing.mkdir()
+    result = subprocess.run(
+        ["python3", str(MAIN / "generate_prompts.py"), str(required_missing), str(tmp_path)],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "required prompt asset missing" in result.stderr
 
 
 def test_prompt_host(tmp_path):
@@ -120,12 +137,13 @@ def test_prompt_real_adapter_dma_and_owner(tmp_path):
     """Actual S3 turn/AFE gates/resource owner/output ISR, fake electrical/vendor boundaries."""
     import struct
     write_resource_test_headers(tmp_path)
-    # Nonzero signed marker samples, at exactly all four frozen asset lengths.
+    # Nonzero signed marker samples at all frozen flash PCM lengths.
     asm = ['.section .rodata']
-    for name, n in zip(("ready_01", "ready_02", "ready_03", "followup_01"),
-                       (23701, 23892, 26627, 15360)):
+    for name, n in zip(("ready_01", "ready_02", "ready_03", "followup_01",
+                        "local_success_01", "local_failure_01"),
+                       (23701, 23892, 26627, 15360, 26976, 41894)):
         path = tmp_path / (name + ".pcm")
-        path.write_bytes(struct.pack(f"<{n}h", *(i+1 if i % 2 == 0 else -(i+1) for i in range(n))))
+        path.write_bytes(struct.pack(f"<{n}h", *(((i % 30000)+1) if i % 2 == 0 else -((i % 30000)+1) for i in range(n))))
         asm += [".balign 4", f".global {name}_start,{name}_end", f"{name}_start:",
                 f'.incbin "{path}"', f"{name}_end:"]
     asm.append('.section .note.GNU-stack,"",%progbits')
@@ -147,7 +165,8 @@ def test_prompt_real_adapter_dma_and_owner(tmp_path):
                     str(cjson / "cJSON.c"), "-lm", "-o", str(exe)], check=True)
     results = {case: subprocess.run([str(exe), case], capture_output=True, text=True)
                for case in ("ready1", "ready2", "ready3", "followup", "negative",
-                            "late", "fault", "timeout", "stop", "epoch")}
+                            "late", "fault", "timeout", "stop", "epoch",
+                            "ack_success", "ack_failure", "ack_busy", "ack_fault")}
     assert all(r.returncode == 0 for r in results.values()), {
         case: r.stderr for case, r in results.items() if r.returncode
     }

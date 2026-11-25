@@ -92,6 +92,7 @@ async def qwen_satellite(hass):
     bridge = Bridge()
     adapter = SimpleNamespace(
         async_send_tts_play=AsyncMock(),
+        async_send_local_ack=AsyncMock(),
         async_send_message=AsyncMock(),
         register_playback_handler=Mock(),
     )
@@ -353,6 +354,7 @@ async def test_b88_sentence_trigger_hit_precedes_local_intent(
     assert result.handled is True
     assert result.speech == "已执行场景"
     assert result.continue_conversation is False
+    assert result.response_type is None
     prepare.assert_awaited_once_with(entity.hass, "zh-CN")
     sentence.assert_awaited_once()
     local.assert_not_awaited()
@@ -363,6 +365,7 @@ async def test_b88_local_intent_hit_after_sentence_miss(qwen_satellite, monkeypa
     entity, _manager, _stop, bridge = qwen_satellite
     _pipeline, _prepare, sentence, local = _install_route_context(monkeypatch)
     response = intent.IntentResponse("zh-CN")
+    response.response_type = intent.IntentResponseType.ACTION_DONE
     response.async_set_speech("客厅灯已打开")
     local.return_value = response
 
@@ -374,6 +377,7 @@ async def test_b88_local_intent_hit_after_sentence_miss(qwen_satellite, monkeypa
     assert result.handled is True
     assert result.speech == "客厅灯已打开"
     assert result.continue_conversation is False
+    assert result.response_type == "action_done"
     sentence.assert_awaited_once()
     local.assert_awaited_once()
     assert not bridge.create_calls and not bridge.text_calls
@@ -391,6 +395,7 @@ async def test_b88_local_miss_returns_unhandled(qwen_satellite, monkeypatch):
     assert result.handled is False
     assert result.speech == ""
     assert result.continue_conversation is False
+    assert result.response_type is None
     sentence.assert_awaited_once()
     local.assert_awaited_once()
     assert not bridge.create_calls and not bridge.text_calls
@@ -412,8 +417,34 @@ async def test_b88_local_intent_failure_is_still_handled(qwen_satellite, monkeyp
     assert result.handled is True
     assert result.speech == "找不到可控制的设备"
     assert result.continue_conversation is False
+    assert result.response_type == "error"
     local.assert_awaited_once()
     assert not bridge.create_calls and not bridge.text_calls
+
+
+@pytest.mark.parametrize(
+    ("response_type", "expected"),
+    [
+        (intent.IntentResponseType.PARTIAL_ACTION_DONE, "partial_action_done"),
+        (intent.IntentResponseType.QUERY_ANSWER, "query_answer"),
+    ],
+)
+async def test_b88_local_intent_preserves_typed_response(
+    qwen_satellite, monkeypatch, response_type, expected
+):
+    entity, _manager, _stop, _bridge = qwen_satellite
+    _pipeline, _prepare, _sentence, local = _install_route_context(monkeypatch)
+    response = intent.IntentResponse("zh-CN")
+    response.response_type = response_type
+    response.async_set_speech("本地回复")
+    local.return_value = response
+
+    result = await AudioSessionCoordinator._async_route_local_transcript(
+        entity.coordinator, _route_turn("测试本地意图")
+    )
+
+    assert result.handled is True
+    assert result.response_type == expected
 
 
 @pytest.mark.parametrize("text", [None, "", "   "])
@@ -431,11 +462,52 @@ async def test_b88_local_router_ignores_empty_transcript(
     assert result.handled is False
     assert result.speech == ""
     assert result.continue_conversation is False
+    assert result.response_type is None
     prepare.assert_not_awaited()
     sentence.assert_not_awaited()
     local.assert_not_awaited()
     assert not bridge.create_calls and not bridge.text_calls
 
+
+
+
+@pytest.mark.parametrize(
+    ("response_type", "result"),
+    [("action_done", "success"), ("partial_action_done", "failure"), ("error", "failure")],
+)
+async def test_b88_local_action_uses_s3_ack_without_dynamic_tts(
+    qwen_satellite, response_type, result
+):
+    entity, manager, stop, bridge = qwen_satellite
+    route = entity.coordinator._async_route_local_transcript
+    route.return_value = LocalRouteResult(True, "不应运行时合成", False, response_type)
+    local_tts = AsyncMock()
+    entity.coordinator._async_run_local_tts = local_tts
+
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+
+    local_tts.assert_not_awaited()
+    entity.adapter.async_send_local_ack.assert_awaited_once()
+    args = entity.adapter.async_send_local_ack.call_args.args
+    assert args[1:] == (turn.session_id, result)
+    assert turn.local_ack_playback_id == args[0]
+    assert not bridge.create_calls and not bridge.text_calls
+    stop.assert_not_awaited()
+
+
+async def test_b88_query_answer_keeps_dynamic_tts_and_sends_no_ack(qwen_satellite):
+    entity, manager, _stop, bridge = qwen_satellite
+    route = entity.coordinator._async_route_local_transcript
+    route.return_value = LocalRouteResult(True, "现在是下午两点", False, "query_answer")
+    local_tts = AsyncMock()
+    entity.coordinator._async_run_local_tts = local_tts
+
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+
+    local_tts.assert_awaited_once_with(turn, "现在是下午两点")
+    entity.adapter.async_send_local_ack.assert_not_awaited()
 
 
 async def test_b88_local_intent_hit_stays_ha_owned(qwen_satellite):
@@ -580,4 +652,76 @@ async def test_b88_real_ha_local_intent_matches_before_fallback(
     assert result.handled is True
     assert result.speech
     assert result.continue_conversation is False
+    assert not bridge.create_calls and not bridge.text_calls
+
+async def test_b88_local_ack_waits_for_physical_completion(qwen_satellite):
+    entity, manager, stop, bridge = qwen_satellite
+    entity.coordinator._async_route_local_transcript.return_value = LocalRouteResult(
+        True, "不应运行时合成", False, "action_done"
+    )
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+    playback_id = turn.local_ack_playback_id
+    assert playback_id is not None
+    assert manager.active_session_id == turn.session_id
+
+    entity.coordinator.on_playback(playback_id, "playing")
+    await asyncio.sleep(0)
+    assert manager.active_session_id == turn.session_id
+    assert not turn.response_finished
+
+    entity.coordinator.on_playback(playback_id, "completed")
+    for _ in range(20):
+        if manager.active_session_id is None:
+            break
+        await asyncio.sleep(0)
+    assert turn.playback_completed and turn.response_finished
+    assert manager.active_session_id is None
+    assert not bridge.create_calls and not bridge.text_calls
+    stop.assert_awaited_once()
+
+
+@pytest.mark.parametrize("state", ["failed", "stopped", "interrupted"])
+async def test_b88_local_ack_bad_terminal_fails_closed(qwen_satellite, state):
+    entity, manager, _stop, bridge = qwen_satellite
+    entity.coordinator._async_route_local_transcript.return_value = LocalRouteResult(
+        True, "不应运行时合成", False, "error"
+    )
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+    playback_id = turn.local_ack_playback_id
+    assert playback_id is not None
+
+    entity.coordinator.on_playback(playback_id, state)
+    for _ in range(20):
+        if manager.active_session_id is None:
+            break
+        await asyncio.sleep(0)
+    assert not turn.playback_completed
+    assert manager.active_session_id is None
+    assert not bridge.create_calls and not bridge.text_calls
+    entity.adapter.async_send_tts_play.assert_not_awaited()
+
+
+async def test_b88_local_ack_followup_opens_only_after_completed(qwen_satellite):
+    entity, manager, _stop, bridge = qwen_satellite
+    entity.coordinator._async_route_local_transcript.return_value = LocalRouteResult(
+        True, "", True, "action_done"
+    )
+    turn = await begin_turn(entity, manager, bridge)
+    await finish_turn(manager, turn)
+    playback_id = turn.local_ack_playback_id
+    assert playback_id is not None
+    entity.adapter.async_send_message.reset_mock()
+
+    entity.coordinator.on_playback(playback_id, "playing")
+    await asyncio.sleep(0)
+    entity.adapter.async_send_message.assert_not_awaited()
+
+    entity.coordinator.on_playback(playback_id, "completed")
+    for _ in range(20):
+        if entity.adapter.async_send_message.await_count:
+            break
+        await asyncio.sleep(0)
+    entity.adapter.async_send_message.assert_awaited_once()
     assert not bridge.create_calls and not bridge.text_calls
