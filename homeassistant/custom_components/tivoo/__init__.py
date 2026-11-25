@@ -20,6 +20,7 @@ from .const import (
 )
 from .diagnostics import TYPE_MIC_CAPTURE_STOP
 from .display_state import ExpressionCoordinator
+from .qwen_realtime import QwenRealtimeBridge, TivooQwenPcmView
 from .services import register_services, unregister_services
 from .transport import Esp32ConnectionAdapter
 
@@ -38,8 +39,6 @@ class _RuntimeDisplayAdapter:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Tivoo services and the shared runtime for one config entry."""
-    from .qwen_realtime import QwenRealtimeBridge, TivooQwenPcmView
-
     media_directory = entry.data.get(CONF_MEDIA_DIRECTORY, DEFAULT_MEDIA_DIRECTORY)
     adapter = Esp32ConnectionAdapter(
         entry.data.get(CONF_ESP32_HOST),

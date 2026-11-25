@@ -19,11 +19,13 @@ from aiohttp import ClientError, WSMsgType, web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
+from wyoming.audio import AudioChunk, AudioChunkConverter
 
 from .diagnostics import TYPE_AUDIO_STOP
 
 INPUT_RATE = 16000
-MAX_PCM_BYTES = 512 * 1024
+OUTPUT_RATE = 32000
+MAX_PCM_BYTES = 2 * 1024 * 1024
 GET_TIMEOUT = 10
 IO_TIMEOUT = 10
 EVENT_TIMEOUT = 45
@@ -65,10 +67,15 @@ class QwenPcmStream:
         self.session_id = session_id
         self.generation = generation
         self.response_ids: set[str] = set()
+        self.delta_gap_max_ms = 0
+        self.write_gap_max_ms = 0
+        self.write_wait_max_ms = 0
+        self._last_delta_at: float | None = None
+        self._last_write_at: float | None = None
 
     @property
     def mime_type(self) -> str:
-        return f"audio/x-tivoo-pcm-s16le-{self.sample_rate}-mono"
+        return f"audio/x-tivoo-pcm-s16le-{OUTPUT_RATE}-mono"
 
     def push(self, pcm: bytes) -> None:
         if self.finished or self.aborted:
@@ -78,6 +85,12 @@ class QwenPcmStream:
         if self.buffered_bytes + len(pcm) > self.max_bytes:
             raise RuntimeError("Qwen PCM consumer fell behind byte limit")
         if pcm:
+            now = monotonic()
+            if self._last_delta_at is not None:
+                self.delta_gap_max_ms = max(
+                    self.delta_gap_max_ms, round((now - self._last_delta_at) * 1000)
+                )
+            self._last_delta_at = now
             self._chunks.append(pcm)
             self.buffered_bytes += len(pcm)
             self._ready.set()
@@ -99,16 +112,25 @@ class QwenPcmStream:
         self.requested.set()
 
     async def chunks(self) -> AsyncIterator[bytes]:
+        # Keep SRC state for the entire stream, not each provider delta.
+        converter = AudioChunkConverter(rate=OUTPUT_RATE)
         while not self.aborted:
             if self._chunks:
                 chunk = self._chunks.popleft()
                 self.buffered_bytes -= len(chunk)
+                if self.sample_rate != OUTPUT_RATE:
+                    chunk = converter.convert(
+                        AudioChunk(rate=self.sample_rate, width=2, channels=1, audio=chunk)
+                    ).audio
                 yield chunk
             elif self.finished:
                 return
             else:
                 self._ready.clear()
-                await asyncio.wait_for(self._ready.wait(), IO_TIMEOUT)
+                # Tool follow-ups may legitimately have no audio for longer
+                # than an HTTP write timeout. The owner bounds provider
+                # progress; HA cancels this handler when its client leaves.
+                await self._ready.wait()
 
 
 class TivooQwenPcmView(HomeAssistantView):
@@ -130,17 +152,26 @@ class TivooQwenPcmView(HomeAssistantView):
         stream.claim()
         stream.handler_task = asyncio.current_task()
         response = web.StreamResponse(
-            headers={
-                "Content-Type": stream.mime_type,
-                "Cache-Control": "no-store",
-            }
+            headers={"Content-Type": stream.mime_type, "Cache-Control": "no-store"}
         )
         try:
             async with asyncio.timeout(IO_TIMEOUT):
                 await response.prepare(request)
             async for chunk in stream.chunks():
-                async with asyncio.timeout(IO_TIMEOUT):
-                    await response.write(chunk)
+                start = monotonic()
+                if stream._last_write_at is not None:
+                    stream.write_gap_max_ms = max(
+                        stream.write_gap_max_ms,
+                        round((start - stream._last_write_at) * 1000),
+                    )
+                stream._last_write_at = start
+                try:
+                    async with asyncio.timeout(IO_TIMEOUT):
+                        await response.write(chunk)
+                finally:
+                    stream.write_wait_max_ms = max(
+                        stream.write_wait_max_ms, round((monotonic() - start) * 1000)
+                    )
             if stream.aborted:
                 raise ConnectionError("PCM producer aborted")
             async with asyncio.timeout(IO_TIMEOUT):
@@ -769,6 +800,15 @@ class QwenRealtimeBridge:
                     owner.output_bytes,
                     json.dumps(owner.timings, separators=(",", ":")),
                 )
+                if owner.stream:
+                    _LOGGER.info(
+                        "qwen_pcm_metrics generation=%s session_id=%s delta_gap_max_ms=%d write_gap_max_ms=%d write_wait_max_ms=%d",
+                        owner.generation,
+                        owner.session_id,
+                        owner.stream.delta_gap_max_ms,
+                        owner.stream.write_gap_max_ms,
+                        owner.stream.write_wait_max_ms,
+                    )
 
     async def _retain(self, owner):
         try:

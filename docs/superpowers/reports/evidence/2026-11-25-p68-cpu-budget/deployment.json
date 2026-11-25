@@ -1,0 +1,13 @@
+{
+  "branch": "feature/p6-8-s3-local-wake",
+  "s3_app_offset": "0x10000",
+  "size": 2501312,
+  "sha256": "da04bb22e36fdde204a9882e46eb467972648b9fdd3376b979b92f671c0b37d4",
+  "independent_flash_verify": "passed",
+  "normal_firmware": true,
+  "probe_hooks": false,
+  "ha_changed_this_followup": false,
+  "rollback": "/volume1/docker/tivoo-esptool/artifacts/p68-streaming-normal-20261125.bin",
+  "rollback_sha256": "50ab2ab37119e8624d35ba0b8260ff810621a52f17f7872867e4ff693213ff02",
+  "human_feedback": "播放顺畅"
+}

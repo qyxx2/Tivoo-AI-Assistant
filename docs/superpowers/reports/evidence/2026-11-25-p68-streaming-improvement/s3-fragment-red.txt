@@ -1,0 +1,4 @@
+E   subprocess.CalledProcessError: Command '['/tmp/pytest-of-Gold/pytest-314/test_local_resource_worker_pcm0/resource-worker', 'pcm32_fragments']' died with <Signals.SIGABRT: 6>.
+resource-worker: /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_resource_worker_host.c:216: esp_http_client_read: Assertion `http_read_timeout_ms<=100 && "partial PCM must reach the 160ms output queue before it drains"' failed.
+FAILED tests/esp32/test_p6_audio_resource.py::test_local_resource_worker[pcm32_fragments]
+1 failed, 25 deselected, 2 warnings in 0.70s

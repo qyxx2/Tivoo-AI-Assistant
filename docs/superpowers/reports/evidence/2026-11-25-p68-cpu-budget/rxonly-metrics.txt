@@ -1,0 +1,46 @@
+I (1541) s3_afe: feed=1024 x4 fetch=512 x1 rate=16000 VAD threshold=0.300 (smoke until hardware acceptance)
+I (11561) s3_afe: feed=155 fetch=310 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=0 ring_free_pct=0.980 feed_max_us=52164 fetch_wait_max_us=203638 stack=2056/1700 internal_min=11056 internal_largest=7680 dma_largest=3840 psram_free=6898444
+I (21591) s3_afe: feed=312 fetch=623 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=0 ring_free_pct=1.000 feed_max_us=52164 fetch_wait_max_us=203638 stack=2056/1700 internal_min=11056 internal_largest=7680 dma_largest=3840 psram_free=6872892
+I (22391) audio_output: generation=920001 TX drained=1 underruns=0 queue_high_water=0 missed_eofs=0 reference_peak=0
+I (22391) audio_output: generation=920001 missing_samples=0 max_gap_ms=0 rebuffers=0
+I (22401) PCM-DIAG: end mode=bulk bytes=384000 elapsed_ms=5786 drained=1 error=none
+I (22451) PCM-DIAG: cpu mode=bulk task=afe_feed core=-2 run_us=4354655 wall_us=5836413 hundredth_pct=7461
+I (22451) PCM-DIAG: cpu mode=bulk task=pcm_diag core=-2 run_us=514866 wall_us=5836413 hundredth_pct=882
+I (22501) PCM-DIAG: cpu mode=bulk task=tivoo_tcp core=-2 run_us=113954 wall_us=5836413 hundredth_pct=195
+I (22511) PCM-DIAG: cpu mode=bulk task=tivoo_rt_tx core=-2 run_us=8430 wall_us=5836413 hundredth_pct=14
+I (22511) PCM-DIAG: cpu mode=bulk task=tivoo_diag core=-2 run_us=7294 wall_us=5836413 hundredth_pct=12
+I (22561) PCM-DIAG: cpu mode=bulk task=IDLE1 core=-2 run_us=1309934 wall_us=5836413 hundredth_pct=2244
+I (22561) PCM-DIAG: cpu mode=bulk task=IDLE0 core=-2 run_us=0 wall_us=5836413 hundredth_pct=0
+I (22561) PCM-DIAG: cpu mode=bulk task=afe_capture core=-2 run_us=1871421 wall_us=5836413 hundredth_pct=3206
+I (22571) PCM-DIAG: cpu mode=bulk task=tcpip core=-2 run_us=354759 wall_us=5836413 hundredth_pct=607
+I (22581) PCM-DIAG: cpu mode=bulk task=afe_fetch core=-2 run_us=2725811 wall_us=5836413 hundredth_pct=4670
+I (22641) PCM-DIAG: cpu mode=bulk task=tivoo_uart_rx core=-2 run_us=74566 wall_us=5836413 hundredth_pct=127
+I (22641) PCM-DIAG: cpu mode=bulk task=ipc1 core=-2 run_us=0 wall_us=5836413 hundredth_pct=0
+I (22651) PCM-DIAG: cpu mode=bulk task=tivoo_uart_tx core=-2 run_us=2093 wall_us=5836413 hundredth_pct=3
+I (22701) PCM-DIAG: cpu mode=bulk task=esp_timer core=-2 run_us=1957 wall_us=5836413 hundredth_pct=3
+I (22701) PCM-DIAG: cpu mode=bulk task=sys_evt core=-2 run_us=26404 wall_us=5836413 hundredth_pct=45
+I (22711) PCM-DIAG: cpu mode=bulk task=wifi core=-2 run_us=295925 wall_us=5836413 hundredth_pct=507
+I (22751) PCM-DIAG: cpu mode=bulk task=ipc0 core=-2 run_us=0 wall_us=5836413 hundredth_pct=0
+I (22751) PCM-DIAG: cpu mode=bulk task=Tmr Svc core=-2 run_us=0 wall_us=5836413 hundredth_pct=0
+I (31591) s3_afe: feed=468 fetch=936 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=0 ring_free_pct=0.980 feed_max_us=52164 fetch_wait_max_us=203638 stack=2056/1700 internal_min=11056 internal_largest=7680 dma_largest=3840 psram_free=6872684
+I (31861) audio_output: generation=920002 TX drained=1 underruns=0 queue_high_water=0 missed_eofs=0 reference_peak=0
+I (31861) audio_output: generation=920002 missing_samples=0 max_gap_ms=0 rebuffers=0
+I (31921) PCM-DIAG: end mode=chunked bytes=384000 elapsed_ms=8129 drained=1 error=none
+I (31921) PCM-DIAG: cpu mode=chunked task=afe_feed core=-2 run_us=6048686 wall_us=8130018 hundredth_pct=7439
+I (31921) PCM-DIAG: cpu mode=chunked task=pcm_diag core=-2 run_us=924482 wall_us=8130018 hundredth_pct=1137
+I (31931) PCM-DIAG: cpu mode=chunked task=tivoo_tcp core=-2 run_us=153292 wall_us=8130018 hundredth_pct=188
+I (31971) PCM-DIAG: cpu mode=chunked task=tivoo_rt_tx core=-2 run_us=10754 wall_us=8130018 hundredth_pct=13
+I (31971) PCM-DIAG: cpu mode=chunked task=tivoo_diag core=-2 run_us=10015 wall_us=8130018 hundredth_pct=12
+I (31981) PCM-DIAG: cpu mode=chunked task=IDLE1 core=-2 run_us=1865821 wall_us=8130018 hundredth_pct=2294
+I (32041) PCM-DIAG: cpu mode=chunked task=IDLE0 core=-2 run_us=0 wall_us=8130018 hundredth_pct=0
+I (32041) PCM-DIAG: cpu mode=chunked task=afe_capture core=-2 run_us=2614217 wall_us=8130018 hundredth_pct=3215
+I (32051) PCM-DIAG: cpu mode=chunked task=tcpip core=-2 run_us=394583 wall_us=8130018 hundredth_pct=485
+I (32061) PCM-DIAG: cpu mode=chunked task=afe_fetch core=-2 run_us=3769421 wall_us=8130018 hundredth_pct=4636
+I (32101) PCM-DIAG: cpu mode=chunked task=tivoo_uart_rx core=-2 run_us=108118 wall_us=8130018 hundredth_pct=132
+I (32111) PCM-DIAG: cpu mode=chunked task=Tmr Svc core=-2 run_us=0 wall_us=8130018 hundredth_pct=0
+I (32121) PCM-DIAG: cpu mode=chunked task=esp_timer core=-2 run_us=2472 wall_us=8130018 hundredth_pct=3
+I (32161) PCM-DIAG: cpu mode=chunked task=tivoo_uart_tx core=-2 run_us=2946 wall_us=8130018 hundredth_pct=3
+I (32161) PCM-DIAG: cpu mode=chunked task=sys_evt core=-2 run_us=50849 wall_us=8130018 hundredth_pct=62
+I (32171) PCM-DIAG: cpu mode=chunked task=wifi core=-2 run_us=305659 wall_us=8130018 hundredth_pct=375
+I (32181) PCM-DIAG: cpu mode=chunked task=ipc1 core=-2 run_us=0 wall_us=8130018 hundredth_pct=0
+I (32181) PCM-DIAG: cpu mode=chunked task=ipc0 core=-2 run_us=0 wall_us=8130018 hundredth_pct=0

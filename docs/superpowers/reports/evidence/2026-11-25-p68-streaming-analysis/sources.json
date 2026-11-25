@@ -1,0 +1,26 @@
+[
+  {
+    "source": "/tmp/p68-real-playback-acm1.log",
+    "sha256": "a68b161ae42b3c195a854eedac1786597b03fde8b0828c77607c1e99f8fa43f2",
+    "excerpt": "1-tmp-p68-real-playback-acm1.log",
+    "scope": "existing capture; no new device test"
+  },
+  {
+    "source": "/tmp/p68-buffer-400ms-20261124/serial.log",
+    "sha256": "5fecc07d110b41d4b88758ed2cf216c23477fce2498e5513685dd4fccbe5a92f",
+    "excerpt": "2-p68-buffer-400ms-20261124-serial.log",
+    "scope": "existing capture; no new device test"
+  },
+  {
+    "source": "/tmp/p68-sched-split-20261124/serial.log",
+    "sha256": "de8f4ace4c46beda442867896e62a722b5c1be5ab7b284bea899ffb9de019d06",
+    "excerpt": "3-p68-sched-split-20261124-serial.log",
+    "scope": "existing capture; no new device test"
+  },
+  {
+    "source": "/tmp/p68-sched-tcpwnd-20261124/serial.log",
+    "sha256": "150c0c320c4b02c4e76aa26a2ceec70ae413611c64492ecc201d2522d0f28f97",
+    "excerpt": "4-p68-sched-tcpwnd-20261124-serial.log",
+    "scope": "existing capture; no new device test"
+  }
+]

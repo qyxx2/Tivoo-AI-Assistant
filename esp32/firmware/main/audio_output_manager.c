@@ -18,6 +18,11 @@ bool tivoo_output_begin(tivoo_output_queue_t *queue, uint32_t generation)
     queue->in_dma = false;
     queue->input_finished = false;
     queue->eager = false;
+    queue->rebuffering = false;
+    queue->rebuffer_count = 0;
+    queue->missing_samples = 0;
+    queue->gap_samples = 0;
+    queue->max_gap_samples = 0;
     return true;
 }
 
@@ -51,8 +56,27 @@ size_t TX_ISR_CODE tivoo_output_refill(tivoo_output_queue_t *queue, uint32_t *sl
 {
     volatile uint32_t *dma = slots;
     size_t count = 0;
-    if (queue->eager || queue->in_dma || queue->input_finished || queue->count >= TIVOO_OUTPUT_PREFILL) {
+    /* Once starved, retain arriving fragments until a complete recovery
+     * window is available. EOF bypasses the gate, including a short tail. */
+    if (!queue->eager && queue->in_dma && !queue->input_finished && !queue->stopped &&
+        queue->count < TIVOO_OUTPUT_BLOCK && !queue->rebuffering) {
+        queue->rebuffering = true;
+        ++queue->rebuffer_count;
+    }
+    if (queue->rebuffering && (queue->input_finished || queue->count >= TIVOO_OUTPUT_PREFILL))
+        queue->rebuffering = false;
+    if (!queue->rebuffering && (queue->eager || queue->in_dma || queue->input_finished ||
+                               queue->count >= TIVOO_OUTPUT_PREFILL)) {
         count = queue->count < TIVOO_OUTPUT_BLOCK ? queue->count : TIVOO_OUTPUT_BLOCK;
+    }
+    if ((queue->in_dma || count != 0) && !queue->input_finished && !queue->stopped) {
+        size_t missing = TIVOO_OUTPUT_BLOCK - count;
+        queue->missing_samples += missing;
+        /* Real PCM at the start of a partial block separates its zero tail
+         * from the preceding block's gap. Initial prefill silence is excluded. */
+        queue->gap_samples = count ? missing : queue->gap_samples + missing;
+        if (queue->gap_samples > queue->max_gap_samples)
+            queue->max_gap_samples = queue->gap_samples;
     }
     for (size_t i = 0; i < count; ++i) {
         const uint32_t sample = (uint32_t)(uint16_t)queue->pcm[queue->read] << 16;
@@ -147,6 +171,7 @@ bool tivoo_tx_reference_read(const tivoo_tx_reference_t *reference, uint64_t fir
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "sdkconfig.h"
 
 static void *s_dma[TIVOO_OUTPUT_DMA_BLOCKS];
@@ -154,6 +179,11 @@ static tivoo_dma_eof_tracker_t s_tracker;
 static unsigned s_missed_eofs;
 static unsigned s_reference_peak;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+/* Static lifetime: signal after dropping s_lock without retaining any task
+ * handle. Stale binary wakeups are harmless because writers recheck space. */
+static StaticSemaphore_t s_space_control;
+static SemaphoreHandle_t s_space;
+static bool s_writer_waiting;
 static tivoo_output_queue_t s_queue;
 static tivoo_tx_reference_t s_reference;
 static uint64_t s_completed;
@@ -245,6 +275,7 @@ static unsigned s_high_water;
 
 void tivoo_audio_output_reset(void)
 {
+    if (!s_space) s_space = xSemaphoreCreateBinaryStatic(&s_space_control);
     portENTER_CRITICAL(&s_lock);
     memset(&s_queue, 0, sizeof(s_queue));
     memset(&s_reference, 0, sizeof(s_reference));
@@ -341,16 +372,22 @@ esp_err_t tivoo_audio_output_write(uint32_t generation, const int16_t *pcm, size
         if (s_queue.count > s_high_water) {
             s_high_water = s_queue.count;
         }
+        if (count == 0) s_writer_waiting = true;
         portEXIT_CRITICAL(&s_lock);
         pcm += count;
         samples -= count;
         if (count != 0) {
             deadline = esp_timer_get_time() + 250000;
         } else {
-            if (esp_timer_get_time() >= deadline) {
+            int64_t remaining = deadline - esp_timer_get_time();
+            if (remaining > 0)
+                (void)xSemaphoreTake(s_space, pdMS_TO_TICKS(20));
+            portENTER_CRITICAL(&s_lock);
+            s_writer_waiting = false;
+            portEXIT_CRITICAL(&s_lock);
+            if (remaining <= 0) {
                 return ESP_ERR_TIMEOUT;
             }
-            vTaskDelay(1);
         }
     }
     return ESP_OK;
@@ -362,7 +399,23 @@ void tivoo_audio_output_stop(uint32_t generation)
     /* Never alter a descriptor that may already have been fetched by GDMA.
      * Drain the already submitted (<=60ms) tail; completed reference stays real. */
     tivoo_output_stop(&s_queue, generation);
+    bool wake = s_queue.generation == generation && s_writer_waiting;
     portEXIT_CRITICAL(&s_lock);
+    if (wake) (void)xSemaphoreGive(s_space);
+}
+
+bool tivoo_audio_output_progress(uint32_t generation, tivoo_output_progress_t *progress)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool valid = s_queue.generation == generation;
+    if (valid) *progress = (tivoo_output_progress_t){
+        .queued_samples = s_queue.count,
+        .rebuffer_count = s_queue.rebuffer_count,
+        .missing_samples = s_queue.missing_samples,
+        .max_gap_samples = s_queue.max_gap_samples,
+    };
+    portEXIT_CRITICAL(&s_lock);
+    return valid;
 }
 
 void tivoo_audio_output_finish_input(uint32_t generation)
@@ -382,11 +435,17 @@ bool tivoo_audio_output_drained(uint32_t generation)
 
 typedef struct {
     unsigned underruns, high_water, missed_eofs, reference_peak;
+    uint32_t rebuffer_count, max_gap_samples;
+    uint64_t missing_samples;
 } output_stats_t;
 
 static output_stats_t end_locked(uint32_t generation)
 {
-    output_stats_t stats={s_underruns,s_high_water,s_missed_eofs,s_reference_peak};
+    output_stats_t stats={.underruns=s_underruns,.high_water=s_high_water,
+        .missed_eofs=s_missed_eofs,.reference_peak=s_reference_peak};
+    stats.rebuffer_count = s_queue.rebuffer_count;
+    stats.max_gap_samples = s_queue.max_gap_samples;
+    stats.missing_samples = s_queue.missing_samples;
     tivoo_output_end(&s_queue,generation);
     return stats;
 }
@@ -396,6 +455,9 @@ static void log_end(uint32_t generation, output_stats_t stats, bool drained)
     ESP_LOGI("audio_output", "generation=%lu TX drained=%d underruns=%u queue_high_water=%u "
         "missed_eofs=%u reference_peak=%u", (unsigned long)generation, drained, stats.underruns,
         stats.high_water, stats.missed_eofs, stats.reference_peak);
+    ESP_LOGI("audio_output", "generation=%lu missing_samples=%llu max_gap_ms=%lu rebuffers=%lu",
+        (unsigned long)generation, (unsigned long long)stats.missing_samples,
+        (unsigned long)(stats.max_gap_samples / 32U), (unsigned long)stats.rebuffer_count);
 }
 
 bool tivoo_audio_output_release_drained(uint32_t generation, uint64_t *end)
@@ -418,8 +480,9 @@ void tivoo_audio_output_end(uint32_t generation)
     log_end(generation,stats,drained);
 }
 
-void IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
+bool IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
 {
+    BaseType_t wake = pdFALSE;
     portENTER_CRITICAL_ISR(&s_lock);
     const size_t missed = tivoo_dma_eof_tracker_observe(&s_tracker, slots);
     s_missed_eofs += missed;
@@ -428,8 +491,10 @@ void IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
         /* Only this EOF buffer is known writable. Quarantine the rest
          * until the driver destroys the stopped ring. */
         tivoo_output_refill(&s_queue, slots, 0);
+        bool waiting = s_writer_waiting;
         portEXIT_CRITICAL_ISR(&s_lock);
-        return;
+        if (waiting) (void)xSemaphoreGiveFromISR(s_space, &wake);
+        return wake == pdTRUE;
     }
     tivoo_tx_reference_record(&s_reference, s_completed, slots);
     /* GDMA EOF can precede actual FIFO output. Preserve one more descriptor
@@ -438,7 +503,10 @@ void IRAM_ATTR tivoo_audio_output_dma_sent(uint32_t *slots)
     const size_t count = tivoo_output_refill(&s_queue, slots, due);
     if (!count && s_queue.in_dma && !s_queue.input_finished && !s_queue.stopped)
         ++s_underruns;
+    bool waiting = s_writer_waiting;
     portEXIT_CRITICAL_ISR(&s_lock);
+    if (waiting) (void)xSemaphoreGiveFromISR(s_space, &wake);
+    return wake == pdTRUE;
 }
 
 bool tivoo_audio_output_reference_raw(uint64_t first_sample, int16_t *pcm, size_t samples)

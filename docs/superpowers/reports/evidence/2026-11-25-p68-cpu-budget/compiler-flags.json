@@ -1,0 +1,32 @@
+[
+  {
+    "file": "/home/Gold/.espressif/v6.1/esp-idf/components/lwip/lwip/src/api/sockets.c",
+    "optimization": [
+      "-O2"
+    ]
+  },
+  {
+    "file": "/home/Gold/.espressif/v6.1/esp-idf/components/esp_http_client/esp_http_client.c",
+    "optimization": [
+      "-O2"
+    ]
+  },
+  {
+    "file": "/home/Gold/WorkSpace/Tivoo-AI-Assistant/esp32/firmware/main/audio_capture.c",
+    "optimization": [
+      "-O2"
+    ]
+  },
+  {
+    "file": "/home/Gold/WorkSpace/Tivoo-AI-Assistant/esp32/firmware/main/s3_afe.c",
+    "optimization": [
+      "-O2"
+    ]
+  },
+  {
+    "file": "/home/Gold/WorkSpace/Tivoo-AI-Assistant/esp32/firmware/main/audio_resource.c",
+    "optimization": [
+      "-O2"
+    ]
+  }
+]

@@ -210,7 +210,7 @@ static bool IRAM_ATTR tx_sent(i2s_chan_handle_t handle, i2s_event_data_t *event,
         if (event->size != 2*TIVOO_OUTPUT_BLOCK*sizeof(uint32_t))
             tivoo_audio_output_fault_from_isr();
         else
-            tivoo_audio_output_dma_sent(event->dma_buf);
+            return tivoo_audio_output_dma_sent(event->dma_buf);
     }
     return false;
 }

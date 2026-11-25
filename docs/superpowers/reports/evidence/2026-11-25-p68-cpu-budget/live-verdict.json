@@ -1,0 +1,15 @@
+{
+  "passed": false,
+  "playbacks": [
+    {
+      "generation": 2,
+      "drained": true,
+      "underruns": 560,
+      "queue_high_water": 5120,
+      "missed_eofs": 0
+    }
+  ],
+  "errors": [
+    "generation 2: output discontinuity or incomplete drain"
+  ]
+}

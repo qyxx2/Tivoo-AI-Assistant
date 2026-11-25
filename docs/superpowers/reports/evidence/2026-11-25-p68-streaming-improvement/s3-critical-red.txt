@@ -1,0 +1,6 @@
+E   AssertionError: {'writer': "dma: /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_dma_host.c:96: vTaskNotifyGiveFromISR: Assert...orkSpace/Tivoo-AI-Assistant/tests/esp32/p68_dma_host.c:94: xTaskNotifyGive: Assertion `!p68_critical_depth' failed.
+E     "}
+E   assert False
+E    +  where False = all(<generator object test_dma_runtime_recovery.<locals>.<genexpr> at 0x7b38eb5150>)
+FAILED tests/esp32/test_p68_audio.py::test_dma_runtime_recovery - AssertionEr...
+1 failed, 2 deselected, 2 warnings in 0.57s

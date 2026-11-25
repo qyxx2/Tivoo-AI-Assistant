@@ -104,15 +104,34 @@ def test_controlled_http_fixture_covers_stream_and_failure_responses(tmp_path):
         server.wait(timeout=3)
 
 
-@pytest.mark.parametrize("case", ["temporary", "permanent", "old_epoch", "pending", "pending_lost", "timeout", "normal", "long_stream", "matching_stop", "pcm24", "pcm32", "pcm_mismatch", "pcm_unsupported", "pcm24_full", "pcm24_buffered"])
+@pytest.mark.parametrize("case", ["temporary", "permanent", "old_epoch", "pending", "pending_lost", "timeout", "normal", "long_stream", "matching_stop", "pcm24", "pcm32", "pcm32_long", "pcm32_stop", "pcm32_error", "pcm32_paced", "pcm32_wait_stop", "pcm32_full", "pcm32_full_stop", "pcm32_fragments", "pcm_mismatch", "pcm_unsupported", "pcm24_full", "pcm24_buffered"])
 def test_local_resource_worker(tmp_path, case):
     """Production worker and parser, deterministic RTOS/HTTP/output/diagnostics boundaries."""
     from test_p68_prompt import write_resource_test_headers
 
     write_resource_test_headers(tmp_path)
+    (tmp_path / "freertos/semphr.h").write_text("""#pragma once
+#include "freertos/FreeRTOS.h"
+#include <pthread.h>
+typedef struct {pthread_mutex_t mutex;pthread_cond_t ready;unsigned pending,role;} StaticSemaphore_t;
+typedef StaticSemaphore_t *SemaphoreHandle_t;
+SemaphoreHandle_t xSemaphoreCreateMutex(void);
+SemaphoreHandle_t xSemaphoreCreateBinaryStatic(StaticSemaphore_t *);
+BaseType_t xSemaphoreTake(SemaphoreHandle_t,TickType_t);
+BaseType_t xSemaphoreGive(SemaphoreHandle_t);
+""")
+    # Exercise actual cross-thread notification/retirement synchronization.
+    freertos = tmp_path / "freertos/FreeRTOS.h"
+    freertos.write_text(
+        freertos.read_text()
+        .replace("typedef int portMUX_TYPE;", "#include <pthread.h>\ntypedef pthread_mutex_t portMUX_TYPE;")
+        .replace("#define portMUX_INITIALIZER_UNLOCKED 0", "#define portMUX_INITIALIZER_UNLOCKED PTHREAD_MUTEX_INITIALIZER")
+        .replace("do {(void)(l);++p68_critical_depth;} while(0)", "do {pthread_mutex_lock(l);++p68_critical_depth;} while(0)")
+        .replace("do {(void)(l);--p68_critical_depth;} while(0)", "do {--p68_critical_depth;pthread_mutex_unlock(l);} while(0)")
+    )
     binary = tmp_path / "resource-worker"
     subprocess.run([
-        "cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+        "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pthread",
         "-Wno-sign-compare", "-DESP_PLATFORM", "-DTIVOO_P68_B5_LOCAL",
         "-DTIVOO_P68_B3_AUDIO", "-I", str(tmp_path), "-I", str(FIRMWARE),
         "-I", str(CJSON.parent), str(HARNESS.with_name("p68_resource_worker_host.c")),

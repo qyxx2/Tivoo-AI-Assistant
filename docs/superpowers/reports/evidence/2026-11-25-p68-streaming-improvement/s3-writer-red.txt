@@ -1,0 +1,6 @@
+E   AssertionError: {'writer': "dma: /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_dma_host.c:131: main: Assertion `notification...me/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_dma_host.c:131: main: Assertion `notification_waits>0' failed.
+E     "}
+E   assert False
+E    +  where False = all(<generator object test_dma_runtime_recovery.<locals>.<genexpr> at 0x7cf21acad0>)
+FAILED tests/esp32/test_p68_audio.py::test_dma_runtime_recovery - AssertionEr...
+1 failed, 2 deselected, 2 warnings in 0.45s

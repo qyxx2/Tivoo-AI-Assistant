@@ -1,0 +1,22 @@
+{
+  "branch": "feature/p6-8-s3-local-wake",
+  "head": "19f9114",
+  "working_tree": "uncommitted; pre-existing edits preserved",
+  "deployed": false,
+  "hardware_tested": false,
+  "firmware": {
+    "path": "/home/Gold/WorkSpace/Tivoo-AI-Assistant/.superpowers/p68-streaming-improvement/tivoo_firmware-normal.bin",
+    "size": 2533936,
+    "sha256": "50ab2ab37119e8624d35ba0b8260ff810621a52f17f7872867e4ff693213ff02"
+  },
+  "sources": {
+    "esp32/firmware/main/audio_resource.c": "d1d12cacfbed2880cabf8cab5d43039c916a4e580297f3bb235aeff3fd6d02ce",
+    "esp32/firmware/main/audio_output_manager.c": "fd15bf5fd5d12399177f62cdd07eb20d9458e91709736cc6773d593842491863",
+    "esp32/firmware/main/audio_output_manager.h": "a7a68c5faf85e08709aa037c86210f6df6dbb8f740868681ae3258d7156f2d64",
+    "esp32/firmware/main/audio_capture.c": "3cd2e768c3f175e2c6b5bd844225a6285f4ed8a5cb9d9f8b42b06ce3f97608fd",
+    "esp32/firmware/main/audio_pcm_buffer.h": "e27a88da35fd29104413909eeb53154d75238c84e33a14a1ffa58060d6a78e43",
+    "esp32/firmware/main/s3_afe.c": "a85851735ebe9f137e69d98d551107ce8c21e051186a184fe2649c98c8ff9f14",
+    "esp32/firmware/sdkconfig": "f2d3ae99dd79e7ef003fadd7e90dcde387e5962a64e8a0075879a0cf41a7747b",
+    "homeassistant/custom_components/tivoo/qwen_realtime.py": "5066dba827b6ee96b732ca898b4e80dbcea601f0819035a1796ab0b2e28db6e8"
+  }
+}

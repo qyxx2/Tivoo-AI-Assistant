@@ -19,6 +19,11 @@ typedef struct {
     bool stopped;
     bool input_finished;
     bool eager;
+    bool rebuffering;
+    uint32_t rebuffer_count;
+    uint64_t missing_samples;
+    uint32_t gap_samples;
+    uint32_t max_gap_samples;
 } tivoo_output_queue_t;
 
 bool tivoo_output_begin(tivoo_output_queue_t *queue, uint32_t generation);
@@ -48,6 +53,13 @@ bool tivoo_tx_reference_read(const tivoo_tx_reference_t *reference, uint64_t fir
 
 #ifdef ESP_PLATFORM
 #include "audio_frontend.h"
+typedef struct {
+    size_t queued_samples;
+    uint32_t rebuffer_count;
+    uint64_t missing_samples;
+    uint32_t max_gap_samples;
+} tivoo_output_progress_t;
+bool tivoo_audio_output_progress(uint32_t generation, tivoo_output_progress_t *progress);
 void tivoo_audio_output_reset(void);
 /* Fault is distinct from drain: failed generations can be discarded but
  * must never report completion, even after a successful hardware restart. */
@@ -72,7 +84,7 @@ void tivoo_audio_output_finish_input(uint32_t generation);
 bool tivoo_audio_output_drained(uint32_t generation);
 bool tivoo_audio_output_release_drained(uint32_t generation, uint64_t *end);
 void tivoo_audio_output_end(uint32_t generation);
-void tivoo_audio_output_dma_sent(uint32_t *slots);
+bool tivoo_audio_output_dma_sent(uint32_t *slots);
 tivoo_audio_reference_status_t tivoo_audio_output_reference(
     uint64_t first_sample, int16_t *reference, size_t samples);
 #endif

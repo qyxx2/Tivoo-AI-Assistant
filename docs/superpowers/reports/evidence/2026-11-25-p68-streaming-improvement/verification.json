@@ -1,0 +1,18 @@
+{
+  "ha_and_integration": 694,
+  "esp32_clean_recheck": 166,
+  "services_python311": 140,
+  "previous_full_esp32": {
+    "passed": 165,
+    "failed": [
+      "test_p5b2_diagnostics.py::test_queued_records_survive_disconnect_and_replay_after_new_handshake"
+    ]
+  },
+  "diagnostics_file_recheck": 28,
+  "unified_python314_collection": "7 Sherpa files blocked by absent numpy/sherpa_onnx; all services passed separately",
+  "build": "pass",
+  "ruff": "pass",
+  "diff_check": "pass",
+  "hardware_acoustic_validation": "not performed",
+  "deployment": "not performed"
+}

@@ -482,11 +482,13 @@ esp_err_t tivoo_s3_afe_start(tivoo_afe_sink_t sink, void *ctx)
             capture_queue_storage,&capture_queue_control);
     if (!input || !flow || !controls || !captured) goto fail;
     tivoo_afe_flow_init(flow,word_count,sink,ctx);
-    /* Hardware profiling: 2mic SR feed needs its own core. Keep capture
-     * above fetch on core0 so vendor processing cannot stall the DMA drain. */
-    if (xTaskCreatePinnedToCore(capture_task,"afe_capture",4096,NULL,8,&capture_handle,0)!=pdPASS ||
+    /* Preserve the proven feed placement on core1. Keep DMA capture above
+     * AFE fetch on core0, and raise fetch from p5 to p8 so network bursts do
+     * not leave it behind other application work. PCM refill shares p7 with
+     * feed and is short/bounded, so neither consumer is a background task. */
+    if (xTaskCreatePinnedToCore(capture_task,"afe_capture",4096,NULL,9,&capture_handle,0)!=pdPASS ||
         xTaskCreatePinnedToCore(feed_task,"afe_feed",4096,NULL,7,&feed_handle,1)!=pdPASS ||
-        xTaskCreatePinnedToCore(fetch_task,"afe_fetch",4096,NULL,5,&fetch_handle,0)!=pdPASS) goto fail;
+        xTaskCreatePinnedToCore(fetch_task,"afe_fetch",4096,NULL,8,&fetch_handle,0)!=pdPASS) goto fail;
     tivoo_trace_start();
     xTaskNotifyGive(fetch_handle);
     xTaskNotifyGive(feed_handle);

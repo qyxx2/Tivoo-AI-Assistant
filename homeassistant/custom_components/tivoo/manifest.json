@@ -11,6 +11,7 @@
   "single_config_entry": true,
   "version": "0.1.0",
   "requirements": [
-    "Pillow>=10.0"
+    "Pillow>=10.0",
+    "wyoming==1.10.2"
   ]
 }

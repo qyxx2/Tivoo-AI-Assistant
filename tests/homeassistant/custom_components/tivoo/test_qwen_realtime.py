@@ -2,7 +2,10 @@
 
 import asyncio
 import base64
+import itertools
 import json
+import math
+import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
@@ -192,8 +195,8 @@ async def test_handshake_pcm_tail_and_physical_completion(setup_bridge):
     adapter.async_send_tts_play.assert_awaited_once()
     args = adapter.async_send_tts_play.call_args
     assert args.kwargs["session_id"] == owner.session_id
-    assert args.args[2] == "audio/x-tivoo-pcm-s16le-24000-mono"
-    assert consumer.result() == b"\x02\x00" * 40
+    assert args.args[2] == "audio/x-tivoo-pcm-s16le-32000-mono"
+    assert consumer.result() == b"\x02\x00" * 53
     assert ws.closed and not streams
     assert any(e.get("role") == "user" for e in seen)
     assert owner.stream.session_id == owner.session_id
@@ -260,7 +263,7 @@ async def test_early_output_waits_for_local_eof(setup_bridge):
     data = await consume(owner)
     bridge.on_playback(owner.playback_id, "completed")
     await task
-    assert data == b"\x02\x00" * 40
+    assert data == b"\x02\x00" * 53
 
 
 async def test_tool_audio_done_and_late_final_text(setup_bridge):
@@ -419,6 +422,26 @@ async def test_byte_bound_finish_abort_never_wait_for_queue_space():
     assert [chunk async for chunk in stream.chunks()] == []
 
 
+async def test_pcm_src_preserves_duration_and_chunk_continuity():
+    raw = struct.pack("<24000h", *(int(12000 * math.sin(2 * math.pi * 440 * i / 24000)) for i in range(24000)))
+
+    async def converted(parts):
+        stream = qwen.QwenPcmStream("fixture", 24000)
+        for part in parts:
+            stream.push(part)
+        stream.finish()
+        assert stream.mime_type == "audio/x-tivoo-pcm-s16le-32000-mono"
+        return b"".join([chunk async for chunk in stream.chunks()])
+
+    whole = await converted([raw])
+    split = await converted([raw[i:i + 514] for i in range(0, len(raw), 514)])
+    assert split == whole
+    assert abs(len(whole) // 2 - 32000) <= 1
+    samples = struct.unpack(f"<{len(whole) // 2}h", whole)
+    assert 11500 < max(samples) <= 12000
+    assert sum(a <= 0 < b for a, b in itertools.pairwise(samples)) == 440
+
+
 async def test_pcm_http_is_one_shot_and_delivers_unchanged(socket_enabled):
     stream = qwen.QwenPcmStream("opaque", 32000)
     streams = {"opaque": stream}
@@ -439,6 +462,91 @@ async def test_pcm_http_is_one_shot_and_delivers_unchanged(socket_enabled):
         assert (await client.get("/audio/opaque")).status in (404, 409)
         assert (await client.get("/audio/missing")).status == 404
     assert stream.http_finished.is_set() and not streams
+
+
+@pytest.mark.parametrize("rate", [24000, 32000])
+async def test_pcm_http_delivers_each_chunk_before_audio_done(socket_enabled, rate):
+    stream = qwen.QwenPcmStream("incremental", rate)
+    streams = {stream.stream_id: stream}
+    view = qwen.TivooQwenPcmView(streams)
+    app = web.Application()
+
+    async def get(req):
+        return await view.get(req, "incremental")
+
+    app.router.add_get("/audio", get)
+    async with TestClient(TestServer(app)) as client:
+        request = asyncio.create_task(client.get("/audio"))
+        try:
+            stream.push(b"\x01\x00" * 240)
+            res = await asyncio.wait_for(asyncio.shield(request), 1)
+            assert "Content-Length" not in res.headers
+            assert await asyncio.wait_for(res.content.readexactly(480), 1) == b"\x01\x00" * 240
+            assert not stream.finished and not stream.http_finished.is_set()
+            stream.push(b"\x01\x00" * 240)
+            assert await asyncio.wait_for(res.content.readexactly(480), 1) == b"\x01\x00" * 240
+            stream.finish()
+            await res.read()
+            await asyncio.wait_for(stream.http_finished.wait(), 1)
+        finally:
+            stream.finish()
+            await request
+    assert not streams
+
+
+async def test_playback_dispatched_on_delta_before_audio_done(setup_bridge):
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    try:
+        await spin_until(lambda: owner.input_drained)
+        ws.feed(
+            {"type": "response.started", "turnId": "t1", "responseId": "r1"},
+            {
+                "type": "audio.delta", "turnId": "t1", "responseId": "r1",
+                "sampleRate": 32000, "audio": base64.b64encode(b"\1\0" * 240).decode(),
+            },
+        )
+        await spin_until(lambda: owner.playback_id is not None)
+        assert not owner.stream.finished
+        first = owner.stream.chunks()
+        assert await anext(first) == b"\1\0" * 240
+        await first.aclose()
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert not streams and ws.closed
+
+
+async def test_http_survives_tool_audio_gap_longer_than_write_timeout(
+    setup_bridge, socket_enabled, monkeypatch
+):
+    monkeypatch.setattr(qwen, "IO_TIMEOUT", 0.02)
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    view = qwen.TivooQwenPcmView(streams)
+    app = web.Application()
+
+    async def get(req):
+        return await view.get(req, owner.playback_id)
+
+    app.router.add_get("/audio", get)
+    try:
+        await response(ws, tool=True)
+        await spin_until(lambda: owner.playback_id is not None)
+        async with TestClient(TestServer(app)) as client:
+            res = await client.get("/audio")
+            assert await res.content.readexactly(106) == b"\2\0" * 53
+            await asyncio.sleep(0.06)  # provider/tool gap, not a blocked HTTP write
+            assert not owner.stream.aborted and not owner.stream.http_finished.is_set()
+            await response(ws, rid="r2", initial_clear=False)
+            assert await res.read()
+            bridge.on_playback(owner.playback_id, "completed")
+            assert (await task).response_id == "r2"
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_cancel_closes_and_joins_sender_once(setup_bridge):
@@ -828,7 +936,7 @@ async def test_failed_mcp_tool_allows_gateway_error_summary(setup_bridge, retry)
             )
         await response(ws, rid="r2", initial_clear=False)
         await spin_until(lambda: owner.playback_id is not None)
-        assert await consume(owner) == b"\x02\x00" * 40
+        assert await consume(owner) == b"\x02\x00" * 53
         bridge.on_playback(owner.playback_id, "completed")
         result = await asyncio.wait_for(task, 2)
         assert result.response_id == "r2" and result.followup_eligible

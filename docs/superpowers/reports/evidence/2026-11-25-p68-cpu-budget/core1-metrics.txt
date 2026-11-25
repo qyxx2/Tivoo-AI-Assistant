@@ -1,0 +1,152 @@
+I (1541) s3_afe: feed=1024 x4 fetch=512 x1 rate=16000 VAD threshold=0.300 (smoke until hardware acceptance)
+I (11561) s3_afe: feed=155 fetch=310 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=8192 ring_free_pct=0.980 feed_max_us=51289 fetch_wait_max_us=133317 stack=2056/1780 internal_min=11056 internal_largest=7680 dma_largest=3840 psram_free=6898436
+I (21601) s3_afe: feed=312 fetch=622 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=16384 ring_free_pct=0.980 feed_max_us=54458 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6350220
+I (22721) audio_resource: generation=920001 PCM receive high_water=38912 prefill=25600 HTTP read_ms=5297 max_read_ms=110
+I (22921) audio_output: generation=920001 TX drained=1 underruns=0 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (22921) audio_output: generation=920001 missing_samples=0 max_gap_ms=0 rebuffers=0
+I (22921) PCM-DIAG: end mode=bulk bytes=384000 elapsed_ms=6332 drained=1 error=none
+I (22931) PCM-DIAG: cpu mode=bulk task=afe_fetch core=-2 run_us=3381311 wall_us=6339532 hundredth_pct=5333
+I (22981) PCM-DIAG: cpu mode=bulk task=pcm_diag core=-2 run_us=619468 wall_us=6339532 hundredth_pct=977
+I (22991) PCM-DIAG: cpu mode=bulk task=tivoo_tcp core=-2 run_us=154491 wall_us=6339532 hundredth_pct=243
+I (22991) PCM-DIAG: cpu mode=bulk task=tivoo_rt_tx core=-2 run_us=11027 wall_us=6339532 hundredth_pct=17
+I (23051) PCM-DIAG: cpu mode=bulk task=tivoo_diag core=-2 run_us=9956 wall_us=6339532 hundredth_pct=15
+I (23051) PCM-DIAG: cpu mode=bulk task=IDLE0 core=-2 run_us=140312 wall_us=6339532 hundredth_pct=221
+I (23111) PCM-DIAG: cpu mode=bulk task=IDLE1 core=-2 run_us=242860 wall_us=6339532 hundredth_pct=383
+I (23111) PCM-DIAG: cpu mode=bulk task=afe_capture core=-2 run_us=2090731 wall_us=6339532 hundredth_pct=3297
+I (23121) PCM-DIAG: cpu mode=bulk task=afe_feed core=-2 run_us=5149821 wall_us=6339532 hundredth_pct=8123
+I (23171) PCM-DIAG: cpu mode=bulk task=tcpip core=-2 run_us=349051 wall_us=6339532 hundredth_pct=550
+I (23171) PCM-DIAG: cpu mode=bulk task=tivoo_uart_rx core=-2 run_us=53385 wall_us=6339532 hundredth_pct=84
+I (23181) PCM-DIAG: cpu mode=bulk task=ipc1 core=-2 run_us=0 wall_us=6339532 hundredth_pct=0
+I (23191) PCM-DIAG: cpu mode=bulk task=esp_timer core=-2 run_us=1616 wall_us=6339532 hundredth_pct=2
+I (23241) PCM-DIAG: cpu mode=bulk task=tivoo_uart_tx core=-2 run_us=2133 wall_us=6339532 hundredth_pct=3
+I (23251) PCM-DIAG: cpu mode=bulk task=sys_evt core=-2 run_us=36283 wall_us=6339532 hundredth_pct=57
+I (23251) PCM-DIAG: cpu mode=bulk task=wifi core=-2 run_us=285007 wall_us=6339532 hundredth_pct=449
+I (23301) PCM-DIAG: cpu mode=bulk task=ipc0 core=-2 run_us=0 wall_us=6339532 hundredth_pct=0
+I (23311) PCM-DIAG: cpu mode=bulk task=Tmr Svc core=-2 run_us=0 wall_us=6339532 hundredth_pct=0
+W (26511) audio_resource: generation=920002 session_id= PCM supply rx_bytes=0 output_samples=320 last_rx_age_ms=53 feed_gap_max_ms=110 missing_samples=320 rebuffers=1
+W (27531) audio_resource: generation=920002 session_id= PCM supply rx_bytes=1024 output_samples=2656 last_rx_age_ms=52 feed_gap_max_ms=110 missing_samples=13280 rebuffers=3
+W (28561) audio_resource: generation=920002 session_id= PCM supply rx_bytes=1024 output_samples=1568 last_rx_age_ms=54 feed_gap_max_ms=110 missing_samples=21600 rebuffers=5
+W (29581) audio_resource: generation=920002 session_id= PCM supply rx_bytes=1024 output_samples=1600 last_rx_age_ms=1 feed_gap_max_ms=110 missing_samples=30880 rebuffers=7
+W (30611) audio_resource: generation=920002 session_id= PCM supply rx_bytes=0 output_samples=32 last_rx_age_ms=54 feed_gap_max_ms=110 missing_samples=38560 rebuffers=9
+I (31601) s3_afe: feed=468 fetch=935 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=24576 ring_free_pct=0.960 feed_max_us=54458 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6343096
+W (31631) audio_resource: generation=920002 session_id= PCM supply rx_bytes=0 output_samples=1824 last_rx_age_ms=51 feed_gap_max_ms=110 missing_samples=49600 rebuffers=10
+W (32651) audio_resource: generation=920002 session_id= PCM supply rx_bytes=1024 output_samples=64 last_rx_age_ms=2 feed_gap_max_ms=110 missing_samples=57440 rebuffers=13
+I (32661) audio_resource: generation=920002 PCM receive high_water=25600 prefill=25600 HTTP read_ms=8050 max_read_ms=110
+I (32781) audio_output: generation=920002 TX drained=1 underruns=361 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (32781) audio_output: generation=920002 missing_samples=57760 max_gap_ms=205 rebuffers=13
+I (32791) PCM-DIAG: end mode=chunked bytes=384000 elapsed_ms=8393 drained=1 error=none
+I (32841) PCM-DIAG: cpu mode=chunked task=afe_fetch core=-2 run_us=4549808 wall_us=8448452 hundredth_pct=5385
+I (32841) PCM-DIAG: cpu mode=chunked task=pcm_diag core=-2 run_us=1054283 wall_us=8448452 hundredth_pct=1247
+I (32851) PCM-DIAG: cpu mode=chunked task=IDLE0 core=-2 run_us=202067 wall_us=8448452 hundredth_pct=239
+I (32901) PCM-DIAG: cpu mode=chunked task=IDLE1 core=-2 run_us=123389 wall_us=8448452 hundredth_pct=146
+I (32911) PCM-DIAG: cpu mode=chunked task=tivoo_rt_tx core=-2 run_us=12308 wall_us=8448452 hundredth_pct=14
+I (32961) PCM-DIAG: cpu mode=chunked task=tivoo_diag core=-2 run_us=20094 wall_us=8448452 hundredth_pct=23
+I (32961) PCM-DIAG: cpu mode=chunked task=tivoo_uart_rx core=-2 run_us=70885 wall_us=8448452 hundredth_pct=83
+I (32971) PCM-DIAG: cpu mode=chunked task=tcpip core=-2 run_us=408303 wall_us=8448452 hundredth_pct=483
+I (33031) PCM-DIAG: cpu mode=chunked task=afe_capture core=-2 run_us=2805731 wall_us=8448452 hundredth_pct=3321
+I (33031) PCM-DIAG: cpu mode=chunked task=afe_feed core=-2 run_us=6881188 wall_us=8448452 hundredth_pct=8144
+I (33041) PCM-DIAG: cpu mode=chunked task=tivoo_tcp core=-2 run_us=180062 wall_us=8448452 hundredth_pct=213
+I (33091) PCM-DIAG: cpu mode=chunked task=Tmr Svc core=-2 run_us=0 wall_us=8448452 hundredth_pct=0
+I (33101) PCM-DIAG: cpu mode=chunked task=esp_timer core=-2 run_us=2522 wall_us=8448452 hundredth_pct=2
+I (33111) PCM-DIAG: cpu mode=chunked task=tivoo_uart_tx core=-2 run_us=2674 wall_us=8448452 hundredth_pct=3
+I (33161) PCM-DIAG: cpu mode=chunked task=sys_evt core=-2 run_us=74656 wall_us=8448452 hundredth_pct=88
+I (33161) PCM-DIAG: cpu mode=chunked task=wifi core=-2 run_us=310204 wall_us=8448452 hundredth_pct=367
+I (33171) PCM-DIAG: cpu mode=chunked task=ipc1 core=-2 run_us=0 wall_us=8448452 hundredth_pct=0
+I (33231) PCM-DIAG: cpu mode=chunked task=ipc0 core=-2 run_us=0 wall_us=8448452 hundredth_pct=0
+W (36231) audio_resource: generation=920003 session_id= PCM supply rx_bytes=0 output_samples=64 last_rx_age_ms=57 feed_gap_max_ms=66 missing_samples=160 rebuffers=1
+W (37261) audio_resource: generation=920003 session_id= PCM supply rx_bytes=0 output_samples=1152 last_rx_age_ms=57 feed_gap_max_ms=66 missing_samples=11520 rebuffers=2
+W (38291) audio_resource: generation=920003 session_id= PCM supply rx_bytes=0 output_samples=1184 last_rx_age_ms=56 feed_gap_max_ms=66 missing_samples=20960 rebuffers=4
+W (39311) audio_resource: generation=920003 session_id= PCM supply rx_bytes=1024 output_samples=1152 last_rx_age_ms=54 feed_gap_max_ms=108 missing_samples=31040 rebuffers=6
+W (40331) audio_resource: generation=920003 session_id= PCM supply rx_bytes=1024 output_samples=384 last_rx_age_ms=54 feed_gap_max_ms=108 missing_samples=39360 rebuffers=8
+W (41351) audio_resource: generation=920003 session_id= PCM supply rx_bytes=0 output_samples=96 last_rx_age_ms=54 feed_gap_max_ms=108 missing_samples=48160 rebuffers=11
+I (41651) s3_afe: feed=625 fetch=1249 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=24576 ring_free_pct=1.000 feed_max_us=56861 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6348144
+W (42381) audio_resource: generation=920003 session_id= PCM supply rx_bytes=0 output_samples=608 last_rx_age_ms=55 feed_gap_max_ms=108 missing_samples=58080 rebuffers=12
+I (42581) audio_resource: generation=920003 PCM receive high_water=25600 prefill=25600 HTTP read_ms=8005 max_read_ms=111
+I (42821) audio_output: generation=920003 TX drained=1 underruns=391 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (42821) audio_output: generation=920003 missing_samples=62560 max_gap_ms=200 rebuffers=13
+I (42831) PCM-DIAG: end mode=paced bytes=384000 elapsed_ms=8586 drained=1 error=none
+I (42891) PCM-DIAG: cpu mode=paced task=afe_capture core=-2 run_us=2866334 wall_us=8638796 hundredth_pct=3317
+I (42891) PCM-DIAG: cpu mode=paced task=afe_fetch core=-2 run_us=4639387 wall_us=8638796 hundredth_pct=5370
+I (42901) PCM-DIAG: cpu mode=paced task=pcm_diag core=-2 run_us=1047830 wall_us=8638796 hundredth_pct=1212
+I (42951) PCM-DIAG: cpu mode=paced task=IDLE0 core=-2 run_us=212294 wall_us=8638796 hundredth_pct=245
+I (42951) PCM-DIAG: cpu mode=paced task=IDLE1 core=-2 run_us=147867 wall_us=8638796 hundredth_pct=171
+I (42961) PCM-DIAG: cpu mode=paced task=tivoo_rt_tx core=-2 run_us=13179 wall_us=8638796 hundredth_pct=15
+I (43021) PCM-DIAG: cpu mode=paced task=tivoo_diag core=-2 run_us=20495 wall_us=8638796 hundredth_pct=23
+I (43021) PCM-DIAG: cpu mode=paced task=tivoo_uart_rx core=-2 run_us=74265 wall_us=8638796 hundredth_pct=85
+I (43031) PCM-DIAG: cpu mode=paced task=tcpip core=-2 run_us=417723 wall_us=8638796 hundredth_pct=483
+I (43081) PCM-DIAG: cpu mode=paced task=afe_feed core=-2 run_us=7052104 wall_us=8638796 hundredth_pct=8163
+I (43081) PCM-DIAG: cpu mode=paced task=tivoo_tcp core=-2 run_us=183815 wall_us=8638796 hundredth_pct=212
+I (43091) PCM-DIAG: cpu mode=paced task=ipc0 core=-2 run_us=0 wall_us=8638796 hundredth_pct=0
+I (43141) PCM-DIAG: cpu mode=paced task=esp_timer core=-2 run_us=2673 wall_us=8638796 hundredth_pct=3
+I (43141) PCM-DIAG: cpu mode=paced task=sys_evt core=-2 run_us=75477 wall_us=8638796 hundredth_pct=87
+I (43151) PCM-DIAG: cpu mode=paced task=tivoo_uart_tx core=-2 run_us=3222 wall_us=8638796 hundredth_pct=3
+I (43211) PCM-DIAG: cpu mode=paced task=wifi core=-2 run_us=323495 wall_us=8638796 hundredth_pct=374
+I (43211) PCM-DIAG: cpu mode=paced task=Tmr Svc core=-2 run_us=0 wall_us=8638796 hundredth_pct=0
+I (43271) PCM-DIAG: cpu mode=paced task=ipc1 core=-2 run_us=0 wall_us=8638796 hundredth_pct=0
+W (46411) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=608 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=1280 rebuffers=1
+W (47431) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=1536 last_rx_age_ms=53 feed_gap_max_ms=111 missing_samples=12480 rebuffers=3
+W (48461) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=128 last_rx_age_ms=1 feed_gap_max_ms=111 missing_samples=20320 rebuffers=5
+W (49481) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=1248 last_rx_age_ms=51 feed_gap_max_ms=111 missing_samples=31040 rebuffers=6
+W (50511) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=2592 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=41280 rebuffers=8
+W (51531) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1920 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=50720 rebuffers=10
+I (51661) s3_afe: feed=782 fetch=1562 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=24576 ring_free_pct=0.980 feed_max_us=57282 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6347968
+W (52551) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=2048 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=61120 rebuffers=13
+W (53581) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=512 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=68320 rebuffers=15
+W (54601) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1312 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=78880 rebuffers=16
+W (55631) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=2656 last_rx_age_ms=53 feed_gap_max_ms=111 missing_samples=88960 rebuffers=18
+W (56661) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=2688 last_rx_age_ms=57 feed_gap_max_ms=111 missing_samples=98240 rebuffers=20
+W (57681) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1856 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=107520 rebuffers=22
+W (58701) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1216 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=116640 rebuffers=24
+W (59731) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=1856 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=127040 rebuffers=26
+W (60751) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1888 last_rx_age_ms=56 feed_gap_max_ms=111 missing_samples=136320 rebuffers=28
+I (61671) s3_afe: feed=938 fetch=1875 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=28672 ring_free_pct=1.000 feed_max_us=57282 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6349728
+W (61771) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=864 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=145920 rebuffers=30
+W (62801) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=1216 last_rx_age_ms=56 feed_gap_max_ms=111 missing_samples=155520 rebuffers=32
+W (63821) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=2336 last_rx_age_ms=53 feed_gap_max_ms=111 missing_samples=166400 rebuffers=34
+W (64841) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=2368 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=175520 rebuffers=36
+W (65871) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=768 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=183840 rebuffers=38
+W (66891) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=928 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=193440 rebuffers=40
+W (67921) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=160 last_rx_age_ms=56 feed_gap_max_ms=111 missing_samples=202080 rebuffers=42
+W (68941) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=672 last_rx_age_ms=58 feed_gap_max_ms=111 missing_samples=211840 rebuffers=44
+W (69961) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=3104 last_rx_age_ms=53 feed_gap_max_ms=111 missing_samples=223520 rebuffers=46
+W (70991) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1536 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=231040 rebuffers=48
+I (71691) s3_afe: feed=1094 fetch=2188 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=32768 ring_free_pct=0.980 feed_max_us=57282 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6347964
+W (72011) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=256 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=239520 rebuffers=49
+W (73041) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=352 last_rx_age_ms=56 feed_gap_max_ms=111 missing_samples=247840 rebuffers=51
+W (74061) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=2944 last_rx_age_ms=52 feed_gap_max_ms=111 missing_samples=259520 rebuffers=53
+W (75091) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=3680 last_rx_age_ms=57 feed_gap_max_ms=111 missing_samples=268640 rebuffers=55
+W (76111) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=2240 last_rx_age_ms=53 feed_gap_max_ms=111 missing_samples=276800 rebuffers=57
+W (77131) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=2624 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=285920 rebuffers=59
+W (78151) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=736 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=293120 rebuffers=60
+W (79181) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1888 last_rx_age_ms=53 feed_gap_max_ms=111 missing_samples=303520 rebuffers=62
+W (80201) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=1792 last_rx_age_ms=52 feed_gap_max_ms=111 missing_samples=312320 rebuffers=64
+W (81231) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=1664 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=321440 rebuffers=66
+I (81711) s3_afe: feed=1251 fetch=2501 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=49152 ring_free_pct=0.960 feed_max_us=57282 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=3840 dma_largest=3840 psram_free=6347964
+W (82251) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=32 last_rx_age_ms=54 feed_gap_max_ms=111 missing_samples=332320 rebuffers=69
+W (83281) audio_resource: generation=920004 session_id= PCM supply rx_bytes=0 output_samples=2112 last_rx_age_ms=56 feed_gap_max_ms=111 missing_samples=344320 rebuffers=71
+W (84301) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=1632 last_rx_age_ms=56 feed_gap_max_ms=111 missing_samples=353600 rebuffers=73
+W (85331) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=2880 last_rx_age_ms=55 feed_gap_max_ms=111 missing_samples=365120 rebuffers=75
+W (86351) audio_resource: generation=920004 session_id= PCM supply rx_bytes=1024 output_samples=3232 last_rx_age_ms=52 feed_gap_max_ms=111 missing_samples=374560 rebuffers=77
+I (86411) audio_resource: generation=920004 PCM receive high_water=25600 prefill=25600 HTTP read_ms=41319 max_read_ms=115
+I (86601) audio_output: generation=920004 TX drained=1 underruns=2341 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (86601) audio_output: generation=920004 missing_samples=374560 max_gap_ms=230 rebuffers=77
+I (86611) PCM-DIAG: end mode=long bytes=1920000 elapsed_ms=42316 drained=1 error=none
+I (86661) PCM-DIAG: cpu mode=long task=afe_fetch core=-2 run_us=22785564 wall_us=42369821 hundredth_pct=5377
+I (86661) PCM-DIAG: cpu mode=long task=pcm_diag core=-2 run_us=5131213 wall_us=42369821 hundredth_pct=1211
+I (86671) PCM-DIAG: cpu mode=long task=IDLE0 core=-2 run_us=1005472 wall_us=42369821 hundredth_pct=237
+I (86721) PCM-DIAG: cpu mode=long task=IDLE1 core=-2 run_us=580537 wall_us=42369821 hundredth_pct=137
+I (86731) PCM-DIAG: cpu mode=long task=tivoo_rt_tx core=-2 run_us=63628 wall_us=42369821 hundredth_pct=15
+I (86741) PCM-DIAG: cpu mode=long task=tivoo_diag core=-2 run_us=105096 wall_us=42369821 hundredth_pct=24
+I (86791) PCM-DIAG: cpu mode=long task=tivoo_uart_rx core=-2 run_us=353631 wall_us=42369821 hundredth_pct=83
+I (86801) PCM-DIAG: cpu mode=long task=afe_capture core=-2 run_us=14051248 wall_us=42369821 hundredth_pct=3316
+I (86811) PCM-DIAG: cpu mode=long task=afe_feed core=-2 run_us=34661159 wall_us=42369821 hundredth_pct=8180
+I (86851) PCM-DIAG: cpu mode=long task=tcpip core=-2 run_us=2033631 wall_us=42369821 hundredth_pct=479
+I (86861) PCM-DIAG: cpu mode=long task=tivoo_tcp core=-2 run_us=891196 wall_us=42369821 hundredth_pct=210
+I (86921) PCM-DIAG: cpu mode=long task=ipc1 core=-2 run_us=0 wall_us=42369821 hundredth_pct=0
+I (86921) PCM-DIAG: cpu mode=long task=tivoo_uart_tx core=-2 run_us=16879 wall_us=42369821 hundredth_pct=3
+I (86931) PCM-DIAG: cpu mode=long task=esp_timer core=-2 run_us=12703 wall_us=42369821 hundredth_pct=2
+I (86991) PCM-DIAG: cpu mode=long task=sys_evt core=-2 run_us=380077 wall_us=42369821 hundredth_pct=89
+I (86991) PCM-DIAG: cpu mode=long task=wifi core=-2 run_us=1606593 wall_us=42369821 hundredth_pct=379
+I (86991) PCM-DIAG: cpu mode=long task=ipc0 core=-2 run_us=0 wall_us=42369821 hundredth_pct=0
+I (87051) PCM-DIAG: cpu mode=long task=Tmr Svc core=-2 run_us=0 wall_us=42369821 hundredth_pct=0
+I (91731) s3_afe: feed=1408 fetch=2815 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2780 cache_samples_ignored=61440 ring_free_pct=1.000 feed_max_us=57282 fetch_wait_max_us=133317 stack=2056/1780 internal_min=6956 internal_largest=8704 dma_largest=8704 psram_free=6894700

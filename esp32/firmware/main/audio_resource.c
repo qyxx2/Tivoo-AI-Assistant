@@ -267,6 +267,7 @@ static bool parse_audio_stop(
 
 #include "audio_output_manager.h"
 #include "audio_playback.h"
+#include "audio_pcm_buffer.h"
 #include "audio_frontend.h"
 #include "device_status.h"
 #include "diagnostics.h"
@@ -291,8 +292,24 @@ static bool parse_audio_stop(
 #define AUDIO_TASK_STACK 7168U
 #define ID_HISTORY 16U
 #define DMA_DRAIN_TIMEOUT_US 350000
+#define PCM_RECEIVE_CAPACITY (512U * 1024U)
+#define PCM_RECEIVE_PREFILL 25600U
+#define PCM_FEED_STACK 4096U
+/* IDF read() tries to fill the requested length. Flush short provider deltas
+ * well inside the 160ms output queue rather than holding them for 8 seconds. */
+#define PCM_READ_TIMEOUT_MS 40
 
 static SemaphoreHandle_t s_mutex;
+/* One HTTP owner at a time; static events outlive its feeder and stack.
+ * Signals are hints, not ownership transfers, and never run under a spinlock. */
+static StaticSemaphore_t s_pcm_data_control, s_pcm_space_control, s_pcm_done_control;
+static SemaphoreHandle_t s_pcm_data, s_pcm_space, s_pcm_done;
+
+static void wake_pcm_waiters(void)
+{
+    if (s_pcm_data) (void)xSemaphoreGive(s_pcm_data);
+    if (s_pcm_space) (void)xSemaphoreGive(s_pcm_space);
+}
 static atomic_bool s_output_claimed;
 
 bool tivoo_audio_resource_test_silent(void)
@@ -333,15 +350,18 @@ void tivoo_audio_resource_retire_local(const char *session_id, uint32_t epoch)
     if(!s_mutex || !session_id || !epoch) return;
     (void)xSemaphoreTake(s_mutex,portMAX_DELAY);
     audio_request_t *requests[]={s_active_request,s_pending_request};
+    bool wake = false;
     for (unsigned i=0;i<2;++i) {
         audio_request_t *request=requests[i];
         if(request && request->peer_generation==epoch && strcmp(request->session_id,session_id)==0 &&
            !request->terminal && !atomic_exchange(&request->stop_requested,true)) {
+            wake = true;
             tivoo_audio_output_stop(request->generation);
             if(request->socket_fd>=0) (void)shutdown(request->socket_fd,SHUT_RDWR);
         }
     }
     xSemaphoreGive(s_mutex);
+    if (wake) wake_pcm_waiters();
 }
 
 uint32_t tivoo_audio_resource_prompt_begin(void)
@@ -471,6 +491,161 @@ static esp_err_t http_event_handler(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
+/* The HTTP producer never waits for the 160 ms ISR queue unless the
+ * much larger PSRAM buffer is full. The feeder retains the existing PCM
+ * framing/EOF path and never exposes PSRAM to the DMA interrupt. */
+typedef struct {
+    audio_request_t *request;
+    tivoo_audio_playback_t *playback;
+    tivoo_pcm_buffer_t ring;
+    atomic_bool eof, abort, done;
+    atomic_uint last_receive_ms;
+    esp_err_t result;
+} pcm_receive_t;
+
+static void pcm_feed_task(void *context)
+{
+    pcm_receive_t *rx = context;
+    uint8_t block[HTTP_BUFFER_SIZE];
+    bool started = false;
+    esp_err_t result = ESP_OK;
+    uint64_t observed_missing = 0;
+    uint32_t last_log_ms = 0;
+    uint32_t last_run_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t max_feed_gap_ms = 0;
+    while (!atomic_load(&rx->abort) && !atomic_load(&rx->request->stop_requested)) {
+        const uint32_t last_receive_ms = atomic_load(&rx->last_receive_ms);
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (now - last_run_ms > max_feed_gap_ms) max_feed_gap_ms = now - last_run_ms;
+        last_run_ms = now;
+        tivoo_output_progress_t progress;
+        if (tivoo_audio_output_progress(rx->request->generation, &progress) &&
+            progress.missing_samples != observed_missing &&
+            (!observed_missing || now - last_log_ms >= 1000)) {
+            /* Sampled in task context after a gap, never log or touch PSRAM
+             * from DMA ISR. A feed gap includes deliberate blocking waits. */
+            TIVOO_LOGW(TAG, "generation=%lu session_id=%s PCM supply rx_bytes=%zu output_samples=%zu "
+                "last_rx_age_ms=%lu feed_gap_max_ms=%lu missing_samples=%llu rebuffers=%lu",
+                (unsigned long)rx->request->generation, rx->request->session_id,
+                tivoo_pcm_buffer_size(&rx->ring),
+                progress.queued_samples, (unsigned long)(now - last_receive_ms),
+                (unsigned long)max_feed_gap_ms, (unsigned long long)progress.missing_samples,
+                (unsigned long)progress.rebuffer_count);
+            observed_missing = progress.missing_samples;
+            last_log_ms = now;
+        }
+        bool eof = atomic_load(&rx->eof);
+        if (!started) {
+            if (!tivoo_pcm_buffer_ready(&rx->ring, PCM_RECEIVE_PREFILL, eof)) {
+                if (eof) { result = ESP_ERR_INVALID_STATE; break; }
+                (void)xSemaphoreTake(s_pcm_data, pdMS_TO_TICKS(20));
+                continue;
+            }
+            started = true;
+        }
+        size_t n = tivoo_pcm_buffer_pop(&rx->ring, block, sizeof(block));
+        if (n) (void)xSemaphoreGive(s_pcm_space);
+        bool last = eof && tivoo_pcm_buffer_size(&rx->ring) == 0;
+        if (n || last) {
+            result = tivoo_audio_playback_feed(rx->playback, block, n, last);
+            if (result != ESP_OK) break;
+            if (last) {
+                /* Publish EOF at the consumer boundary, without waiting for
+                 * the HTTP parent to be scheduled and joined first. */
+                tivoo_audio_output_finish_input(rx->request->generation);
+                break;
+            }
+        } else {
+            (void)xSemaphoreTake(s_pcm_data, pdMS_TO_TICKS(20));
+        }
+    }
+    rx->result = result;
+    /* This release-store is the last access to the parent's stack context.
+     * Only static event storage is touched afterwards, even if the parent
+     * observes done before the give and immediately releases the context. */
+    atomic_store(&rx->done, true);
+    (void)xSemaphoreGive(s_pcm_done);
+    vTaskDelete(NULL);
+}
+
+static const char *read_buffered_pcm(audio_request_t *request,
+    esp_http_client_handle_t client, tivoo_audio_playback_t *playback)
+{
+    if (esp_http_client_set_timeout_ms(client, PCM_READ_TIMEOUT_MS) != ESP_OK)
+        return "audio_http_failed";
+    uint8_t *storage = heap_caps_malloc(PCM_RECEIVE_CAPACITY, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!storage) return "audio_buffer_unavailable";
+    pcm_receive_t rx = {.request = request, .playback = playback};
+    tivoo_pcm_buffer_init(&rx.ring, storage, PCM_RECEIVE_CAPACITY);
+    atomic_init(&rx.eof, false);
+    atomic_init(&rx.abort, false);
+    atomic_init(&rx.done, false);
+    atomic_init(&rx.last_receive_ms, (uint32_t)(esp_timer_get_time() / 1000));
+    /* Keep the existing AFE-safe priority/core placement. */
+    if (xTaskCreatePinnedToCore(pcm_feed_task, "pcm_feed", PCM_FEED_STACK,
+            &rx, tskIDLE_PRIORITY + 6, NULL, 1) != pdPASS) {
+        free(storage);
+        return "audio_task_failed";
+    }
+    uint8_t block[HTTP_BUFFER_SIZE];
+    const char *error = NULL;
+    bool announced = false;
+    size_t high_water = 0;
+    int64_t read_us = 0, max_read_us = 0;
+    while (!atomic_load(&request->stop_requested) && !atomic_load(&rx.done)) {
+        int64_t start = esp_timer_get_time();
+        int n = esp_http_client_read(client, (char *)block, sizeof(block));
+        int64_t elapsed = esp_timer_get_time() - start;
+        read_us += elapsed;
+        if (elapsed > max_read_us) max_read_us = elapsed;
+        if (atomic_load(&request->stop_requested)) break;
+        if (n == -ESP_ERR_HTTP_EAGAIN) continue;
+        bool eof = esp_http_client_is_complete_data_received(client);
+        if (n < 0 || (!n && !eof)) { error = "audio_http_failed"; break; }
+        request->bytes_received += n;
+        if (n) atomic_store(&rx.last_receive_ms, (uint32_t)(esp_timer_get_time() / 1000));
+        size_t sent = 0;
+        while (sent < (size_t)n && !atomic_load(&request->stop_requested) &&
+               !atomic_load(&rx.done)) {
+            size_t pushed = tivoo_pcm_buffer_push(&rx.ring, block + sent, (size_t)n - sent);
+            sent += pushed;
+            size_t level = tivoo_pcm_buffer_size(&rx.ring);
+            if (level > high_water) high_water = level;
+            if (pushed) (void)xSemaphoreGive(s_pcm_data);
+            if (!announced && request->bytes_received >= PCM_RECEIVE_PREFILL) {
+                announced = true;
+                send_audio_state(request, "playing", NULL, false);
+            }
+            if (sent < (size_t)n) (void)xSemaphoreTake(s_pcm_space, pdMS_TO_TICKS(20));
+        }
+        if (eof && n < sizeof(block)) {
+            if (!announced && request->bytes_received && !atomic_load(&request->stop_requested)) {
+                announced = true;
+                send_audio_state(request, "playing", NULL, false);
+            }
+            atomic_store(&rx.eof, true);
+            (void)xSemaphoreGive(s_pcm_data);
+            break;
+        }
+    }
+    if (!atomic_load(&rx.eof) || error || atomic_load(&request->stop_requested)) {
+        atomic_store(&rx.abort, true);
+        (void)xSemaphoreGive(s_pcm_data);
+    }
+    /* Both the ring and stack context outlive the feeder's final access.
+     * Wakeups are hints: always recheck the level/stop/done condition. */
+    while (!atomic_load(&rx.done)) (void)xSemaphoreTake(s_pcm_done, pdMS_TO_TICKS(20));
+    if (!error && rx.result != ESP_OK && !atomic_load(&request->stop_requested))
+        error = "audio_pcm_invalid";
+    if (!error && !atomic_load(&request->stop_requested) &&
+        !tivoo_audio_playback_has_pcm(playback)) error = "audio_pcm_invalid";
+    ESP_LOGI(TAG, "generation=%lu PCM receive high_water=%zu prefill=%u HTTP read_ms=%ld max_read_ms=%ld",
+        (unsigned long)request->generation, high_water, PCM_RECEIVE_PREFILL,
+        (long)(read_us / 1000), (long)(max_read_us / 1000));
+    free(storage);
+    return error;
+}
+
 static const char *read_audio(
     audio_request_t *request, esp_http_client_handle_t client, bool *vad_suppressed)
 {
@@ -503,6 +678,12 @@ static const char *read_audio(
     tivoo_audio_playback_t *playback = tivoo_audio_playback_open(request->generation, pcm_rate);
     if (playback == NULL) {
         return format_error;
+    }
+
+    if (pcm_rate == 32000) {
+        const char *error = read_buffered_pcm(request,client,playback);
+        tivoo_audio_playback_close(playback);
+        return error;
     }
 
     const char *error = NULL;
@@ -769,11 +950,10 @@ static esp_err_t start_request(audio_request_t *request)
     }
 
     s_active_request = request;
-    // Keep MP3/SRC off the core that owns the time-sensitive microphone AFE.
-    /* Share core1 below AFE feed. Core0 capture/fetch can starve this
-     * HTTP/SRC worker; raising its priority there instead starves fetch. */
+    /* Network ingress stays on core0 with Wi-Fi/lwIP at p6, below
+     * capture p9 and AFE fetch p8. TCP buffering absorbs scheduler jitter. */
     if (xTaskCreatePinnedToCore(audio_resource_task, "tivoo_audio", AUDIO_TASK_STACK,
-            request, tskIDLE_PRIORITY + 3, NULL, 1) != pdPASS) {
+            request, tskIDLE_PRIORITY + 6, NULL, 0) != pdPASS) {
         s_active_request = NULL;
         atomic_store(&s_output_claimed,false);
         send_audio_state(request, "failed", "audio_task_failed", false);
@@ -820,6 +1000,9 @@ esp_err_t tivoo_audio_resource_init(void)
     if (err != ESP_OK) {
         return err;
     }
+    s_pcm_data = xSemaphoreCreateBinaryStatic(&s_pcm_data_control);
+    s_pcm_space = xSemaphoreCreateBinaryStatic(&s_pcm_space_control);
+    s_pcm_done = xSemaphoreCreateBinaryStatic(&s_pcm_done_control);
     s_mutex = xSemaphoreCreateMutex();
     if (s_mutex == NULL) {
         return ESP_ERR_NO_MEM;
@@ -863,6 +1046,7 @@ static esp_err_t stop_request(
         return ESP_ERR_INVALID_STATE;
     }
 
+    bool wake = false;
     (void)xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (!seen_id(s_recent_stops, request_id)) {
         remember_id(s_recent_stops, &s_next_stop, request_id);
@@ -878,6 +1062,7 @@ static esp_err_t stop_request(
             (strcmp(session_id,request->session_id)!=0 ||
              request->peer_generation!=tivoo_diagnostics_mic_generation())) request=NULL;
         if (request != NULL && !request->terminal && !atomic_exchange(&request->stop_requested, true)) {
+            wake = true;
             tivoo_audio_output_stop(request->generation);
             if (request->socket_fd >= 0) {
                 // Wake the HTTP worker without modifying ESP-IDF client state from this task.
@@ -886,6 +1071,7 @@ static esp_err_t stop_request(
         }
     }
     (void)xSemaphoreGive(s_mutex);
+    if (wake) wake_pcm_waiters();
     return ESP_OK;
 }
 

@@ -29,6 +29,10 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_I2S_ISR_IRAM_SAFE=y
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+# PCM streaming must tolerate application scheduling jitter without closing
+# the TCP receive window after only ~90 ms of 32 kHz mono PCM.
+CONFIG_LWIP_TCP_WND_DEFAULT=14360
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 # B8.7 measured CPU0 real-time AFE / TX activity can starve IDLE0 and make
 # the default idle-task watchdog stall DMA. Monitor IDLE1; keep the task
 # watchdog and CPU1 interrupt watchdog enabled, without relaxing send timers.
@@ -42,3 +46,7 @@ CONFIG_SR_MN_CN_NONE=y
 CONFIG_SR_MN_EN_NONE=y
 CONFIG_SR_WN_WN9_HIWALLE_TTS2=y
 CONFIG_TIVOO_AEC_REFERENCE_DELAY_SAMPLES=0
+
+# Sustained dual-mic AFE and PCM ingress exceed the default -Og CPU budget.
+# Keep assertions/debug symbols, but compile the normal firmware for speed.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y

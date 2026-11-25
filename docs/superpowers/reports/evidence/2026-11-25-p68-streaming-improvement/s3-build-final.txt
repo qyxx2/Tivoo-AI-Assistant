@@ -1,0 +1,4 @@
+Bootloader binary size 0x5280 bytes. 0x2d80 bytes (36%) free.
+Successfully created ESP32-S3 image.
+tivoo_firmware.bin binary size 0x26aa30 bytes. Smallest app partition is 0x800000 bytes. 0x5955d0 bytes (70%) free.
+Project build complete. To flash, run:

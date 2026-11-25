@@ -7,6 +7,7 @@
 #include "driver/i2s_std.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "audio_capture.h"
 #include "audio_output_manager.h"
 
@@ -20,6 +21,29 @@ struct channel {
 static struct channel *tx, *rx;
 static unsigned creates, disables, ticks;
 static bool fail_new, skip_rx, skip_tx, stall, stall_tx;
+static unsigned notifications, notification_waits, isr_notifications, semaphore_gives;
+static bool stop_on_wait, writer_woken;
+_Thread_local unsigned p68_critical_depth;
+static void step(void);
+SemaphoreHandle_t xSemaphoreCreateMutex(void) {
+    static StaticSemaphore_t mutex={.pending=1,.mutex=true};return &mutex;
+}
+SemaphoreHandle_t xSemaphoreCreateBinaryStatic(StaticSemaphore_t *s) {s->pending=0;return s;}
+BaseType_t xSemaphoreGive(SemaphoreHandle_t s) {assert(!p68_critical_depth);++semaphore_gives;s->pending=1;return pdTRUE;}
+BaseType_t xSemaphoreGiveFromISR(SemaphoreHandle_t s,BaseType_t *wake) {
+    assert(!p68_critical_depth);++semaphore_gives;++isr_notifications;s->pending=1;*wake=pdTRUE;return pdTRUE;
+}
+BaseType_t xSemaphoreTake(SemaphoreHandle_t s,TickType_t wait) {
+    assert(!p68_critical_depth);
+    if(wait) ++notification_waits;
+    if(!s->pending && wait) {
+        if(stop_on_wait) tivoo_audio_output_stop(1);
+        else step();
+    }
+    bool ready=s->pending;s->pending=0;
+    if(!ready) ticks+=wait/5;
+    return ready ? pdTRUE : pdFALSE;
+}
 static void step(void)
 {
     if(stall || !tx || !rx || !tx->enabled || !rx->enabled) return;
@@ -31,7 +55,7 @@ static void step(void)
 #ifdef P68_DMA_TX_OBSERVER
     P68_DMA_TX_OBSERVER(tx->slots[i]);
 #endif
-    if(!skip_tx && !stall_tx) tx->cb.on_sent(tx,&out,tx->ctx);
+    if(!skip_tx && !stall_tx) writer_woken=tx->cb.on_sent(tx,&out,tx->ctx);
     if(!skip_rx) rx->cb.on_recv(rx,&in,rx->ctx);
     skip_tx=skip_rx=false;
     ++ticks;
@@ -65,7 +89,22 @@ BaseType_t xQueueReceive(QueueHandle_t q,void *item,unsigned wait)
 { (void)wait; if(!q->count) step(); if(!q->count)return pdFALSE; memcpy(item,q->buf+q->head*q->size,q->size); q->head=(q->head+1)%q->n;--q->count;return pdTRUE; }
 unsigned uxQueueMessagesWaiting(QueueHandle_t q) { return q->count; }
 BaseType_t xQueueReset(QueueHandle_t q) {q->head=q->count=0;return pdTRUE;}
-void vTaskDelay(unsigned t) { (void)t; }
+void vTaskDelay(unsigned t) { ticks+=t; }
+TaskHandle_t xTaskGetCurrentTaskHandle(void) {return &notifications;}
+void xTaskNotifyGive(TaskHandle_t t) {assert(!p68_critical_depth);if(t){assert(t==&notifications);++notifications;}}
+void vTaskNotifyGiveFromISR(TaskHandle_t t,BaseType_t *wake) {
+    assert(!p68_critical_depth);assert(t==&notifications);++notifications;++isr_notifications;*wake=pdTRUE;
+}
+unsigned ulTaskNotifyTake(BaseType_t clear,TickType_t wait) {
+    assert(clear==pdTRUE);++notification_waits;
+    if(!notifications && wait) {
+        if(stop_on_wait) tivoo_audio_output_stop(1);
+        else step();
+    }
+    unsigned n=notifications;notifications=0;
+    if(!n) ticks+=wait/5;
+    return n;
+}
 unsigned uxTaskGetStackHighWaterMark(void *unused) { (void)unused;return 4096; }
 BaseType_t xTaskCreatePinnedToCore(void (*f)(void *),const char *name,unsigned stack,void *arg,unsigned prio,void *out,int core)
 { (void)stack;(void)prio;(void)out;(void)core; if(!strcmp(name,"dma_recover")) f(arg); return pdPASS; }
@@ -108,6 +147,17 @@ int main(int argc,char **argv)
             assert(tivoo_audio_output_begin(1));
         } else assert(tivoo_audio_output_begin_prompt(1));
         assert(tivoo_audio_output_try_write(1,pcm,TIVOO_OUTPUT_QUEUE_SAMPLES)==TIVOO_OUTPUT_QUEUE_SAMPLES);
+        if(!strcmp(argv[1],"writer") || !strcmp(argv[1],"writer_stop")) {
+            stop_on_wait=!strcmp(argv[1],"writer_stop");
+            esp_err_t result=tivoo_audio_output_write(1,pcm,TIVOO_OUTPUT_BLOCK);
+            assert(notification_waits>0);
+            assert(result==(stop_on_wait ? ESP_ERR_INVALID_STATE : ESP_OK));
+            if(!stop_on_wait) assert(isr_notifications && writer_woken);
+            unsigned before_notifications=semaphore_gives;
+            tivoo_audio_output_stop(1);step();
+            assert(semaphore_gives==before_notifications); /* waiter unregistered */
+            return 0;
+        }
         for(unsigned i=0;i<12;i++) {step();(void)tivoo_audio_capture_next(&frame);}
         if(!strcmp(argv[1],"normal")) {
             // Long ordinary streaming gap is not EOF and does not reset RX.
@@ -116,7 +166,7 @@ int main(int argc,char **argv)
             assert(tivoo_audio_output_try_write(1,pcm,1)==1);
             step(); (void)tivoo_audio_capture_next(&frame);
             unsigned last=(tx->index-1)%12;
-            assert(tx->slots[last][0]==(1234U<<16));
+            assert(tx->slots[last][0]==0); /* recovery waits for its watermark */
             tivoo_audio_output_stop(1);
             for(unsigned i=0;i<14;i++) {step();(void)tivoo_audio_capture_next(&frame);}
             uint64_t boundary=0;

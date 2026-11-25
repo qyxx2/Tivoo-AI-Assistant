@@ -1,0 +1,10 @@
+E   asyncio.exceptions.CancelledError
+E   TimeoutError
+E   asyncio.exceptions.CancelledError
+E   TimeoutError
+E   asyncio.exceptions.CancelledError
+E   TimeoutError
+FAILED tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py::test_pcm_http_delivers_each_chunk_before_audio_done[24000]
+FAILED tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py::test_pcm_http_delivers_each_chunk_before_audio_done[32000]
+FAILED tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py::test_playback_dispatched_on_delta_before_audio_done
+3 failed, 49 deselected, 5 warnings in 4.76s

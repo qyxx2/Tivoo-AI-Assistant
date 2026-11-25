@@ -1,0 +1,4 @@
+E   subprocess.CalledProcessError: Command '['/tmp/pytest-of-Gold/pytest-295/test_stereo_timeline_reference0/audio']' died with <Signals.SIGABRT: 6>.
+audio: /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_audio_host.c:112: main: Assertion `tivoo_output_refill(&q,dma,225)==0 && dma[0]==0 && q.count==1' failed.
+FAILED tests/esp32/test_p68_audio.py::test_stereo_timeline_reference_and_output
+1 failed, 2 deselected, 2 warnings in 0.26s

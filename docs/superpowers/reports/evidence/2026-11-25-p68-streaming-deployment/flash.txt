@@ -1,0 +1,12 @@
+Writing at 0x00247e06... (91 %)
+Writing at 0x0024d937... (92 %)
+Writing at 0x00253828... (93 %)
+Writing at 0x00259a06... (94 %)
+Writing at 0x00260568... (95 %)
+Writing at 0x002668aa... (96 %)
+Writing at 0x0026d784... (97 %)
+Writing at 0x00273575... (98 %)
+Writing at 0x0027853d... (100 %)
+Wrote 2533936 bytes (1594350 compressed) at 0x00010000 in 14.0 seconds (effective 1450.2 kbit/s)...
+Hash of data verified.
+Staying in bootloader.

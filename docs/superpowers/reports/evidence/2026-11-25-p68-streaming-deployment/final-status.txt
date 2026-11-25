@@ -1,0 +1,9 @@
+50ab2ab37119e8624d35ba0b8260ff810621a52f17f7872867e4ff693213ff02  /volume1/docker/tivoo-esptool/artifacts/p68-streaming-normal-20261125.bin
+{"ha_pids": ["74"], "tivoo_connections": [{"port": 7778, "remote": "192.168.3.40", "state": "ESTABLISHED"}, {"port": 7777, "remote": "192.168.3.40", "state": "ESTABLISHED"}]}
+HA_HTTP 200
+tivoo-esptool Up 10 hours
+qwen-audio-agent Up 17 hours
+homeassistant Up 4 minutes
+compose_sherpa-wyoming_1 Up 17 hours (healthy)
+mihomo Up 17 hours (healthy)
+mpd-server Up 17 hours

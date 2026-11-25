@@ -1,0 +1,43 @@
+I (1540) s3_afe: feed=1024 x4 fetch=512 x1 rate=16000 VAD threshold=0.300 (smoke until hardware acceptance)
+I (11550) s3_afe: feed=155 fetch=310 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2772 cache_samples_ignored=4096 ring_free_pct=0.980 feed_max_us=52685 fetch_wait_max_us=126365 stack=2048/1788 internal_min=16844 internal_largest=8704 dma_largest=8704 psram_free=6899184
+W (18510) audio_resource: generation=920001 session_id= PCM supply rx_bytes=4096 output_samples=0 last_rx_age_ms=9 feed_gap_max_ms=72 missing_samples=1280 rebuffers=1
+W (19530) audio_resource: generation=920001 session_id= PCM supply rx_bytes=4096 output_samples=1184 last_rx_age_ms=5 feed_gap_max_ms=72 missing_samples=8480 rebuffers=2
+W (20550) audio_resource: generation=920001 session_id= PCM supply rx_bytes=1024 output_samples=2816 last_rx_age_ms=5 feed_gap_max_ms=72 missing_samples=14080 rebuffers=4
+I (21560) s3_afe: feed=311 fetch=622 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2772 cache_samples_ignored=12288 ring_free_pct=0.980 feed_max_us=57797 fetch_wait_max_us=126365 stack=2048/1788 internal_min=12744 internal_largest=7680 dma_largest=4864 psram_free=6349772
+W (21570) audio_resource: generation=920001 session_id= PCM supply rx_bytes=0 output_samples=832 last_rx_age_ms=65 feed_gap_max_ms=72 missing_samples=20160 rebuffers=6
+W (22610) audio_resource: generation=920001 session_id= PCM supply rx_bytes=7168 output_samples=416 last_rx_age_ms=8 feed_gap_max_ms=77 missing_samples=26400 rebuffers=8
+W (23630) audio_resource: generation=920001 session_id= PCM supply rx_bytes=1024 output_samples=3776 last_rx_age_ms=2 feed_gap_max_ms=77 missing_samples=31520 rebuffers=10
+I (23920) audio_resource: generation=920001 PCM receive high_water=25600 prefill=25600 HTTP read_ms=6589 max_read_ms=177
+I (24100) audio_output: generation=920001 TX drained=1 underruns=197 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (24100) audio_output: generation=920001 missing_samples=31520 max_gap_ms=160 rebuffers=10
+I (24110) PCM-DIAG: end mode=bulk bytes=384000 elapsed_ms=7510 drained=1 error=none
+W (26950) audio_resource: generation=920002 session_id= PCM supply rx_bytes=2048 output_samples=128 last_rx_age_ms=2 feed_gap_max_ms=70 missing_samples=800 rebuffers=1
+W (27980) audio_resource: generation=920002 session_id= PCM supply rx_bytes=5120 output_samples=1152 last_rx_age_ms=5 feed_gap_max_ms=70 missing_samples=15840 rebuffers=3
+W (29000) audio_resource: generation=920002 session_id= PCM supply rx_bytes=0 output_samples=3776 last_rx_age_ms=71 feed_gap_max_ms=70 missing_samples=29600 rebuffers=5
+W (30030) audio_resource: generation=920002 session_id= PCM supply rx_bytes=2048 output_samples=1952 last_rx_age_ms=14 feed_gap_max_ms=70 missing_samples=41280 rebuffers=7
+W (31050) audio_resource: generation=920002 session_id= PCM supply rx_bytes=3072 output_samples=2208 last_rx_age_ms=2 feed_gap_max_ms=70 missing_samples=54720 rebuffers=10
+I (31590) s3_afe: feed=468 fetch=935 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2772 cache_samples_ignored=16384 ring_free_pct=1.000 feed_max_us=57797 fetch_wait_max_us=126365 stack=2048/1788 internal_min=12744 internal_largest=7680 dma_largest=4864 psram_free=6347800
+W (32070) audio_resource: generation=920002 session_id= PCM supply rx_bytes=0 output_samples=2080 last_rx_age_ms=69 feed_gap_max_ms=71 missing_samples=68800 rebuffers=13
+W (33100) audio_resource: generation=920002 session_id= PCM supply rx_bytes=3072 output_samples=2176 last_rx_age_ms=12 feed_gap_max_ms=72 missing_samples=84960 rebuffers=15
+W (34130) audio_resource: generation=920002 session_id= PCM supply rx_bytes=5120 output_samples=992 last_rx_age_ms=4 feed_gap_max_ms=72 missing_samples=97120 rebuffers=17
+W (35150) audio_resource: generation=920002 session_id= PCM supply rx_bytes=0 output_samples=256 last_rx_age_ms=70 feed_gap_max_ms=72 missing_samples=107520 rebuffers=19
+I (35440) audio_resource: generation=920002 PCM receive high_water=25600 prefill=25600 HTTP read_ms=9958 max_read_ms=125
+I (35570) audio_output: generation=920002 TX drained=1 underruns=698 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (35570) audio_output: generation=920002 missing_samples=111680 max_gap_ms=260 rebuffers=20
+I (35580) PCM-DIAG: end mode=chunked bytes=384000 elapsed_ms=10434 drained=1 error=none
+W (38470) audio_resource: generation=920003 session_id= PCM supply rx_bytes=2048 output_samples=32 last_rx_age_ms=13 feed_gap_max_ms=71 missing_samples=1920 rebuffers=1
+W (39500) audio_resource: generation=920003 session_id= PCM supply rx_bytes=4096 output_samples=128 last_rx_age_ms=10 feed_gap_max_ms=71 missing_samples=15360 rebuffers=2
+W (40520) audio_resource: generation=920003 session_id= PCM supply rx_bytes=1024 output_samples=2592 last_rx_age_ms=6 feed_gap_max_ms=71 missing_samples=28960 rebuffers=5
+W (41550) audio_resource: generation=920003 session_id= PCM supply rx_bytes=3072 output_samples=3072 last_rx_age_ms=3 feed_gap_max_ms=71 missing_samples=44480 rebuffers=7
+I (41640) s3_afe: feed=625 fetch=1249 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2772 cache_samples_ignored=28672 ring_free_pct=1.000 feed_max_us=57797 fetch_wait_max_us=126365 stack=2048/1788 internal_min=12744 internal_largest=7680 dma_largest=4864 psram_free=6345812
+W (42570) audio_resource: generation=920003 session_id= PCM supply rx_bytes=4096 output_samples=3104 last_rx_age_ms=4 feed_gap_max_ms=71 missing_samples=58720 rebuffers=9
+W (43590) audio_resource: generation=920003 session_id= PCM supply rx_bytes=1024 output_samples=128 last_rx_age_ms=5 feed_gap_max_ms=71 missing_samples=66880 rebuffers=12
+W (44620) audio_resource: generation=920003 session_id= PCM supply rx_bytes=4096 output_samples=352 last_rx_age_ms=5 feed_gap_max_ms=71 missing_samples=80960 rebuffers=14
+W (45650) audio_resource: generation=920003 session_id= PCM supply rx_bytes=3072 output_samples=1152 last_rx_age_ms=16 feed_gap_max_ms=71 missing_samples=94240 rebuffers=17
+W (46670) audio_resource: generation=920003 session_id= PCM supply rx_bytes=1024 output_samples=3168 last_rx_age_ms=8 feed_gap_max_ms=71 missing_samples=106880 rebuffers=19
+I (46710) audio_resource: generation=920003 PCM receive high_water=25600 prefill=25600 HTTP read_ms=9884 max_read_ms=184
+I (46850) audio_output: generation=920003 TX drained=1 underruns=668 queue_high_water=5120 missed_eofs=0 reference_peak=500
+I (46850) audio_output: generation=920003 missing_samples=106880 max_gap_ms=255 rebuffers=19
+I (46900) PCM-DIAG: end mode=paced bytes=384000 elapsed_ms=10320 drained=1 error=none
+I (51660) s3_afe: feed=782 fetch=1563 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2772 cache_samples_ignored=32768 ring_free_pct=1.000 feed_max_us=57797 fetch_wait_max_us=126365 stack=2048/1788 internal_min=12744 internal_largest=15872 dma_largest=15872 psram_free=6897860
+I (61670) s3_afe: feed=938 fetch=1876 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=42 missed_eof=0 capture_overruns=0 capture_stack=2772 cache_samples_ignored=34304 ring_free_pct=0.980 feed_max_us=57797 fetch_wait_max_us=126365 stack=2048/1788 internal_min=12744 internal_largest=15872 dma_largest=15872 psram_free=6897860

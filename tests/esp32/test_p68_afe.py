@@ -31,6 +31,19 @@ def test_s3_runs_real_afe_not_legacy_or_smoke():
     ) in afe
 
 
+def test_realtime_tasks_are_split_away_from_wifi_contention():
+    afe = (MAIN / "s3_afe.c").read_text()
+    resource = (MAIN / "audio_resource.c").read_text()
+    defaults = (MAIN.parent / "sdkconfig.defaults").read_text()
+    assert 'capture_task,"afe_capture",4096,NULL,9,&capture_handle,0' in afe
+    assert 'feed_task,"afe_feed",4096,NULL,7,&feed_handle,1' in afe
+    assert 'fetch_task,"afe_fetch",4096,NULL,8,&fetch_handle,0' in afe
+    assert '&rx, tskIDLE_PRIORITY + 6, NULL, 1' in resource
+    assert 'request, tskIDLE_PRIORITY + 6, NULL, 0' in resource
+    assert "CONFIG_LWIP_TCP_WND_DEFAULT=14360" in defaults
+    assert "CONFIG_LWIP_TCP_RECVMBOX_SIZE=12" in defaults
+
+
 def afe_headers():
     return {
         "esp_err.h": """#pragma once

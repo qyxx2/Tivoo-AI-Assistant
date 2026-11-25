@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-25",
+  "timezone": "Asia/Shanghai",
+  "deployed": true,
+  "ha_http_status": 200,
+  "ha_files_match": true,
+  "ha_pcm_before_audio_done_probe": true,
+  "s3_chip": "ESP32-S3",
+  "s3_port": "/dev/ttyACM1",
+  "s3_app_offset": "0x10000",
+  "s3_sha256": "50ab2ab37119e8624d35ba0b8260ff810621a52f17f7872867e4ff693213ff02",
+  "flash_independent_verify": "digest matched",
+  "runtime": "normal app",
+  "afe_observed_seconds": 70.12,
+  "ha_connected_ports": [
+    7777,
+    7778
+  ],
+  "automatic_voice_test": false,
+  "acoustic_playback_tested": false,
+  "ha_backup": "/volume1/docker/homeassistant/config/tivoo-deploy-backups/p68-streaming-20261125-094648/tivoo-before.tar.gz",
+  "s3_rollback": "/volume1/docker/tivoo-esptool/artifacts/p68-streaming-rollback-app-20261125.bin",
+  "s3_rollback_sha256": "43ca3636b4f79754e750a553f75b96894e005210bcbb440c5a082c2acd8d7191"
+}

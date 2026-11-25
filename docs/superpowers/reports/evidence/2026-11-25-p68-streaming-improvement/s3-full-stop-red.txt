@@ -1,0 +1,4 @@
+E   subprocess.CalledProcessError: Command '['/tmp/pytest-of-Gold/pytest-312/test_local_resource_worker_pcm1/resource-worker', 'pcm32_full_stop']' died with <Signals.SIGABRT: 6>.
+resource-worker: /home/Gold/WorkSpace/Tivoo-AI-Assistant/tests/esp32/p68_resource_worker_host.c:304: main: Assertion `atomic_load(&full_gate_passed) && atomic_load(&space_wakes)' failed.
+FAILED tests/esp32/test_p6_audio_resource.py::test_local_resource_worker[pcm32_full_stop]
+1 failed, 1 passed, 23 deselected, 2 warnings in 1.43s

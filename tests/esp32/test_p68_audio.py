@@ -1,12 +1,15 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = ROOT / "esp32/firmware/main"
 
-def test_stereo_timeline_reference_and_output(tmp_path):
+@pytest.mark.parametrize("optimization", ["-Og", "-O2"])
+def test_stereo_timeline_reference_and_output(tmp_path, optimization):
     exe = tmp_path / "audio"
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+    subprocess.run(["cc", "-std=c11", optimization, "-Wall", "-Wextra", "-Werror",
                     "-I", str(MAIN), str(Path(__file__).with_name("p68_audio_host.c")),
                     str(MAIN / "audio_capture.c"), str(MAIN / "audio_output_manager.c"),
                     "-o", str(exe)], check=True)
@@ -41,10 +44,13 @@ typedef int esp_err_t;
 #include <stddef.h>
 #include <stdint.h>
 typedef int BaseType_t;
+typedef unsigned TickType_t;
+typedef void *TaskHandle_t;
 typedef int portMUX_TYPE;
 #define portMUX_INITIALIZER_UNLOCKED 0
-#define portENTER_CRITICAL(l) ((void)(l))
-#define portEXIT_CRITICAL(l) ((void)(l))
+extern _Thread_local unsigned p68_critical_depth;
+#define portENTER_CRITICAL(l) do {(void)(l);++p68_critical_depth;} while(0)
+#define portEXIT_CRITICAL(l) do {(void)(l);--p68_critical_depth;} while(0)
 #define portENTER_CRITICAL_ISR portENTER_CRITICAL
 #define portEXIT_CRITICAL_ISR portEXIT_CRITICAL
 #define pdTRUE 1
@@ -69,6 +75,21 @@ int xPortGetCoreID(void);
 void vTaskDelete(void *);
 unsigned uxTaskGetStackHighWaterMark(void *);
 BaseType_t xTaskCreatePinnedToCore(void (*)(void *),const char *,unsigned,void *,unsigned,void *,int);
+TaskHandle_t xTaskGetCurrentTaskHandle(void);
+unsigned ulTaskNotifyTake(BaseType_t,TickType_t);
+void xTaskNotifyGive(TaskHandle_t);
+void vTaskNotifyGiveFromISR(TaskHandle_t,BaseType_t *);
+""",
+        "freertos/semphr.h": """#pragma once
+#include "freertos/FreeRTOS.h"
+#include <stdbool.h>
+typedef struct {unsigned pending;bool mutex;} StaticSemaphore_t;
+typedef StaticSemaphore_t *SemaphoreHandle_t;
+SemaphoreHandle_t xSemaphoreCreateMutex(void);
+SemaphoreHandle_t xSemaphoreCreateBinaryStatic(StaticSemaphore_t *);
+BaseType_t xSemaphoreTake(SemaphoreHandle_t,TickType_t);
+BaseType_t xSemaphoreGive(SemaphoreHandle_t);
+BaseType_t xSemaphoreGiveFromISR(SemaphoreHandle_t,BaseType_t *);
 """,
         "driver/i2s_std.h": """#pragma once
 #include <stdbool.h>
@@ -96,7 +117,8 @@ esp_err_t i2s_channel_read(i2s_chan_handle_t,void *,size_t,size_t *,unsigned);
     }
 
 
-def test_dma_runtime_recovery(tmp_path):
+@pytest.mark.parametrize("optimization", ["-Og", "-O2"])
+def test_dma_runtime_recovery(tmp_path, optimization):
     """Run the real ISR/capture/queue functions; only I2S/RTOS boundary is fake."""
     headers = dma_headers()
     for name, content in headers.items():
@@ -104,12 +126,12 @@ def test_dma_runtime_recovery(tmp_path):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
     exe = tmp_path / "dma"
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+    subprocess.run(["cc", "-std=c11", optimization, "-Wall", "-Wextra", "-Werror",
                     "-Wno-unused-variable", "-DESP_PLATFORM", "-I", str(tmp_path), "-I", str(MAIN),
                     str(Path(__file__).with_name("p68_dma_host.c")), str(MAIN / "audio_capture.c"),
                     str(MAIN / "audio_output_manager.c"), "-o", str(exe)], check=True)
     results = {case: subprocess.run([str(exe), case], capture_output=True, text=True)
-               for case in ("startup", "tx", "failure", "normal", "early_release", "repeat", "stalled_tx")}
+               for case in ("startup", "tx", "failure", "normal", "early_release", "repeat", "stalled_tx", "writer", "writer_stop")}
     assert all(r.returncode == 0 for r in results.values()), {
         case: r.stderr for case, r in results.items() if r.returncode
     }

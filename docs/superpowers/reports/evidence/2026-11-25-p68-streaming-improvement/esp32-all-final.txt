@@ -1,0 +1,19 @@
+..........F............................................................. [ 43%]
+........................................................................ [ 86%]
+......................                                                   [100%]
+=================================== FAILURES ===================================
+____ test_queued_records_survive_disconnect_and_replay_after_new_handshake _____
+tests/esp32/test_p5b2_diagnostics.py:214: in test_queued_records_survive_disconnect_and_replay_after_new_handshake
+    _handshake(second)
+tests/esp32/test_p5b2_diagnostics.py:86: in _handshake
+    message_type, sequence, hello = _read_frame(sock)
+                                    ^^^^^^^^^^^^^^^^^
+tests/esp32/test_p5b2_diagnostics.py:56: in _read_frame
+    header = _read_exact(sock, 16)
+             ^^^^^^^^^^^^^^^^^^^^^
+tests/esp32/test_p5b2_diagnostics.py:28: in _read_exact
+    chunk = sock.recv(size - len(chunks))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   ConnectionResetError: [Errno 104] Connection reset by peer
+=============================== warnings summary ===============================
+1 failed, 165 passed, 37 warnings in 86.10s (0:01:26)

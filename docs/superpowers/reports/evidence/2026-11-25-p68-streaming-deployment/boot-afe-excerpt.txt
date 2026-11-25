@@ -1,0 +1,26 @@
+I (956) app_init: Application information:
+I (959) app_init: Project name:     tivoo_firmware
+I (964) app_init: App version:      0.1.0
+I (968) app_init: Compile time:     Nov 24 2026 23:50:50
+I (973) app_init: ELF file SHA256:  4d234b435...
+I (977) app_init: ESP-IDF:          v6.1
+I (1137) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=0 reverse_peak=0 spp_peak=0
+I (1537) s3_afe: feed=1024 x4 fetch=512 x1 rate=16000 VAD threshold=0.300 (smoke until hardware acceptance)
+I (1667) s3_afe: AFE available: valid feed/fetch sample=4320 rx_gaps=1
+I (5437) tivoo_wifi: station_connected
+I (11167) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (11547) s3_afe: feed=155 fetch=310 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=0.980 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (21177) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (21567) s3_afe: feed=312 fetch=623 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=1.000 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (31177) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (31567) s3_afe: feed=468 fetch=936 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=0.980 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (41187) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (41607) s3_afe: feed=625 fetch=1249 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=1.000 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (51187) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (51607) s3_afe: feed=781 fetch=1562 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=0.980 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (61187) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (61627) s3_afe: feed=938 fetch=1875 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=1.000 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (71197) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (71647) s3_afe: feed=1094 fetch=2188 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=0.980 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898504
+I (81207) uart_bridge: decode_errors=0 uart_overflows=0 ack_timeouts=0 heartbeat_timeouts=0 seq_errors=0 ack_max_ms=51 reverse_peak=9 spp_peak=0
+I (81667) s3_afe: feed=1251 fetch=2501 feed_errors=0 fetch_errors=0 rx_gaps=1 resets=0 overruns=41 missed_eof=0 capture_overruns=0 capture_stack=2776 cache_samples_ignored=4096 ring_free_pct=1.000 feed_max_us=51689 fetch_wait_max_us=124665 stack=2048/1788 internal_min=24016 internal_largest=15872 dma_largest=15872 psram_free=6898528

@@ -1,0 +1,5 @@
+E   assert (not True)
+E    +  where True = <custom_components.tivoo.qwen_realtime.QwenPcmStream object at 0x783592f0e0>.aborted
+E    +    where <custom_components.tivoo.qwen_realtime.QwenPcmStream object at 0x783592f0e0> = <custom_components.tivoo.qwen_realtime.QwenTurnOwner object at 0x783592e270>.stream
+FAILED tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py::test_http_survives_tool_audio_gap_longer_than_write_timeout
+1 failed, 52 deselected, 5 warnings in 0.81s

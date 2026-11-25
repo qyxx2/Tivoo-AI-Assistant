@@ -71,24 +71,14 @@ typedef void *TaskHandle_t;
 #define portMAX_DELAY UINT32_MAX
 #define tskIDLE_PRIORITY 0
 """
-    headers["freertos/task.h"] = dma["freertos/task.h"] + """
-static inline unsigned ulTaskNotifyTake(int a,TickType_t b) {(void)a;(void)b;return 0;}
-static inline void xTaskNotifyGive(TaskHandle_t t) {(void)t;}
-"""
+    headers["freertos/task.h"] = dma["freertos/task.h"]
     headers["freertos/queue.h"] = dma["freertos/queue.h"] + """
 #include <stdlib.h>
 static inline QueueHandle_t xQueueCreate(size_t n,size_t s) {(void)n;(void)s;return NULL;}
 static inline int xQueueSend(QueueHandle_t q,const void *p,TickType_t t) {(void)q;(void)p;(void)t;return pdTRUE;}
 #define vQueueDelete free
 """
-    headers["freertos/semphr.h"] = """#pragma once
-#include "freertos/FreeRTOS.h"
-#include <assert.h>
-typedef int *SemaphoreHandle_t;
-static inline SemaphoreHandle_t xSemaphoreCreateMutex(void) {static int lock;return &lock;}
-static inline int xSemaphoreTake(SemaphoreHandle_t s,unsigned t) {(void)t;assert(!*s);*s=1;return pdTRUE;}
-static inline void xSemaphoreGive(SemaphoreHandle_t s) {assert(*s);*s=0;}
-"""
+    headers["freertos/semphr.h"] = dma["freertos/semphr.h"]
     headers["sdkconfig.h"] = dma["sdkconfig.h"]
     headers["esp_random.h"] = """
 #include <stddef.h>

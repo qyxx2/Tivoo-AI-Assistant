@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "initialization_only": false,
+  "failures": [],
+  "observed_runtime_seconds": 70.12,
+  "reports": 8,
+  "last": {
+    "feed": "1251",
+    "fetch": "2501",
+    "feed_errors": "0",
+    "fetch_errors": "0",
+    "rx_gaps": "1",
+    "resets": "0",
+    "overruns": "41",
+    "missed_eof": "0",
+    "capture_overruns": "0",
+    "capture_stack": "2776",
+    "cache_samples_ignored": "4096",
+    "ring_free_pct": "1.000",
+    "feed_max_us": "51689",
+    "fetch_wait_max_us": "124665",
+    "stack": "2048",
+    "internal_min": "24016",
+    "internal_largest": "15872",
+    "dma_largest": "15872",
+    "psram_free": "6898528"
+  }
+}

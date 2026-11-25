@@ -1,0 +1,24 @@
+.....................................................                    [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/homeassistant/components/http/server.py:223
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/homeassistant/components/http/server.py:223: DeprecationWarning: Inheritance class HomeAssistantApplication from web.Application is discouraged
+    class HomeAssistantApplication(web.Application):
+
+.venv/lib/python3.14/site-packages/backoff/_decorator.py:201
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_decorator.py:201: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(target):
+
+.venv/lib/python3.14/site-packages/backoff/_async.py:11
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_async.py:11: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(coro_or_func):
+
+.venv/lib/python3.14/site-packages/backoff/_async.py:127
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_async.py:127: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    assert not asyncio.iscoroutinefunction(max_tries)
+
+.venv/lib/python3.14/site-packages/backoff/_async.py:128
+  /home/Gold/WorkSpace/Tivoo-AI-Assistant/.venv/lib/python3.14/site-packages/backoff/_async.py:128: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    assert not asyncio.iscoroutinefunction(jitter)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+53 passed, 5 warnings in 3.86s

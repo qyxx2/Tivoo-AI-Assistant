@@ -108,9 +108,46 @@ int main(void) {
     for(unsigned i=24;i<224;i++) assert(tivoo_output_refill(&q,dma,i)==0);
     assert(!tivoo_output_drained(&q,1,224)); /* gap is not completion */
     assert(tivoo_output_push(&q,1,input,1)==1);
-    assert(tivoo_output_refill(&q,dma,225)==1 && dma[0]==65536 && dma[2]==0);
+    /* A tiny arriving fragment stays queued until recovery prefill or EOF. */
+    assert(tivoo_output_refill(&q,dma,225)==0 && dma[0]==0 && q.count==1);
+    assert(q.rebuffer_count==1 && q.missing_samples==201U*160U && q.max_gap_samples==201U*160U);
     assert(tivoo_output_finish_input(&q,1));
-    assert(!tivoo_output_drained(&q,1,225));
-    assert(tivoo_output_drained(&q,1,226));
+    assert(tivoo_output_refill(&q,dma,226)==1 && dma[0]==65536 && dma[2]==0);
+    assert(q.missing_samples==201U*160U); /* final padding is not an underrun */
+    assert(!tivoo_output_drained(&q,1,226));
+    assert(tivoo_output_drained(&q,1,227));
+    tivoo_output_end(&q,1);
+    assert(tivoo_output_begin(&q,2));
+    for (size_t i=0;i<TIVOO_OUTPUT_PREFILL;i++) input[i]=(int16_t)(i+1);
+    assert(tivoo_output_push(&q,2,input,TIVOO_OUTPUT_PREFILL)==TIVOO_OUTPUT_PREFILL);
+    for (unsigned i=0;i<24;i++) assert(tivoo_output_refill(&q,dma,i)==160);
+    assert(tivoo_output_refill(&q,dma,24)==0);
+    assert(tivoo_output_push(&q,2,input,TIVOO_OUTPUT_PREFILL-1)==TIVOO_OUTPUT_PREFILL-1);
+    assert(tivoo_output_refill(&q,dma,25)==0);
+    assert(tivoo_output_push(&q,2,input+TIVOO_OUTPUT_PREFILL-1,1)==1);
+    for (unsigned i=0;i<24;i++) {
+        assert(tivoo_output_refill(&q,dma,26+i)==160);
+        for (unsigned j=0;j<160;j++) assert(dma[2*j]==(uint32_t)(i*160+j+1)<<16);
+    }
+    /* STOP discards a pending recovery fragment and never restarts it. */
+    assert(tivoo_output_refill(&q,dma,50)==0);
+    assert(tivoo_output_push(&q,2,input,1)==1);
+    assert(tivoo_output_stop(&q,2));
+    assert(tivoo_output_refill(&q,dma,51)==0 && q.count==0);
+    tivoo_output_end(&q,2);
+    /* Eager prompts retain low latency; even partial missing blocks count. */
+    assert(tivoo_output_begin_prompt(&q,3));
+    assert(tivoo_output_push(&q,3,input,160)==160);
+    assert(tivoo_output_refill(&q,dma,0)==160);
+    assert(tivoo_output_push(&q,3,input,1)==1);
+    assert(tivoo_output_refill(&q,dma,1)==1);
+    assert(q.missing_samples==159 && q.rebuffer_count==0);
+    tivoo_output_end(&q,3);
+    assert(tivoo_output_begin_prompt(&q,4));
+    for (unsigned i=0;i<3;i++) {
+        assert(tivoo_output_push(&q,4,input,80)==80);
+        assert(tivoo_output_refill(&q,dma,i)==80);
+        assert(q.missing_samples==(i+1)*80 && q.max_gap_samples==80);
+    }
     return 0;
 }
