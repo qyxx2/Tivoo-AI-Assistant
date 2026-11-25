@@ -2,18 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将当前 P6.8 的本地语音输入改为 `S3 PCM → Sherpa device-endpoint STT → HA local-first → local miss 才提交 Qwen 文本`，同时保持现有 Qwen 音频输出链和 S3 固件不变。
+**Goal:** 将当前 P6.8 的本地语音输入改为 `S3 PCM → Sherpa device-endpoint STT → HA local-first → local miss 才提交 Qwen 文本`；本地 typed action 由 S3 固化成功/失败 ACK 低延迟反馈，同时保持现有 Qwen 音频输出链不变。
 
-**Architecture:** S3 继续上传现有 16 kHz mono S16LE PCM；HA 先复用 B5 已验收的 Wyoming/Sherpa device-endpoint 仅完成 STT，再用 HA Core 的 sentence trigger 与 local intent API 做本地匹配。本地命中继续由 HA 现有本地响应所有权完成；本地未命中时，将同一 Sherpa final transcript 通过 Qwen GCP 7.0 `conversation.item.create(parts[text])` 提交到当前 Audio Agent，并复用现有 tool/audio/playback/follow-up 生命周期。Qwen `audio.delta` 之后的输出实现为硬冻结区。
+**Architecture:** S3 继续上传现有 16 kHz mono S16LE PCM；HA 先复用 B5 已验收的 Wyoming/Sherpa device-endpoint 完成 STT，再用 HA Core sentence trigger 与 local intent API 做本地匹配。typed local action 的 `action_done` 下发 S3 固化 success ACK，`partial_action_done/error` 下发 failure ACK；`query_answer` 与 sentence trigger 继续使用 HA 动态 TTS；只有真正 local miss 才把同一 transcript 通过 Qwen GCP 7.0 `conversation.item.create(parts[text])` 提交 Audio Agent。Qwen `audio.delta` 之后的输出实现仍为硬冻结区。
 
 **Tech Stack:** Home Assistant 2026.11.0、Python 3.14、Wyoming 1.10.2、Sherpa-ONNX Paraformer device endpoint、Qwen Audio Agent v2.1.0 / GCP 7.0、qwen3.8-omni-flash-realtime、pytest。
 
 **Spec:** `docs/superpowers/specs/2026-11-25-p6-8-b8-8-stt-local-intent-qwen-text-contract-matrix.md`
 
+> **2026-11-25 amendment:** Tasks 1-4 的既有执行/提交不回开；新增“本地 action 成功/失败固化语音反馈”从 **Task 4.1** 开始实施。不要把该需求补回已经执行中的 Task 1。
+
 ## Global Constraints
 
 - S3 当前 MIC 输入已是 Sherpa 所需格式：16,000 Hz、16-bit、mono、S16LE；B5 已验证现有 HA→Wyoming 路径 64,000 B 逐字节一致，因此 **不得增加重采样、WAV 中转、落盘、二次 ring 或 B8.8 固定重分块层**。
-- `esp32/firmware/**` 在 B8.8 实现提交中必须零 diff。
+- S3 只允许本地 ACK 最小扩展：`TYPE_LOCAL_ACK_PLAY=0x28`、`local_success_01/local_failure_01` 固化资产、现有 short-prompt owner 接入及测试；WakeNet/AFE/MIC/Qwen HTTP playback/SRC/调度不得改变。
 - 继续使用 `Sherpa ONNX Paraformer Device Endpoint`：`requires_external_vad=false`、`supports_transcript_streaming=false`；正常 EOF 只允许一次 `AudioStop` 和一次最终 decode。
 - Sherpa final transcript 是用户文本权威；Qwen 的 user `transcript.final` 只作为 Gateway 回显，不能重新判定 STT 成功。
 - 本地匹配顺序固定为 sentence trigger → HA local intent；已匹配但执行失败仍属于 local hit，不允许再 fallback 到 Qwen 重复副作用。
@@ -21,17 +23,17 @@
 - local miss 禁止 replay 原始 PCM 给 Qwen，也禁止文本+同一音频双输入。
 - Qwen Agent 的 Prompt、persona/memory、Frontend MCP、tool-result continuation、response/follow-up 逻辑保持。
 - 从 `QwenRealtimeBridge._handle()` 接收 `audio.delta`、`QwenPcmStream`、`TivooQwenPcmView`、`_open_output()`、`async_send_tts_play()` 到 S3 playback/AUDIO_STATE 的现有输出路径禁止为 B8.8 额外修改。
-- 不新增 TTS 引擎；local hit 若有本地响应，复用当前 HA pipeline 的 TTS/播放所有权。
+- 不新增运行时 TTS 引擎；typed action 使用 S3 固化 ACK，`query_answer`/sentence trigger 才复用当前 HA pipeline 动态 TTS。
 - 不加固定 sleep；不等待 Qwen user transcript 后才进入 thinking；不新增额外预缓冲。
 - 所有新路径继续使用当前 MIC session_id、HA Context/generation、Qwen turnId/responseId、playback_id 隔离，不建立第二套状态机。
 
 ## Review Focus
 
-- **本地已匹配但服务执行失败：** 必须只返回本地失败结果，Qwen 无 user turn、MCP 无二次控制；Task 4 增加覆盖。
+- **本地已匹配但服务执行失败：** `partial_action_done/error` 必须只播 S3 failure ACK，Qwen 无 user turn、MCP 无二次控制；Task 4.1 增加覆盖。
 - **follow-up 本地命中：** 不提交 Qwen 文本，并释放上一轮保留 socket，不能泄漏到下一次独立 wake；Task 5 增加覆盖。
 - **STT 正常 EOF 前被 supersede/disconnect：** 不产生可执行 transcript、不发 Qwen 文本；Task 3/5 增加覆盖。
 - **Qwen text submit 成功但 response/tool/audio 迟到到旧 generation：** 继续按现有 owner fencing 丢弃；Task 5 增加覆盖。
-- **local hit 与 Qwen fallback 双播：** 一个 turn 只能拥有 HA local playback 或 Qwen playback 之一；Task 4/5 增加互斥断言。
+- **local hit 与 Qwen fallback 双播：** 一个 turn 只能拥有 S3 ACK、HA dynamic TTS、Qwen playback 三者之一；Task 4.1/5 增加互斥断言。
 
 ---
 
@@ -337,11 +339,11 @@ Expected: FAIL because local router 尚不存在。
 
 不要调用 `conversation.async_converse()`；因此 AstrBot/其它 LLM 不可能在 B8.8 local router 中先执行一次。
 
-- [ ] **Step 4: local hit 复用现有 HA TTS owner**
+- [ ] **Step 4: local hit 复用现有 HA TTS owner（历史 Task 4 行为；typed action 由 Task 4.1 覆盖）**
 
-local hit 有 speech 时，用当前 dedicated pipeline 的既有 TTS 配置执行 **TTS-only** HA Pipeline；不得重新跑 STT/Intent。使用 HA `PipelineRun` + `PipelineInput(tts_input=..., start_stage=PipelineStage.TTS, end_stage=PipelineStage.TTS)`，event callback 继续交给当前 `PipelineTtsEvents`，从而保持既有 HA TTS proxy → `TTS_PLAY` 所有权。
+Task 4 实施时，local hit 有 speech 使用当前 dedicated pipeline 的既有 TTS 配置执行 **TTS-only** HA Pipeline；不得重新跑 STT/Intent。使用 HA `PipelineRun` + `PipelineInput(tts_input=..., start_stage=PipelineStage.TTS, end_stage=PipelineStage.TTS)`，event callback 继续交给当前 `PipelineTtsEvents`。
 
-local hit 无 speech 时直接完成本轮，不创建 Qwen turn，也不新增 TTS 引擎。
+**最终 B8.8 行为以 Task 4.1 为准：** 只有 `query_answer` 与 sentence trigger 保留这条动态 TTS 路径；`action_done/partial_action_done/error` 改走 S3 固化 ACK。不要重开 Task 4 来实现 ACK。
 
 - [ ] **Step 5: 锁定 local/Qwen playback 互斥**
 
@@ -366,6 +368,205 @@ git add homeassistant/custom_components/tivoo/assist_satellite.py tests/homeassi
 git commit -m "feat(p6.8): route sherpa text through ha local intents"
 ```
 
+### Task 4.1: 本地 typed action 使用 S3 固化成功/失败 ACK
+
+> **Amendment boundary:** Task 4 已经执行完成；本 Task 只在其 `LocalRouteResult` 之上增加 typed-result 分类与本地 ACK，不回改 Task 1，也不改变 Task 2/3 的 Qwen text/STT 合同。
+
+**Files:**
+- Create: `homeassistant/prompt_assets/local_success_01.mp3`
+- Create: `homeassistant/prompt_assets/local_failure_01.mp3`
+- Modify: `esp32/firmware/main/generate_prompts.py`
+- Modify: `esp32/firmware/main/CMakeLists.txt`
+- Modify: `esp32/firmware/main/diagnostics.h`
+- Modify: `esp32/firmware/main/diagnostics.c`
+- Modify: `esp32/firmware/main/s3_local_turn.h`
+- Modify: `esp32/firmware/main/s3_local_turn.c`
+- Modify: `esp32/firmware/main/audio_resource.h` / `audio_resource.c` only as needed to expose/reuse the existing short-prompt owner and `AUDIO_STATE` helper
+- Modify: `homeassistant/custom_components/tivoo/diagnostics.py`
+- Modify: `homeassistant/custom_components/tivoo/transport.py`
+- Modify: `homeassistant/custom_components/tivoo/assist_satellite.py`
+- Test: `tests/homeassistant/custom_components/tivoo/test_prompt_assets.py`
+- Test: `tests/homeassistant/custom_components/tivoo/test_transport.py`
+- Test: `tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py`
+- Test: `tests/esp32/test_p68_prompt.py`
+- Test: `tests/esp32/test_p68_turn.py`
+- Test: `tests/esp32/test_p68_audio.py`
+
+**Interfaces:**
+- Consumes: Task 4 `LocalRouteResult`、HA `IntentResponseType`、当前 local session/playback ownership。
+- Extends: `LocalRouteResult` 增加 `response_type: str | None`；sentence trigger 与 miss 为 `None`，typed local intent 保存 `intent_response.response_type.value`。
+- Produces: `TYPE_LOCAL_ACK_PLAY = 0x28`。
+- Produces: `Esp32ConnectionAdapter.async_send_local_ack(playback_id: str, session_id: str, result: str) -> None`，其中 `result` 只允许 `"success"` / `"failure"`。
+- Wire payload: `{"session_id":"<uuid>","playback_id":"<uuid>","result":"success|failure"}`。
+- Device terminal: 继续使用既有 `TYPE_AUDIO_STATE` + 同一 `playback_id` 报 `playing/completed/failed`。
+
+- [ ] **Step 1: 写 typed-result 分类 RED tests**
+
+在 `test_qwen_satellite.py` 固定最终路由：
+
+```text
+action_done         -> local ACK "success"
+partial_action_done -> local ACK "failure"
+error               -> local ACK "failure"
+query_answer        -> HA dynamic TTS
+sentence trigger    -> HA dynamic TTS
+local miss          -> no local audio, later Task 5 Qwen fallback
+```
+
+关键断言：
+- typed action 的 intent speech 文本不触发运行时 HA TTS；
+- `partial_action_done/error` 仍是 `handled=True`，Qwen user turn 数为 0；
+- query/sentence trigger 不发送 `TYPE_LOCAL_ACK_PLAY`；
+- 单 turn 只能出现 ACK / dynamic TTS / Qwen 中的一个 owner。
+
+- [ ] **Step 2: 跑 classification RED**
+
+Run:
+```bash
+pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py -k 'action_done or partial_action or query_answer or local_ack'
+```
+
+Expected: FAIL because `LocalRouteResult` 尚未保留 `response_type`，也没有 local ACK transport。
+
+- [ ] **Step 3: 固化两条 flash 语音资产**
+
+新增：
+- `local_success_01.mp3`：语义/文案“搞定”；
+- `local_failure_01.mp3`：语义/文案“操作失败”。
+
+制作要求：
+- 与现有 ready 语音使用相同已记录生产音色（Matcha Baker + Vocos，voice/sid 0、speed 1.0）一次性生成；
+- 运行时不依赖 TTS；
+- 源 MP3 进入 `homeassistant/prompt_assets/`；
+- 在 `generate_prompts.py` 固定 SHA256 与期望 PCM byte size；
+- 沿用现有 FFmpeg build step 转 32 kHz mono S16LE；
+- CMake `OBJECT_DEPENDS` 加入两条生成 PCM；
+- 两条 ACK asset 属于必需资产：缺失、哈希或长度不符必须 build fail，不允许静默使用旧 PCM；原 ready/followup 的既有缺失策略保持，不顺手改动。
+
+- [ ] **Step 4: 写并跑 asset RED/GREEN**
+
+扩展 `test_prompt_assets.py` 与 ESP prompt host test，断言两条资产：
+- 可确定性重建；
+- PCM 非空、sample-aligned；
+- 位于 flash rodata；
+- 不通过 HTTP/运行时 MP3 decoder/TTS；
+- 原 ready/followup 选择行为不变。
+
+Run:
+```bash
+pytest -q tests/homeassistant/custom_components/tivoo/test_prompt_assets.py tests/esp32/test_p68_prompt.py
+```
+
+Expected: PASS after asset/generator changes.
+
+- [ ] **Step 5: 增加 `TYPE_LOCAL_ACK_PLAY = 0x28` transport contract**
+
+HA 与 S3 同步定义 `0x28`；项目现状已确认该值未占用。
+
+HA `async_send_local_ack()` 必须：
+- 校验 UUID playback/session；
+- `result` 仅允许 `success|failure`；
+- 只走现有 diagnostic channel；
+- 不携带 URL/mime；
+- 不调用 `async_send_tts_play()`。
+
+S3 parser 必须拒绝：
+- 非当前 local session；
+- 非法/缺失 UUID；
+- 未知 result；
+- 已绑定其它 playback 或已终止 turn；
+并且这些失败不得触发 Qwen 或 service 重试。
+
+- [ ] **Step 6: 跑 transport RED/GREEN**
+
+Run:
+```bash
+pytest -q tests/homeassistant/custom_components/tivoo/test_transport.py tests/esp32/test_p68_turn.py -k 'ack or local'
+```
+
+Expected: PASS。
+
+- [ ] **Step 7: S3 复用现有 short-prompt/audio owner 播 ACK**
+
+实现约束：
+- diagnostic RX 只登记/授权 ACK，不直接向 I2S 写 PCM；
+- 实际写入继续发生在现有 local-turn/fetch 调度上下文；
+- 复用 `tivoo_audio_resource_prompt_begin()`、`tivoo_audio_output_begin_prompt()`、`tivoo_audio_output_try_write()`、drain/release；
+- 复用 `tivoo_s3_local_turn_bind_playback(session_id, playback_id)` 现有 local owner fencing；
+- `success` 选择 `local_success_01`，`failure` 选择 `local_failure_01`；
+- ACK 作为 response playback 使用既有 `TYPE_AUDIO_STATE` 回 `playing/completed/failed`，terminal 同时进入现有 `tivoo_s3_local_turn_playback_finished(...)`/等价完成路径；
+- ready/followup prompt 仍不发送 ordinary `AUDIO_STATE`，不要改变其合同；
+- 不改 audio_output_manager 的 buffer、DMA、SRC、core/priority 或 AFE 协调算法。
+
+- [ ] **Step 8: 跑 S3 owner/terminal GREEN**
+
+Run:
+```bash
+pytest -q tests/esp32/test_p68_audio.py tests/esp32/test_p68_prompt.py tests/esp32/test_p68_turn.py
+```
+
+Expected: PASS，且覆盖：
+- success/failure 各一次；
+- busy/fault → `AUDIO_STATE failed`；
+- stale session/playback 拒绝；
+- 同 turn 不双播；
+- 原 ready/followup prompt 终态行为不变。
+
+- [ ] **Step 9: HA 按 `IntentResponseType` 选择反馈**
+
+在 `_async_route_local_transcript()` 保存 typed intent 的 `response_type`。
+
+在 local-hit completion 路径：
+- `action_done` → 生成一个 playback_id，发送 `result=success`；
+- `partial_action_done` / `error` → 生成一个 playback_id，发送 `result=failure`；
+- `query_answer` → 保持现有 `_async_run_local_tts(turn, speech)`；
+- sentence trigger → 保持动态 TTS；
+- action ACK 的 `turn` 记录该 playback_id，并以匹配 `AUDIO_STATE` 的真实 terminal 决定 response completion / follow-up，不用 sleep 猜时长。
+
+- [ ] **Step 10: 跑 HA lifecycle GREEN**
+
+Run:
+```bash
+pytest -q \
+  tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py \
+  tests/homeassistant/custom_components/tivoo/test_p68_local_session.py \
+  tests/homeassistant/custom_components/tivoo/test_transport.py
+```
+
+Expected: PASS，尤其：
+- action success/failure 无 Qwen user turn；
+- action success/failure 无 HA TTS request；
+- query/sentence trigger 无 ACK；
+- ACK `completed` 后才结束本轮；
+- ACK `failed/stopped/interrupted` fail closed，不 fallback Qwen/TTS；
+- follow-up 若由 HA 明确授权，仍等待匹配 ACK physical completion 后才开放。
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add \
+  homeassistant/prompt_assets/local_success_01.mp3 \
+  homeassistant/prompt_assets/local_failure_01.mp3 \
+  esp32/firmware/main/generate_prompts.py \
+  esp32/firmware/main/CMakeLists.txt \
+  esp32/firmware/main/diagnostics.h \
+  esp32/firmware/main/diagnostics.c \
+  esp32/firmware/main/s3_local_turn.h \
+  esp32/firmware/main/s3_local_turn.c \
+  esp32/firmware/main/audio_resource.h \
+  esp32/firmware/main/audio_resource.c \
+  homeassistant/custom_components/tivoo/diagnostics.py \
+  homeassistant/custom_components/tivoo/transport.py \
+  homeassistant/custom_components/tivoo/assist_satellite.py \
+  tests/homeassistant/custom_components/tivoo/test_prompt_assets.py \
+  tests/homeassistant/custom_components/tivoo/test_transport.py \
+  tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py \
+  tests/esp32/test_p68_prompt.py \
+  tests/esp32/test_p68_turn.py \
+  tests/esp32/test_p68_audio.py
+git commit -m "feat(p6.8): add local action result acknowledgements"
+```
+
 ### Task 5: local miss 切换到 Qwen text turn，并收口 lifecycle/follow-up
 
 **Files:**
@@ -375,7 +576,7 @@ git commit -m "feat(p6.8): route sherpa text through ha local intents"
 - Modify: `tests/homeassistant/custom_components/tivoo/test_qwen_lifecycle.py`
 
 **Interfaces:**
-- Consumes: Task 2 `QwenRealtimeBridge.async_run_text(...)`、Task 4 `LocalRouteResult`。
+- Consumes: Task 2 `QwenRealtimeBridge.async_run_text(...)`、Task 4/4.1 `LocalRouteResult` 与 local response ownership。
 - Produces: local-miss handoff；必要时新增 `QwenRealtimeBridge.async_release_retained(parent_session_id: str) -> None`，只用于 follow-up local hit 后释放上一轮 retained socket。
 
 - [ ] **Step 1: 写 local-miss text handoff RED test**
@@ -471,7 +672,7 @@ git commit -m "feat(p6.8): fallback local misses to qwen text"
 **Files:**
 - Create: `docs/superpowers/reports/2026-11-25-p6-8-b8-8-acceptance.md`
 - Modify tests only if an uncovered regression is found
-- Do not modify: `esp32/firmware/**`
+- S3 changes after Task 4.1 are prohibited; Task 6 may only build/flash/verify the exact Task 4.1 ACK firmware
 
 **Interfaces:**
 - Consumes: Tasks 1-5 complete implementation.
@@ -511,7 +712,7 @@ git diff <B8.8-base>...HEAD -- homeassistant/custom_components/tivoo/qwen_realti
 ```
 
 要求：
-- 第一条无输出；
+- 第一条只允许 Task 4.1 的 `TYPE_LOCAL_ACK_PLAY`、两条固化资产、short-prompt owner 接入与对应测试所需修改；WakeNet/AFE/MIC/Qwen HTTP playback/SRC/任务调度不得改变；
 - 第二条只允许 handshake/text-input/common-run/retained-release 所需输入侧改动；`QwenPcmStream`、`TivooQwenPcmView`、`_handle()` 的 audio output 处理、`_open_output()` 与 TTS_PLAY 行为无 B8.8 功能变化。
 
 - [ ] **Step 4: 记录阶段延迟而不是只看总时长**
@@ -519,6 +720,8 @@ git diff <B8.8-base>...HEAD -- homeassistant/custom_components/tivoo/qwen_realti
 软件/实机验收日志至少记录：
 - `speech_end → Sherpa STT_END`
 - `STT_END → local hit/miss decision`
+- `local action decision → TYPE_LOCAL_ACK_PLAY send`
+- `LOCAL_ACK_PLAY send → AUDIO_STATE playing/completed`
 - `local miss → conversation.item.create send`
 - `text send → first Qwen audio.delta`
 - `first audio.delta → physical playing`
@@ -527,22 +730,23 @@ git diff <B8.8-base>...HEAD -- homeassistant/custom_components/tivoo/qwen_realti
 
 - [ ] **Step 5: NAS 部署只更新 HA/Qwen 输入侧**
 
-部署前备份当前 HA custom component 与 Qwen Gateway 配置。S3 不刷固件。部署后先做无物理出声的：
+部署前备份当前 HA custom component、Qwen Gateway 配置与 S3 当前固件。S3 只允许刷入 Task 4.1 已验收的 ACK 固件，不得夹带其它 firmware 改动。部署后先做无物理出声的：
 - Qwen text GCP probe；
 - local intent dry/non-destructive query；
+- success/failure ACK 协议 dry test（可先不实际出声）；
 - local miss 文本 turn；
 - MCP read-only tool。
 
-再按当前允许的实机窗口做一轮真实 local hit 与一轮普通问答，确认现有播放链无回归。
+再按当前允许的实机窗口分别做 `action_done` 成功 ACK、`error/partial_action_done` 失败 ACK、`query_answer` 动态回复和一轮普通 Qwen 问答，确认 ACK 与现有播放链互斥且 Qwen 输出无回归。
 
 - [ ] **Step 6: 写 acceptance report**
 
-报告逐项核销 B88-C01–C24，并明确：
+报告逐项核销 B88-C01–C29，并明确：
 - software PASS/FAIL；
 - NAS deployment PASS/FAIL；
 - hardware playback 是否实测；
 - local hit 与 local miss 延迟；
-- 是否存在任何 S3/output diff。
+- S3 diff 是否严格限定为 Task 4.1 ACK；Qwen/output 冻结区是否零功能改动。
 
 - [ ] **Step 7: 最终 verification**
 
@@ -563,12 +767,12 @@ git commit -m "docs(p6.8): record b8.8 acceptance"
 
 ## Self-Review Result
 
-- **Spec coverage:** B88-C01–C24 均映射到 Task 1–6；S3 零改动、PCM 直通、single ASR、local-first、text fallback、follow-up、failure/cancel、output freeze 均有对应验收。
+- **Spec coverage:** B88-C01–C29 均映射到 Task 1–6 + Task 4.1；PCM 直通、single ASR、local-first、typed success/failure ACK、dynamic query/trigger、text fallback、follow-up、failure/cancel、Qwen output freeze 均有对应验收。
 - **Step granularity:** 每个 Task 都有 RED/实现/GREEN/commit 闭环；没有把实现代码正文写进计划。
 - **Type consistency:** `turn.transcript`、`LocalRouteResult`、`async_run_text()`、可选 `async_release_retained()` 在首次出现处定义，后续使用一致。
-- **Review focus coverage:** 五个高风险项分别由 Task 3、4、5 的测试固定。
+- **Review focus coverage:** 五个高风险项分别由 Task 3、4、4.1、5 的测试固定。
 - **Proportion:** 计划只固定接口、边界、测试与提交点；不提前实现业务代码。
 
 ## Execution Order
 
-严格按 Task 1 → 2 → 3 → 4 → 5 → 6 顺序执行。Task 2 可以独立验证 Qwen text contract；Task 3/4 不依赖真实 Qwen response；Task 5 才把两边汇合。任何一步需要修改 `esp32/firmware/**` 或 Qwen audio output 冻结区才能通过时，停止该步并回到 B8.8 合同审查，不用扩大范围绕过门禁。
+原执行顺序中的 Task 1–4 不回开。新增需求从 **Task 4.1** 执行，然后继续 Task 5 → 6。Task 4.1 是唯一允许修改 `esp32/firmware/**` 的 B8.8 后续任务，且范围严格限于 local ACK；Task 5/6 不得再扩展 S3。任何步骤若需要修改 Qwen audio output 冻结区、AFE/WakeNet/MIC 或 HTTP playback 才能通过，停止并回到合同审查。
