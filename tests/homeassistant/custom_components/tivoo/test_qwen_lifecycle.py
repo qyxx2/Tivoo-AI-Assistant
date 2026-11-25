@@ -3,22 +3,83 @@
 # ruff: noqa: F811
 
 import asyncio
+import base64
 import json
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from custom_components.tivoo import qwen_realtime as qwen
+from custom_components.tivoo.assist_satellite import LocalRouteResult
 from custom_components.tivoo.diagnostics import TYPE_FOLLOWUP_OPEN
 from custom_components.tivoo.display_state import DisplayState
 from test_audio_session import SESSION_1, SESSION_2
 from test_p68_local_session import activity, gate, local_start
 from test_qwen_realtime import (
     consume,
-    response,
     setup_bridge,  # noqa: F401
     spin_until,
 )
 from test_qwen_satellite import qwen_satellite  # noqa: F401
+
+
+async def response(
+    ws,
+    *,
+    status="completed",
+    rate=24000,
+    final=True,
+    tool=False,
+    rid="r1",
+    tid="t1",
+    initial_clear=True,
+):
+    await spin_until(
+        lambda: any(
+            e["type"] in {"conversation.item.create", "input_audio_buffer.append"}
+            for e in ws.sent
+        )
+    )
+    if initial_clear and tid not in ws.initial_clear_turns:
+        ws.initial_clear_turns.add(tid)
+        ws.feed({"type": "playback.clear", "reason": "user_interruption"})
+    ws.feed(
+        {"type": "turn.started", "turnId": tid},
+        {
+            "type": "transcript.final",
+            "role": "user",
+            "content": "打开客厅灯",
+            "turnId": tid,
+        },
+        {"type": "response.started", "responseId": rid, "turnId": tid},
+        {
+            "type": "audio.delta",
+            "responseId": rid,
+            "turnId": tid,
+            "sampleRate": rate,
+            "audio": base64.b64encode(b"\x02\x00" * 40).decode(),
+        },
+    )
+    if final:
+        ws.feed(
+            {
+                "type": "transcript.final",
+                "role": "assistant",
+                "content": "需要帮助吗？  ",
+                "responseId": rid,
+                "turnId": tid,
+            }
+        )
+    ws.feed(
+        {
+            "type": "audio.done",
+            "responseId": rid,
+            "turnId": tid,
+            "responseStatus": status,
+            "hasFunctionCall": tool,
+            "awaitsToolFollowUp": tool,
+        }
+    )
 
 
 @pytest.fixture
@@ -31,17 +92,13 @@ async def live(qwen_satellite, setup_bridge):
     await bridge.async_close()
 
 
-async def start(live, session=SESSION_1, parent=None):
+async def start(live, session=SESSION_1, parent=None, *, expect_qwen=True):
     entity, manager, _, bridge, *_ = live
     payload = local_start(session, 100 if session == SESSION_1 else 101)
     if parent:
         payload.pop("wake_word_phrase")
         payload.update(trigger_source="local_followup", parent_session_id=parent)
     await manager.async_start_session(payload, persistent=True, local_mode=True)
-    await spin_until(
-        lambda: bridge._owner is not None and bridge._owner.session_id == session
-    )
-    owner = bridge._owner
     await spin_until(lambda: manager._active_session.ready)
     await manager.async_handle_gate(gate(session))
     await manager.async_handle_activity(activity("speech_start", session))
@@ -49,8 +106,34 @@ async def start(live, session=SESSION_1, parent=None):
     await manager.async_handle_activity(
         activity("speech_end", session, pcm_samples=320)
     )
+    if not expect_qwen:
+        turn = entity.coordinator._turn
+        await turn.task
+        return turn, None
+    await spin_until(
+        lambda: bridge._owner is not None and bridge._owner.session_id == session
+    )
+    owner = bridge._owner
     await spin_until(lambda: owner.input_drained)
     return entity.coordinator._turn, owner
+
+
+async def test_local_miss_handoff_submits_one_text_turn_without_pcm(live):
+    entity, _, _, _, ws, _, _ = live
+    turn, owner = await start(live)
+
+    user_events = [e for e in ws.sent if e["type"] == "conversation.item.create"]
+    assert [{"type": e["type"], "parts": e["parts"]} for e in user_events] == [
+        {
+            "type": "conversation.item.create",
+            "parts": [{"type": "text", "text": "打开客厅灯"}],
+        }
+    ]
+    assert not any(e["type"] == "input_audio_buffer.append" for e in ws.sent)
+    assert not any(e["type"] == "response.create" for e in ws.sent)
+    assert turn.transcript == "打开客厅灯"
+    assert owner.generation == turn.context.id
+    assert entity.coordinator._turn is turn
 
 
 def opens(entity):
@@ -140,6 +223,28 @@ async def test_followup_handoff_new_identity_same_socket(live):
     assert ws.closed and manager.active_session_id is None
 
 
+async def test_followup_local_hit_releases_retained_socket_without_qwen_turn(live):
+    entity, manager, _, bridge, ws, _, client = live
+    turn, owner = await start(live)
+    await finish(live, owner, turn)
+    await spin_until(lambda: bridge._retained_parent == SESSION_1)
+    before = len([e for e in ws.sent if e["type"] == "conversation.item.create"])
+
+    entity.coordinator._async_route_local_transcript = AsyncMock(
+        return_value=LocalRouteResult(True, "", False)
+    )
+    _next_turn, next_owner = await start(live, SESSION_2, SESSION_1, expect_qwen=False)
+
+    assert next_owner is None
+    assert (
+        len([e for e in ws.sent if e["type"] == "conversation.item.create"]) == before
+    )
+    await spin_until(lambda: ws.closed)
+    assert bridge._retained_parent is None
+    assert client.ws_connect.await_count == 1
+    assert manager.active_session_id is None
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -194,7 +299,7 @@ async def test_qwen_transcript_and_tool_display(live):
 async def test_new_wake_cancels_and_joins_only_old_generation(live, phase):
     from test_qwen_realtime import Socket
 
-    entity, manager, _, bridge, ws, streams, client = live
+    entity, manager, _, _bridge, ws, streams, client = live
     turn, owner = await start(live)
     if phase != "generation":
         await response(ws, tool=phase == "tool")
@@ -217,9 +322,8 @@ async def test_new_wake_cancels_and_joins_only_old_generation(live, phase):
     await manager.async_start_session(
         local_start(SESSION_2, 101), persistent=True, local_mode=True
     )
-    await spin_until(
-        lambda: bridge._owner is not None and bridge._owner.session_id == SESSION_2
-    )
+    await spin_until(lambda: manager._active_session.ready)
+    assert entity.coordinator._turn.session_id == SESSION_2
     assert ws.closed and turn.task.done() and not streams
     assert any(e["type"] == "response.cancel" for e in ws.sent)
     assert not owner.current()
@@ -228,6 +332,28 @@ async def test_new_wake_cancels_and_joins_only_old_generation(live, phase):
     new_turn = entity.coordinator._turn
     assert new_turn.context.id != turn.context.id and not new_turn.playback_completed
     assert not opens(entity)
+
+
+async def test_qwen_user_transcript_cannot_replace_sherpa_stt_ownership(live):
+    _entity, _, _, _, ws, _, _ = live
+    turn, owner = await start(live)
+    assert turn.valid_stt and turn.transcript == "打开客厅灯"
+
+    turn.valid_stt = False
+    ws.feed(
+        {"type": "turn.started", "turnId": "t1"},
+        {
+            "type": "transcript.final",
+            "role": "user",
+            "content": "网关回显文本",
+            "turnId": "t1",
+        },
+    )
+    await spin_until(lambda: owner.turn_id == "t1")
+    await asyncio.sleep(0)
+
+    assert not turn.valid_stt
+    assert turn.transcript == "打开客厅灯"
 
 
 @pytest.mark.parametrize(

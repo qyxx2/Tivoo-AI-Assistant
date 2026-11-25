@@ -472,6 +472,76 @@ class AudioSessionCoordinator:
             finally:
                 self._event_turn = previous_event_turn
 
+    async def _async_run_qwen_text(self, turn: _Turn) -> None:
+        """Hand a Sherpa transcript to Qwen without replaying microphone PCM."""
+        qwen = self.entity.qwen_bridge
+        transcript = turn.transcript
+        if qwen is None or not transcript or self._turn is not turn or turn.error:
+            return
+
+        await turn.tts.async_close()
+        if self._turn is not turn or turn.error:
+            return
+
+        owner = qwen.create_turn(
+            turn.session_id,
+            turn.context.id,
+            current=lambda: self._turn is turn and not turn.error,
+            prompt_player=self.entity.prompt_player,
+            parent_session_id=turn.qwen_parent_session_id,
+        )
+        turn.tts = owner
+
+        def on_qwen_event(event: dict) -> None:
+            if self._turn is not turn or turn.error:
+                return
+            if event.get("type") != "tool.call":
+                return
+            if any(
+                status in {"received", "running"} for _, status in owner.tools.values()
+            ):
+                self.display.update_voice(
+                    turn.context.id,
+                    state=DisplayState.TOOLUSE,
+                    preset="tooluse",
+                )
+            else:
+                self.display.update_voice(
+                    turn.context.id,
+                    clear=(DisplayState.TOOLUSE,),
+                )
+
+        def on_qwen_result(result: QwenResult) -> None:
+            if self._turn is not turn or turn.error:
+                return
+            turn.continue_conversation = bool(
+                result.followup_eligible
+                and turn.valid_stt
+                and result.transcript.rstrip().endswith(("？", "?"))
+            )
+            owner.keep_socket = turn.continue_conversation
+
+        def connection_lost() -> None:
+            if self._turn is turn:
+                turn.continue_conversation = False
+                self.entity.hass.async_create_task(
+                    self.ingress.async_stop_session(
+                        turn.session_id, "qwen_connection_lost"
+                    ),
+                    "Tivoo retained Qwen connection ended",
+                )
+
+        owner.on_connection_lost = connection_lost
+        await qwen.async_run_text(
+            owner,
+            transcript,
+            on_qwen_event,
+            on_result=on_qwen_result,
+        )
+        if self._turn is turn:
+            turn.run_end = True
+            turn.intent_finished = True
+
     async def _run_turn(
         self,
         turn: _Turn,
@@ -555,6 +625,14 @@ class AudioSessionCoordinator:
                                 turn
                             )
                             if local_route.handled:
+                                if (
+                                    turn.qwen_parent_session_id
+                                    and self.entity.qwen_bridge is not None
+                                ):
+                                    await self.entity.qwen_bridge.async_release_parent(
+                                        turn.qwen_parent_session_id
+                                    )
+                                    turn.qwen_parent_session_id = None
                                 turn.intent_finished = True
                                 turn.continue_conversation = (
                                     local_route.continue_conversation
@@ -569,6 +647,8 @@ class AudioSessionCoordinator:
                                     await self._async_run_local_tts(
                                         turn, local_route.speech
                                     )
+                            else:
+                                await self._async_run_qwen_text(turn)
                     else:
                         await turn.tts.async_run(
                             self.entity.async_accept_pipeline_from_satellite(
@@ -675,7 +755,10 @@ class AudioSessionCoordinator:
             try:
                 await turn.tts.async_close()
                 if self.entity.qwen_bridge is not None and reason != "followup":
-                    await self.entity.qwen_bridge.async_release_parent(turn.session_id)
+                    await self.entity.qwen_bridge.async_release_parent(
+                        turn.qwen_parent_session_id or turn.session_id
+                    )
+                    turn.qwen_parent_session_id = None
             except Exception:
                 _LOGGER.exception("Tivoo old TTS owner cleanup failed")
                 clean = False

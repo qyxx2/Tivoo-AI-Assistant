@@ -76,7 +76,9 @@ class Bridge:
 
     async def async_run_text(self, owner, text, on_event, *, on_result=None):
         self.text_calls.append(text)
-        raise AssertionError("Task 3 must not submit Qwen text yet")
+        if on_result is not None:
+            on_result(SimpleNamespace(followup_eligible=False, transcript=""))
+        return SimpleNamespace(followup_eligible=False, transcript="")
 
     async def async_release_parent(self, session_id):
         self.released.append(session_id)
@@ -182,9 +184,9 @@ async def test_b88_qwen_present_still_runs_sherpa_before_fallback(qwen_satellite
     assert kwargs["context"] is turn.context
     assert kwargs["wake_word_phrase"] == "嗨，乐鑫"
     entity.validate_local_pipeline.assert_called_once()
-    assert not bridge.create_calls
+    assert bridge.create_calls == [(SESSION_1, turn.context.id, None)]
     assert bridge.audio_calls == 0
-    assert not bridge.text_calls
+    assert bridge.text_calls == ["打开客厅灯"]
     entity.adapter.async_send_message.assert_awaited_once()
     assert entity.adapter.async_send_message.call_args.args[0] == TYPE_STT_READY
     entity.adapter.async_send_tts_play.assert_not_awaited()
@@ -268,6 +270,41 @@ async def test_b88_superseded_stt_cannot_publish_old_transcript(qwen_satellite):
 
     assert old.transcript is None
     assert not old.valid_stt
+    assert not bridge.create_calls
+    assert not bridge.text_calls
+
+
+async def test_b88_superseded_local_route_cannot_submit_old_qwen_text(
+    qwen_satellite,
+):
+    entity, manager, _stop, bridge = qwen_satellite
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_route(_turn):
+        entered.set()
+        await release.wait()
+        return LocalRouteResult(False, "", False)
+
+    entity.coordinator._async_route_local_transcript = AsyncMock(
+        side_effect=blocked_route
+    )
+    turn = await begin_turn(entity, manager, bridge)
+    await manager.async_push_pcm(turn.session_id, b"a" * 640)
+    await manager.async_handle_activity(
+        activity("speech_end", turn.session_id, pcm_samples=320)
+    )
+    await asyncio.wait_for(entered.wait(), 1)
+
+    await manager.async_start_session(
+        local_start(SESSION_2, 101), persistent=True, local_mode=True
+    )
+    release.set()
+    await asyncio.wait_for(
+        asyncio.gather(turn.task, return_exceptions=True),
+        2,
+    )
+
     assert not bridge.create_calls
     assert not bridge.text_calls
 
@@ -545,7 +582,7 @@ async def test_b88_local_hit_without_speech_completes_without_playback(qwen_sate
     stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
 
 
-async def test_b88_local_miss_has_no_ha_tts_or_qwen_in_task4(qwen_satellite):
+async def test_b88_local_miss_hands_off_once_to_qwen_text(qwen_satellite):
     entity, manager, stop, bridge = qwen_satellite
     route = entity.coordinator._async_route_local_transcript
     route.return_value = LocalRouteResult(False, "", False)
@@ -557,7 +594,8 @@ async def test_b88_local_miss_has_no_ha_tts_or_qwen_in_task4(qwen_satellite):
 
     route.assert_awaited_once_with(turn)
     local_tts.assert_not_awaited()
-    assert not bridge.create_calls and not bridge.text_calls
+    assert bridge.create_calls == [(SESSION_1, turn.context.id, None)]
+    assert bridge.text_calls == ["打开客厅灯"]
     assert bridge.audio_calls == 0
     stop.assert_awaited_once_with(SESSION_1, "conversation_complete")
 
