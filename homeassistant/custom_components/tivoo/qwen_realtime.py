@@ -538,6 +538,21 @@ class QwenRealtimeBridge:
             raise RuntimeError("Qwen response delivery was revoked")
         tid = event.get("turnId")
         rid = event.get("responseId")
+        # Gateway suppresses audio.done for a blocked tool-loop response, but
+        # still emits a correlated idle state. No spoken reply can follow that
+        # terminal state; retire the failed owner instead of waiting 45 seconds.
+        if (
+            kind == "voice.state"
+            and event.get("state") == "idle"
+            and tid == owner.turn_id
+            and owner.turn_id is not None
+            and owner.stream is None
+            and owner.tools
+            and all(status in {"completed", "failed"} for _, status in owner.tools.values())
+            and any(status == "failed" for _, status in owner.tools.values())
+        ):
+            owner.keep_socket = False
+            raise RuntimeError("Qwen tool turn ended without a spoken response")
         if tid in self._retired_turns:
             return
         if kind in {

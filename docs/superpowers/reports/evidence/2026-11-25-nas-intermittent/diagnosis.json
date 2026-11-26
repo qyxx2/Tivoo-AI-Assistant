@@ -1,0 +1,129 @@
+{
+  "date": "2026-11-25",
+  "timezone": "Asia/Shanghai",
+  "production": {
+    "host": "192.168.3.94",
+    "ha_image": "ghcr.io/home-assistant/home-assistant:2026.11.0",
+    "gateway_image": "local/qwen-audio-agent:2.1.0",
+    "routing": "B8.8 Sherpa STT -> HA local intents -> Qwen input.text",
+    "matched_source_files": [
+      "assist_satellite.py",
+      "qwen_realtime.py",
+      "audio_session.py",
+      "transport.py"
+    ],
+    "deployed_changes": true,
+    "restarted_services": true,
+    "physical_device_actions": false
+  },
+  "findings": [
+    {
+      "symptom": "Local dynamic reply aborts after STT/local route",
+      "observed_local_times": [
+        "18:44:13",
+        "21:40:23",
+        "21:40:29",
+        "21:40:36",
+        "21:40:46"
+      ],
+      "error": "AssertionError: assert self.tts_stream is not None",
+      "cause": "Direct TTS PipelineInput.execute defaults validate=False, so no ResultStream is prepared",
+      "reproduction": "scripts/test-ha.sh tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py -k prepares_real -q",
+      "red_observed": true,
+      "local_fix": "Execute direct local TTS pipeline with validate=True"
+    },
+    {
+      "symptom": "HA tool cannot match target",
+      "observed_local_times": [
+        "22:12:48",
+        "22:13:26"
+      ],
+      "verification": "Six read-only MCP GetLiveContext calls against actual HA, all HTTP 200; semantic results below",
+      "readonly_results": [
+        {
+          "name": "电风扇",
+          "isError": true
+        },
+        {
+          "name": "风扇  风扇",
+          "domain": "fan",
+          "isError": false
+        },
+        {
+          "domain": "light",
+          "isError": true
+        },
+        {
+          "name": "灯 开关",
+          "domain": "switch",
+          "isError": true
+        },
+        {
+          "name": "灯  开关 开关",
+          "domain": "switch",
+          "isError": false
+        },
+        {
+          "name": "饮水机 插座",
+          "domain": "switch",
+          "isError": false
+        }
+      ],
+      "recommendation": "Add unambiguous HA entity aliases for spoken names and preserve actual switch/fan domains; no production entity configuration changed"
+    },
+    {
+      "symptom": "Silent tool-loop terminal leaves HA waiting",
+      "observed_gateway_session": "07a5535b-711c-4797-b8fe-cc8f59823e13",
+      "loop_limit_local_time": "22:13:29.206",
+      "client_disconnect_local_time": "22:14:08.456",
+      "cause": "Suppressed Gateway response.done emits correlated voice.state idle without audio.done; HA did not recognize this failed no-audio terminal",
+      "runtime_source_sha256": "1f7e8ec9d253ceaacc81b73b8becfbc06685e5dcc9e5418787b5ee6c7fe7b28b",
+      "runtime_matches_local_snapshot": true,
+      "gateway_replay": "node .superpowers/nas-intermittent-20261125/replay-gateway.mjs",
+      "red_observed": true,
+      "local_fix": "Retire same-turn failed tool owner on idle only when all tools terminal and no PCM exists; ordinary MCP failures may still produce spoken summaries",
+      "limitation": "Fail-fast cleanup does not synthesize an audible error explanation"
+    }
+  ],
+  "validation": {
+    "targeted": "155 passed",
+    "targeted_files": [
+      "test_qwen_satellite.py",
+      "test_qwen_lifecycle.py",
+      "test_qwen_realtime.py",
+      "test_p68_real_pipeline.py",
+      "test_audio_resource.py"
+    ],
+    "independent_review": "No actionable findings; modified test files 92 passed",
+    "expanded_suite": "161 passed, 20 failed",
+    "baseline_lifecycle": "6 passed, same 20 failed",
+    "baseline_comparison": "Failure node IDs identical; obsolete lifecycle fake signatures reject end_stage before changed paths",
+    "diff_check": "passed"
+  },
+  "limitations": [
+    "No new live WakeNet/MIC acoustic reproduction or physical playback acceptance",
+    "HA pipeline debug API denied current service credential; no privilege change attempted",
+    "Fixes deployed; live acoustic and physical playback acceptance pending user test"
+  ],
+  "raw_local_evidence_directory": "/home/Gold/WorkSpace/Tivoo-AI-Assistant/.superpowers/nas-intermittent-20261125",
+  "deployment": {
+    "backup": "/volume1/docker/homeassistant/config/tivoo-deploy-backups/intermittent-fix-20261125-234346/tivoo-before.tar.gz",
+    "files": {
+      "assist_satellite.py": "2c1487e12a1491f248aea4fa7e8dcbc3d4728365990ad6854ee58423d32509e1",
+      "qwen_realtime.py": "b4e1343262730b0d26bf86c9dcf02a5f8ae5199136e161c7b44bd69cb1773040"
+    },
+    "ha_http_status": 200,
+    "device_ports_established": [
+      7777,
+      7778
+    ],
+    "startup_tivoo_error_detected": false,
+    "physical_acceptance": "Pending user test",
+    "entity_aliases_changed": false
+  },
+  "commit_validation": {
+    "ha_related_tests": "173 passed",
+    "local_sentence_cases": "9 passed",
+    "diff_check": "passed"
+  }
+}

@@ -468,7 +468,8 @@ class AudioSessionCoordinator:
             previous_event_turn = self._event_turn
             self._event_turn = turn
             try:
-                await turn.tts.async_run(pipeline_input.execute())
+                # Direct TTS runs need HA validation to prepare the ResultStream.
+                await turn.tts.async_run(pipeline_input.execute(validate=True))
             finally:
                 self._event_turn = previous_event_turn
 

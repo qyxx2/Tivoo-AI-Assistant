@@ -1072,3 +1072,35 @@ async def test_failed_mcp_tool_allows_gateway_error_summary(setup_bridge, retry)
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_suppressed_tool_failure_idle_retires_without_timeout(setup_bridge):
+    """Gateway may suppress audio.done after its tool loop stops: don't hang."""
+    bridge, owner, ws, _, streams, _ = setup_bridge
+    task = asyncio.create_task(bridge.async_run(owner, pcm(), lambda _: None))
+    try:
+        await spin_until(lambda: any(e["type"] == "input_audio_buffer.append" for e in ws.sent))
+        ws.feed(
+            {"type": "turn.started", "turnId": "t1"},
+            {"type": "response.started", "turnId": "t1", "responseId": "r1"},
+            {"type": "audio.done", "turnId": "t1", "responseId": "r1",
+             "responseStatus": "completed", "hasFunctionCall": True,
+             "awaitsToolFollowUp": True},
+            {"type": "tool.call", "turnId": "t1", "responseId": "r1", "callId": "c1",
+             "status": "failed", "name": "HassTurnOn", "result": "No entities matched"},
+            {"type": "tool.call", "turnId": "t1", "responseId": "r2", "callId": "c2",
+             "status": "failed", "name": "HassTurnOn", "result": "Tool loop stopped"},
+        )
+        await spin_until(lambda: owner.tools.get("c2") == ("r2", "failed"))
+        # A late idle from another turn must never retire the current owner.
+        bridge._handle(owner, {"type": "voice.state", "turnId": "stale", "state": "idle"}, lambda _: None)
+        assert not task.done()
+        ws.feed({"type": "voice.state", "turnId": "t1", "state": "idle"})
+        await spin_until(task.done)
+        with pytest.raises(RuntimeError, match="without a spoken response"):
+            await task
+        assert not owner.success and owner.send_failed
+        assert ws.closed and not streams and bridge._owner is None
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

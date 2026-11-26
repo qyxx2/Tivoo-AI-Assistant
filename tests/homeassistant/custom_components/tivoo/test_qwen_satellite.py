@@ -621,8 +621,9 @@ async def test_b88_local_tts_uses_dedicated_pipeline_tts_only(
         def __init__(self, **kwargs):
             captured["input"] = kwargs
 
-        async def execute(self):
+        async def execute(self, validate=False):
             captured["executed"] = True
+            captured["validated"] = validate
 
     monkeypatch.setattr(
         assist_satellite_module, "PipelineRun", FakeRun, raising=False
@@ -650,6 +651,7 @@ async def test_b88_local_tts_uses_dedicated_pipeline_tts_only(
     await entity.coordinator._async_run_local_tts(turn, "本地回答")
 
     run = captured["run"]
+    assert captured["validated"] is True
     assert run["pipeline"] is pipeline
     assert run["start_stage"] is PipelineStage.TTS
     assert run["end_stage"] is PipelineStage.TTS
@@ -763,3 +765,46 @@ async def test_b88_local_ack_followup_opens_only_after_completed(qwen_satellite)
         await asyncio.sleep(0)
     entity.adapter.async_send_message.assert_awaited_once()
     assert not bridge.create_calls and not bridge.text_calls
+
+
+async def test_local_tts_prepares_real_ha_processor(qwen_satellite, monkeypatch):
+    """A local query must reach TTS_END with HA's actual PipelineRun/Input."""
+    from homeassistant.components import tts
+    from homeassistant.components.assist_pipeline.models import Pipeline
+    from homeassistant.components.assist_pipeline.runtime import KEY_ASSIST_PIPELINE
+
+    entity, _manager, _stop, _bridge = qwen_satellite
+    assert await async_setup_component(entity.hass, "assist_pipeline", {})
+    pipeline = Pipeline(
+        id="local-tts-regression", name="Local", language="en",
+        conversation_engine="homeassistant", conversation_language="en",
+        stt_engine=None, stt_language=None, tts_engine="tts.test",
+        tts_language="en", tts_voice=None,
+        wake_word_entity=None, wake_word_id=None,
+    )
+    monkeypatch.setattr(assist_satellite_module, "async_get_pipeline", lambda *_: pipeline)
+    stream = SimpleNamespace(
+        engine="tts.test", token="test-token", url="/test.wav",
+        media_source_id="media-source://tts/test", content_type="audio/wav",
+        supports_streaming_input=False, async_set_message=Mock(), delete=Mock(),
+    )
+    create_stream = Mock(return_value=stream)
+    monkeypatch.setattr(tts, "async_create_stream", create_stream)
+    events = []
+    monkeypatch.setattr(entity, "_internal_on_pipeline_event", events.append)
+
+    async def run_owned(coroutine):
+        await coroutine
+
+    turn = SimpleNamespace(
+        local_pipeline_id=pipeline.id, context=Context(),
+        tts=SimpleNamespace(async_run=AsyncMock(side_effect=run_owned)),
+    )
+    await entity.coordinator._async_run_local_tts(turn, "The socket is on")
+
+    create_stream.assert_called_once()
+    stream.async_set_message.assert_called_once_with("The socket is on")
+    assert [event.type for event in events] == [
+        Event.RUN_START, Event.TTS_START, Event.TTS_END, Event.RUN_END,
+    ]
+    assert not entity.hass.data[KEY_ASSIST_PIPELINE].pipeline_runs._pipeline_runs[pipeline.id]
