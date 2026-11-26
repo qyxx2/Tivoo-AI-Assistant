@@ -22,6 +22,7 @@
 - [B8.8 local-first 合同矩阵](superpowers/specs/2026-11-25-p6-8-b8-8-stt-local-intent-qwen-text-contract-matrix.md)：当前 STT/local/Qwen 路由合同。
 - [P6.8 音频/AFE 设计](superpowers/specs/2026-11-18-p6-8-b0-3-audio-afe-design.md)：S3 双麦、AEC/VAD/WakeNet 的设计来源。
 - [P6.8 生命周期/显示设计](superpowers/specs/2026-11-18-p6-8-b0-5-lifecycle-display-design.md)：generation、播放 owner、表情与 follow-up 的设计来源。
+- [Tivoo 可旋转底座 CAD](../tivoo-rotating-base/README.md)：当前 136 × 114 mm 级圆角底座、108 mm 旋转盘和内部器件布局的参数化建模入口；V1 仍是概念/布局模型，不是打印定稿。
 
 ### 当前运行时仍使用的历史组件
 
