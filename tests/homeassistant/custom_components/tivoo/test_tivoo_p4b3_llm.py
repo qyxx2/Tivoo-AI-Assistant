@@ -154,3 +154,15 @@ async def test_p4b3_tool_propagates_service_adapter_error(
                 tool_args={"volume": 100},
             )
         )
+
+
+async def test_all_tivoo_mcp_tools_describe_wali_alias(hass, enable_custom_integrations):
+    """Every current capability tells MCP clients that 瓦力 means Tivoo."""
+    await _loaded_entry(hass)
+    api = await _assist_api(hass)
+    tools = [tool for tool in api.tools if tool.integration == DOMAIN]
+    assert len(tools) == 28
+    for tool in tools:
+        assert tool.name.startswith("tivoo__")
+        assert "瓦力" in tool.description, tool.name
+        assert "Tivoo" in tool.description, tool.name

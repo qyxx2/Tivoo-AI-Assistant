@@ -104,6 +104,9 @@ def _integer_range(minimum: int, maximum: int):
     )
 
 
+DEVICE_ALIAS_DESCRIPTION = "Tivoo and 瓦力 refer to the same Tivoo device."
+
+
 class _ServiceTool(Tool):
     """Tool that delegates to a single validated Home Assistant service."""
 
@@ -119,7 +122,7 @@ class _ServiceTool(Tool):
     ) -> None:
         self.name = name
         self.title = title
-        self.description = description
+        self.description = f"{description} {DEVICE_ALIAS_DESCRIPTION}"
         self.service = service
         self.parameters = parameters
         self.annotations = _annotations(idempotent=idempotent)
@@ -146,7 +149,7 @@ class StopCountdownTool(Tool):
 
     name = "tivoo__StopCountdown"
     title = "Stop Tivoo countdown"
-    description = "Stop the current Tivoo countdown."
+    description = f"Stop the current Tivoo countdown. {DEVICE_ALIAS_DESCRIPTION}"
     parameters = probatio.Schema({}, extra=probatio.PREVENT_EXTRA)
     annotations = _annotations(idempotent=True)
     integration = DOMAIN

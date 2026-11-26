@@ -1,0 +1,93 @@
+{
+  "date": "2026-11-26",
+  "timezone": "Asia/Shanghai",
+  "scope": "瓦力 aliases the same Tivoo device for all existing capabilities, local intents and MCP",
+  "local_sentence_deployment": {
+    "backup": "/volume1/docker/homeassistant/config/tivoo-deploy-backups/wali-alias-20261126-000916/tivoo_local_fastpath.yaml",
+    "sha256": "d0e22603b72c74e34571e61f177f1d55c192fec778a4600dba553a7077522d59"
+  },
+  "deployment": {
+    "files": [
+      {
+        "path": "/volume1/docker/homeassistant/config/custom_components/tivoo/llm.py",
+        "backup": "/volume1/docker/homeassistant/config/tivoo-deploy-backups/wali-all-20261126-001244/llm.py",
+        "sha256": "c6603629764550562d2619dace6dc17df7682c128b17d2e6579f6e18c029ded3"
+      },
+      {
+        "path": "/volume1/docker/qwen-audio-agent/config/frontend-agent/PROMPT.md",
+        "backup": "/volume1/docker/qwen-audio-agent/backups/wali-all-20261126-001244/PROMPT.md",
+        "sha256": "c85d7954e7413f83c55438bc11ae3c94be412443db34b51cfa13d3113742f8da"
+      }
+    ]
+  },
+  "live_gateway_catalog": {
+    "wali_mcp_tools": 28,
+    "all_descriptions_verified": true,
+    "prompt_alias_verified": true,
+    "names": [
+      "mcp__homeassistant__tivoo__GameControl",
+      "mcp__homeassistant__tivoo__PlayAnimation",
+      "mcp__homeassistant__tivoo__SetAlarm",
+      "mcp__homeassistant__tivoo__SetAudioSource",
+      "mcp__homeassistant__tivoo__SetBrightness",
+      "mcp__homeassistant__tivoo__SetDateTime",
+      "mcp__homeassistant__tivoo__SetExpression",
+      "mcp__homeassistant__tivoo__SetLight",
+      "mcp__homeassistant__tivoo__SetMemorial",
+      "mcp__homeassistant__tivoo__SetMood",
+      "mcp__homeassistant__tivoo__SetNoiseMeter",
+      "mcp__homeassistant__tivoo__SetPlayState",
+      "mcp__homeassistant__tivoo__SetScreenPower",
+      "mcp__homeassistant__tivoo__SetSleepMode",
+      "mcp__homeassistant__tivoo__SetTimer",
+      "mcp__homeassistant__tivoo__SetVolume",
+      "mcp__homeassistant__tivoo__SetWeather",
+      "mcp__homeassistant__tivoo__ShowClock",
+      "mcp__homeassistant__tivoo__ShowDesign",
+      "mcp__homeassistant__tivoo__ShowEffects",
+      "mcp__homeassistant__tivoo__ShowGame",
+      "mcp__homeassistant__tivoo__ShowImage",
+      "mcp__homeassistant__tivoo__ShowLyrics",
+      "mcp__homeassistant__tivoo__ShowScoreboard",
+      "mcp__homeassistant__tivoo__ShowText",
+      "mcp__homeassistant__tivoo__ShowVisualization",
+      "mcp__homeassistant__tivoo__StartCountdown",
+      "mcp__homeassistant__tivoo__StopCountdown"
+    ]
+  },
+  "prompt_alias_section": "- 用户说的“瓦力”与 Tivoo 指同一台已接入的 Tivoo 设备。这个名称映射适用于全部已启用的 Tivoo 能力，包括屏幕开关、音量、亮度、显示文字/图片/动画/表情、时钟、天气、灯光模式、播放控制、音源、闹钟、纪念日、倒计时、计时器、噪音计、睡眠模式、设计/特效/可视化和游戏。\n- 用户点名“瓦力”时，按实际请求选择现有 tivoo__* MCP 工具（在模型目录中的名称为 mcp__homeassistant__tivoo__*）；保留工具原名和参数合同，不要把“瓦力”当作待查找的普通 HA 灯、开关、播放器或新实体。工具的原有适用条件、参数校验和执行结果规则继续适用。\n- “瓦力”是设备控制别名，不代表更改唤醒词。只有工具返回执行结果后才能确认完成；能力或所需资源不可用时应如实说明。",
+  "validation": {
+    "local_matcher_cases": 9,
+    "ha_mcp_regression": "18 passed",
+    "independent_review": "No actionable findings; all28 API aliases covered",
+    "live_ha_tivoo_tools": 28,
+    "live_gateway_enabled_tools": 46,
+    "gateway_ready": true,
+    "ha_http": 200,
+    "device_ports_established": [
+      7777,
+      7778
+    ],
+    "diff_check": "passed"
+  },
+  "constraints": {
+    "tool_names_changed": false,
+    "schemas_changed": false,
+    "whitelist_changed": false,
+    "wake_word_changed": false,
+    "physical_acceptance": "Pending user test; no physical tools invoked for verification"
+  },
+  "local_sentence_final": {
+    "repository_path": "deploy/nas/config/homeassistant/custom_sentences/zh-CN/tivoo_local_fastpath.yaml",
+    "sha256": "b1bf7c78b4bc513e98cd33adb6b0e781e9a1953ea8be1ca71fedb509b7320324",
+    "backup": "/config/tivoo-deploy-backups/wali-sentences-20261126-001948/tivoo_local_fastpath.yaml",
+    "conversation_reload_http_status": 200,
+    "additional_sentence": "瓦力停止倒计时",
+    "source": "Reconstructed from captured production configuration plus the exact deployed stop-countdown sentence"
+  },
+  "commit_validation": {
+    "ha_related_tests": "173 passed",
+    "local_sentence_cases": "9 passed",
+    "diff_check": "passed"
+  }
+}

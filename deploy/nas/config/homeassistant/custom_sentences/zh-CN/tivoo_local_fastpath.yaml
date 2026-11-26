@@ -1,0 +1,150 @@
+# Tivoo local fast-path intents for HA 2026.11.
+# These commands are handled by Home Assistant before the AstrBot/LLM agent.
+language: zh-CN
+
+lists:
+  tivoo_percent:
+    range:
+      type: percentage
+      from: 0
+      to: 100
+  tivoo_minutes:
+    range:
+      from: 0
+      to: 99
+  tivoo_seconds:
+    range:
+      from: 0
+      to: 59
+  tivoo_hour_minutes:
+    range:
+      from: 0
+      to: 39
+  tivoo_one_hour:
+    range:
+      from: 1
+      to: 1
+
+expansion_rules:
+  tivoo_local_polite: "[请|请你|帮我|给我|麻烦|麻烦你|能不能|可以]"
+  tivoo_local_end: "[一下|下][吧|啊|呀|好吗|行吗|可以吗][谢谢|谢谢你]"
+  tivoo_local_device: "(Tivoo|tivoo|Tivo|tivo|提沃|提屋|小电视|像素屏|瓦力)"
+  tivoo_local_set: "(调到|调成|设为|设置为|设置成|设成|调整到|调整为|调至|设到)"
+
+intents:
+  TivooSetBrightness:
+    data:
+      - sentences:
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的][屏幕|显示屏][的]亮度<tivoo_local_set>[百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将]<tivoo_local_device>[的][屏幕|显示屏][的]亮度<tivoo_local_set>[百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将][屏幕|显示屏][的]亮度<tivoo_local_set>[百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将]亮度<tivoo_local_set>[百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>]<tivoo_local_device>[的][屏幕|显示屏][的]亮度[调到|调成|设到|设为|设置成][百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>](屏幕亮度|显示屏亮度|亮度)[调到|调成|设到|设为|设置成][百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>]<tivoo_local_device>[的](亮度|屏幕亮度)[到|为][百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>](亮度|屏幕亮度)[到|为][百分之]{tivoo_percent:brightness}[%]<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的][屏幕|显示屏][的]亮度(调到|设到|开到)(最大|最高|最亮)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](亮度|屏幕亮度)(最大|最高|最亮)<tivoo_local_end>"
+        slots:
+          brightness: 100
+      - sentences:
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的][屏幕|显示屏][的]亮度(调到|设到)(最低|最暗)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](亮度|屏幕亮度)(最低|最暗)<tivoo_local_end>"
+        slots:
+          brightness: 0
+
+  TivooSetVolume:
+    data:
+      - sentences:
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的](音量|声音)<tivoo_local_set>[百分之]{tivoo_percent:volume}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将](音量|声音)<tivoo_local_set>[百分之]{tivoo_percent:volume}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>]<tivoo_local_device>[的](音量|声音)[调到|调成|设到|设为|设置成][百分之]{tivoo_percent:volume}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>](音量|声音)[调到|调成|设到|设为|设置成][百分之]{tivoo_percent:volume}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>]<tivoo_local_device>[的](音量|声音)[到|为][百分之]{tivoo_percent:volume}[%]<tivoo_local_end>"
+          - "[<tivoo_local_polite>](音量|声音)[到|为][百分之]{tivoo_percent:volume}[%]<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的](音量|声音)(调到|设到|开到)(最大|最高)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](音量|声音)(最大|最高)<tivoo_local_end>"
+        slots:
+          volume: 100
+      - sentences:
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的](音量|声音)(关掉|关了|静音)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](静音|把声音关掉|把音量关掉|声音关掉|音量关掉)<tivoo_local_end>"
+        slots:
+          volume: 0
+
+  TivooScreenOff:
+    data:
+      - sentences:
+          - "[<tivoo_local_polite>][把|将]<tivoo_local_device>[的](屏幕|显示屏)(关闭|关掉|关上|关了|关)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](关闭|关掉|关上)<tivoo_local_device>[的](屏幕|显示屏)<tivoo_local_end>"
+          - "[<tivoo_local_polite>]<tivoo_local_device>(息屏|关屏|黑屏)<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将](屏幕|显示屏)(关闭|关掉|关上|关了|关)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](关闭|关掉|关上)(屏幕|显示屏)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](息屏|关屏)<tivoo_local_end>"
+
+  TivooScreenOn:
+    data:
+      - sentences:
+          - "[<tivoo_local_polite>][把|将]<tivoo_local_device>[的](屏幕|显示屏)(打开|开启|点亮|亮起来)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](打开|开启|点亮)<tivoo_local_device>[的](屏幕|显示屏)<tivoo_local_end>"
+          - "[<tivoo_local_polite>]<tivoo_local_device>(亮屏|开屏)<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将](屏幕|显示屏)(打开|开启|点亮|亮起来)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](打开|开启|点亮)(屏幕|显示屏)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](亮屏|开屏)<tivoo_local_end>"
+
+  TivooStartCountdown:
+    data:
+      - sentences:
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](倒计时|计时|定时){tivoo_minutes:minutes}分[钟][和]{tivoo_seconds:seconds}秒[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](开始|启动|设置|设|设一个|设置一个|来一个|开一个|开始一个|启动一个)(倒计时|计时|定时){tivoo_minutes:minutes}分[钟][和]{tivoo_seconds:seconds}秒[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](设置|设|设一个|设置一个|来一个|开一个|开始一个|启动一个){tivoo_minutes:minutes}分[钟][和]{tivoo_seconds:seconds}秒[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+          - "[<tivoo_local_polite>]{tivoo_minutes:minutes}分[钟][和]{tivoo_seconds:seconds}秒[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](倒计时|计时|定时){tivoo_minutes:minutes}分[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](开始|启动|设置|设|设一个|设置一个|来一个|开一个|开始一个|启动一个)(倒计时|计时|定时){tivoo_minutes:minutes}分[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](设置|设|设一个|设置一个|来一个|开一个|开始一个|启动一个){tivoo_minutes:minutes}分[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+          - "[<tivoo_local_polite>]{tivoo_minutes:minutes}分[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](倒计时|计时|定时){tivoo_seconds:seconds}秒[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](开始|启动|设置|设|设一个|设置一个|来一个|开一个|开始一个|启动一个)(倒计时|计时|定时){tivoo_seconds:seconds}秒[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](设置|设|设一个|设置一个|来一个|开一个|开始一个|启动一个){tivoo_seconds:seconds}秒[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+          - "[<tivoo_local_polite>]{tivoo_seconds:seconds}秒[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>](倒计时|计时|定时)半分钟<tivoo_local_end>"
+          - "[<tivoo_local_polite>](设置|设|设置一个|设一个|来一个|开一个|开始一个|启动一个)半分钟(倒计时|计时器|定时器)<tivoo_local_end>"
+        slots:
+          minutes: 0
+          seconds: 30
+      - sentences:
+          - "[<tivoo_local_polite>](倒计时|计时|定时)(一分半|1分半)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](设置|设|设置一个|设一个|来一个|开一个|开始一个|启动一个)(一分半|1分半)(倒计时|计时器|定时器)<tivoo_local_end>"
+        slots:
+          minutes: 1
+          seconds: 30
+      - sentences:
+          - "[<tivoo_local_polite>](倒计时|计时|定时)半小时<tivoo_local_end>"
+          - "[<tivoo_local_polite>](设置|设|设置一个|设一个|来一个|开一个|开始一个|启动一个)半小时(倒计时|计时器|定时器)<tivoo_local_end>"
+        slots:
+          minutes: 30
+          seconds: 0
+      - sentences:
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](倒计时|计时|定时){tivoo_one_hour:hours}[个]小时<tivoo_local_end>"
+          - "[<tivoo_local_polite>](设置|设|设置一个|设一个|来一个|开一个|开始一个|启动一个){tivoo_one_hour:hours}[个]小时(倒计时|计时器|定时器)<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](倒计时|计时|定时){tivoo_one_hour:hours}[个]小时[和]{tivoo_hour_minutes:minutes}分[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>](设置|设|设置一个|设一个|来一个|开一个|开始一个|启动一个){tivoo_one_hour:hours}[个]小时[和]{tivoo_hour_minutes:minutes}分[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+      - sentences:
+          - "[<tivoo_local_polite>][<tivoo_local_device>][的](倒计时|计时|定时){tivoo_one_hour:hours}[个]小时[和]{tivoo_hour_minutes:minutes}分[钟][和]{tivoo_seconds:seconds}秒[钟]<tivoo_local_end>"
+          - "[<tivoo_local_polite>](设置|设|设置一个|设一个|来一个|开一个|开始一个|启动一个){tivoo_one_hour:hours}[个]小时[和]{tivoo_hour_minutes:minutes}分[钟][和]{tivoo_seconds:seconds}秒[钟](倒计时|计时器|定时器)<tivoo_local_end>"
+
+  TivooStopCountdown:
+    data:
+      - sentences:
+          - "[<tivoo_local_polite>]<tivoo_local_device>[的](停止|停掉|取消|结束)(倒计时|计时器|计时|定时器|定时)<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将][<tivoo_local_device>][的](倒计时|计时器|计时|定时器|定时)(停止|停掉|停了|取消|结束|关掉)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](停止|停掉|取消|结束)<tivoo_local_device>[的](倒计时|计时器|计时|定时器|定时)<tivoo_local_end>"
+          - "[<tivoo_local_polite>][把|将](倒计时|计时器|计时|定时器|定时)(停止|停掉|停了|取消|结束|关掉)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](停止|停掉|取消|结束)(倒计时|计时器|计时|定时器|定时)<tivoo_local_end>"
+          - "[<tivoo_local_polite>](倒计时|计时器|计时|定时器|定时)(不用了|不要了|停一下|停下|停止)<tivoo_local_end>"
