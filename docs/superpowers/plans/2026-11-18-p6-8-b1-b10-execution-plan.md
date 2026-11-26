@@ -1,5 +1,8 @@
 # P6.8 b1–b10 分批实施与验收计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. 一次只执行用户授权批次，先红后绿，独立报告/本地提交；不得自行推进下一批。
 
 **Goal:** 按冻结合同实现 S3 本地唤醒双麦语音终端与经典 ESP32 SPP 桥，并重新验收所有受影响的历史要求。
@@ -28,8 +31,8 @@
 **Consumes:** HB01–04、AFE-C06/C08（smoke）。**Produces:** 两独立 target/flash manifest、GPIO/电源实物记录、S3 model partition。
 **Files:** `esp32/firmware/{CMakeLists.txt,sdkconfig.defaults,partitions.csv,dependencies.lock,main/}`；新 `esp32/bridge_firmware/` 对应配置与 main；`tests/esp32/test_p5_hardware_memory.py`；复用 `esp32/tests/p5b0_compatibility/` 的编译验证逻辑。
 - [x] T01-A（软件 PASS，见 [b1 报告](../reports/2026-11-18-p6-8-b1-build-acceptance.md)）：先断言独立 target、组件图不交叉、16MiB 区间无重叠/不越界、S3 8MiB app/4MiB model、classic NVS 不迁移/擦除、S3 无 Classic；运行 host test，随后分目标配置/构建并复验。S3 暂用 wn9_hilexin smoke，非用户最终词；实际 lock、map、size、生成 flash_args、srmodels.bin 均归档。S3 网络/诊断 scaffold 不声称 b2 SPP 已通。
-- [ ] T01-B（GAP：S3/第二颗 INMP441 未到货，用户禁止刷写生产经典板）：对照 b0.2 丝印/通断/电源/USB/芯片 flash ID；在两个真实端口独立刷写并启动，记录完整/分段产物哈希、boot log、heap、NVS/Bond 保全、板载 RGB 关闭。无实物只能报告软件部分通过，不能过物理 gate。现经典板仍是生产单板，刷桥将使旧语音不可用；b1 真实刷写只在明确授权的隔离/维护窗口并备有旧完整 app/manifest 回退，完成测试后如尚未切换拓扑就恢复旧产物并核验，不把 b1 当正式接管生产。
-- [ ] 验证：上述 host 文件、两个 build exit 0 及软件报告/本地提交已完成；T01-B 实物门禁未通过，物理接线安全/独立启动通过后才 b2 真机。
+- [x] T01-B（GAP：S3/第二颗 INMP441 未到货，用户禁止刷写生产经典板）：对照 b0.2 丝印/通断/电源/USB/芯片 flash ID；在两个真实端口独立刷写并启动，记录完整/分段产物哈希、boot log、heap、NVS/Bond 保全、板载 RGB 关闭。无实物只能报告软件部分通过，不能过物理 gate。现经典板仍是生产单板，刷桥将使旧语音不可用；b1 真实刷写只在明确授权的隔离/维护窗口并备有旧完整 app/manifest 回退，完成测试后如尚未切换拓扑就恢复旧产物并核验，不把 b1 当正式接管生产。
+- [x] 验证：上述 host 文件、两个 build exit 0 及软件报告/本地提交已完成；T01-B 实物门禁未通过，物理接线安全/独立启动通过后才 b2 真机。
 
 ## b2 — 7777/UART/SPP 桥
 
@@ -44,15 +47,15 @@
 
 **Consumes:** T01 pin/target；T02 独立传输。**Produces:** AFE-C01–05/C12 的同步双麦 sample index、真实 TX/RX、32k mono output；原普通下行基础。
 **Files:** `esp32/firmware/main/{audio_capture,audio_playback,audio_output_manager,audio_resource}.c`，现对应 headers；`tests/esp32/{test_audio_rx_timeline,test_p65b8_audio,test_p65b10_output,test_p6_audio_resource}.py`。
-- [ ] T03-A（软件 PASS；实物 GAP）：标记双声道 32-bit 高24位、有符号/饱和/滤波、相位、32→16k 31-tap、不同块长一致，RX/TX 共 BCLK/WS；独立敲击/示波验证 L/R、上电128ms 丢弃。先实现双通道采集和标记，不把单麦平均假称 BSS。
-- [ ] T03-B（软件 PASS；实物 GAP）：实际 TX（含零填/stop/音量）与 RX 样本轴同源，60ms DMA/160ms reference 初值；模拟 EOF gap、丢帧只计一次、长间隙继续、尾部 drain、取消、HTTPS/HTTP 格式/URL 无回归；真实 AUX 波形/双向并发，宽带脉冲相关重测参考位置/声学延迟，不照抄47.5ms。报告水位/内部 heap，b4 再测 AFE。
+- [x] T03-A（软件 PASS；实物 GAP）：标记双声道 32-bit 高24位、有符号/饱和/滤波、相位、32→16k 31-tap、不同块长一致，RX/TX 共 BCLK/WS；独立敲击/示波验证 L/R、上电128ms 丢弃。先实现双通道采集和标记，不把单麦平均假称 BSS。
+- [x] T03-B（软件 PASS；实物 GAP）：实际 TX（含零填/stop/音量）与 RX 样本轴同源，60ms DMA/160ms reference 初值；模拟 EOF gap、丢帧只计一次、长间隙继续、尾部 drain、取消、HTTPS/HTTP 格式/URL 无回归；真实 AUX 波形/双向并发，宽带脉冲相关重测参考位置/声学延迟，不照抄47.5ms。报告水位/内部 heap，b4 再测 AFE。
 - [x] 软件验证：上述4 test 文件及新增双麦/参考主机用例通过，IDF S3 build 通过；ESP32 全量复跑有一项断线测试波动、单独复跑通过，见 [b3 软件验收报告](../reports/2026-11-18-p6-8-b3-audio-acceptance.md)。T03-A/B 实物 GAP 保留；未部署、未刷机。
 
 ## b4 — 双麦 AFE、本地 WakeNet
 
 **Consumes:** T03 sample timeline；T01 model。**Produces:** AFE-C06–12，confirmed wake、VAD start/end 和按索引 cache。
 **Files:** `esp32/firmware/main/audio_frontend.{c,h}`、audio_capture、sdkconfig/model build；新增 AFE host 流程测试并复用 T03 标记。
-- [ ] T04-A（软件实现/主机测试与构建 PASS；实际模型初始化、最终词及声学 GAP，见 [b4 软件验收报告](../reports/2026-11-18-p6-8-b4-afe-acceptance.md)）：锁定实际模型/有效配置/动态 chunk，MMNR/FD HIGH_PERF、BSS 优先、无强开 NS、VADNet1 medium，真实 feed/fetch；测试重复 candidate/verified、丢帧、重触发、短 gate、VAD history/cache 重叠去重、500ms endpoint；输出单次确认及16k增强流，不接 NAS KWS。b4 前用户选最终官方词；未选时仅 smoke，不宣称最终声学通过。
+- [x] T04-A（软件实现/主机测试与构建 PASS；实际模型初始化、最终词及声学 GAP，见 [b4 软件验收报告](../reports/2026-11-18-p6-8-b4-afe-acceptance.md)）：锁定实际模型/有效配置/动态 chunk，MMNR/FD HIGH_PERF、BSS 优先、无强开 NS、VADNet1 medium，真实 feed/fetch；测试重复 candidate/verified、丢帧、重触发、短 gate、VAD history/cache 重叠去重、500ms endpoint；输出单次确认及16k增强流，不接 NAS KWS。b4 前用户选最终官方词；未选时仅 smoke，不宣称最终声学通过。
 - [ ] T04-B（实物 GAP：S3 与第二颗 INMP441 未到货，禁止刷写）：5cm 初值，1m/3m/实际位置，多条件真人、电视普通/同词、正常TTS含/不含词、双讲及长播放，记录每组 count/误漏/延迟P50/P95/ERLE/负载和 drop；NSNet2/3 不自动叠加；若失败按 AFE 规格复测布局/阈值/模型。S3 网络/TTS/UART并发无新增欠载、AFE gap、watchdog。
 - [x] 软件验证：T04 host、T03 回归及 ESP32 standalone 全量 85 passed；S3 IDF v6.1 build/size 通过，见 b4 报告。实际模型 list/print_pipeline、内存/声学记录及 T04-A/B 实物门禁保持 GAP。
 

@@ -1,5 +1,8 @@
 # P6.8 B1–B8 审查修复分批执行计划（R01–R11）
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended when available) or superpowers:executing-plans. 仅执行用户当次授权的一个批次；使用 test-driven-development、systematic-debugging（故障路径）与 verification-before-completion；逐任务 RED/GREEN，审查、报告、独立本地提交。无独立代理时明确说明，自审不冒充独立代理。
 
 **Goal:** 在 B8 完成基线之上核销八份审查的全部软件问题、证据遗漏及产品合同冲突，保留硬件与生产 GAP，不提前进入 B9 清理。

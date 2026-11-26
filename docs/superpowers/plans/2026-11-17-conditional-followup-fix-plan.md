@@ -1,5 +1,8 @@
 # Tivoo Conditional Follow-up Fix Implementation Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** 让 Tivoo 只在 HA 明确返回 `continue_conversation=true` 时进入免唤醒连续对话。
@@ -33,19 +36,19 @@
 - Consumes: `PipelineEventType.INTENT_END` 的 `event.data["intent_output"]["continue_conversation"]`
 - Produces: 当前 `_Turn` 的续聊判据；TTS 完成后的条件式 follow-up/结束会话
 
-- [ ] 写测试：false 时 TTS completed 后不 follow-up、不发提示音、停止 session。
-- [ ] 运行该测试并确认 RED，失败原因是当前无条件 `_open_followup()`。
-- [ ] 写测试：true 时保持原 8 秒 follow-up。
-- [ ] 最小实现：记录布尔值并统一决定 follow-up 或 stop。
-- [ ] 跑上述测试转 GREEN。
-- [ ] 跑 Tivoo/AstrBot 聚焦回归和静态检查。
+- [x] 写测试：false 时 TTS completed 后不 follow-up、不发提示音、停止 session。
+- [x] 运行该测试并确认 RED，失败原因是当前无条件 `_open_followup()`。
+- [x] 写测试：true 时保持原 8 秒 follow-up。
+- [x] 最小实现：记录布尔值并统一决定 follow-up 或 stop。
+- [x] 跑上述测试转 GREEN。
+- [x] 跑 Tivoo/AstrBot 聚焦回归和静态检查。
 
 ### Task 2: 生产部署与运行验证
 
 **Files:** 无额外生产代码。
 
-- [ ] 备份生产 Tivoo/AstrBot 文件。
-- [ ] 同步修复后的相关自定义组件并在 HA 容器内 compileall。
-- [ ] 重启 Home Assistant。
-- [ ] 核对生产 SHA256、HA running 状态及启动错误。
-- [ ] 保留当前分支改动，不推送远端。
+- [x] 备份生产 Tivoo/AstrBot 文件。
+- [x] 同步修复后的相关自定义组件并在 HA 容器内 compileall。
+- [x] 重启 Home Assistant。
+- [x] 核对生产 SHA256、HA running 状态及启动错误。
+- [x] 保留当前分支改动，不推送远端。

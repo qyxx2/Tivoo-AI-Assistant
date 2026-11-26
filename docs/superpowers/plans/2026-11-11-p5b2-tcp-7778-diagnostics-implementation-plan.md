@@ -1,5 +1,8 @@
 # P5b2 TCP 7778 Diagnostics Implementation Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. The P5 contract matrix is authoritative for every batch boundary; this plan only decomposes the existing P5b2 row.
 
 **Goal:** Complete the P5 TCP 7778 diagnostic channel with TVIO framing, HELLO/ACK negotiation, ERROR/DIAGNOSTIC_LOG delivery, HA standard logging, and bounded log buffering/replay after reconnect.

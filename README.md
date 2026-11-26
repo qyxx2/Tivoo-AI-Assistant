@@ -1,653 +1,178 @@
 # Tivoo AI Assistant
 
-> 基于 Divoom Tivoo、ESP32、Home Assistant 和 AstrBot 的个人 AI 语音终端。
+Tivoo AI Assistant 是基于 Divoom Tivoo、ESP32-S3、经典 ESP32、Home Assistant、Sherpa-ONNX 与 Qwen Audio Agent 的本地语音终端项目。
+
+> **当前基线（2026-11-26）**：P6.8 双板架构已经进入稳定迭代阶段。S3 本地 WakeNet、双麦 AFE、Sherpa device-endpoint STT、HA local-first、Qwen 文本回退、Qwen 流式音频播放以及 Classic ESP32 SPP 屏幕控制均已在真实环境运行。历史 P3–P7A/P6.x/P6.8 分批计划全部归档，不再作为活动 backlog 或发布门禁。后续发现实际问题时，针对问题建立专用分支和计划处理。
 >
-> 当前分支进展（2026-11-25）：**P6.8 双板本地唤醒与 Qwen 流式语音已在实机运行；本次持续播放卡顿修复已部署，真人复测顺畅。** 构建标识、HA 决策、验证范围与回退信息见 [本次构建摘要](docs/superpowers/reports/2026-11-25-p68-build-summary-and-ha-decisions.md)。总体阶段与后续验收仍按 [P6.8 路线](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)管理，不代表全部阶段已经验收。
->
-> 历史阶段基线：**P7A Sherpa Wyoming 三 Provider 已完成验收并部署；P5 ESP32 最小固件已实现，16MB Flash / 8MB PSRAM 与全 himem bank 实测通过，隔夜完全断电后 Wi-Fi 自动恢复，HA 后续 SPP 命令执行成功，P5 final 16MiB 镜像与 manifest 已生成。用户已实测 HA 语音助手成功调用 Tivoo 工具并执行命令。JTAG `esp_restart()`、第二台 Tivoo 正向替换和最终长滚动专项观察仍留有记录，但不阻止进入 P6；P6 继续实现双向状态/事件及 HTTP 音频资源通道，真实音频链路继续按 P7/P8 验收。**
+> 当前最有代表性的运行证据见 [P6.8 构建与 HA 决策](docs/superpowers/reports/2026-11-25-p68-build-summary-and-ha-decisions.md) 和 [B8.8 验收记录](docs/superpowers/reports/2026-11-25-p6-8-b8-8-acceptance.md)。完整文档入口见 [文档地图](docs/README.md)。
 
-ESP32 与 HA 双向通信契约：[通信层规格书](docs/superpowers/specs/2026-11-09-esp32-ha-bidirectional-communication-design.md)（待审阅）。
+## 当前架构
 
-P5 固件实施与收尾验收：[P5 合同矩阵](docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md)；[2026-11-12 硬件、Bond 与发布包收尾报告](docs/superpowers/reports/2026-11-12-p5-memory-bond-artifact-closeout.md)。当前最终发布包位于 `esp32/firmware/build/p5-final/`，NAS 持久副本位于 `/volume1/docker/tivoo-esptool/artifacts/p5-final/`。
+~~~
+                        NAS
+┌──────────────────────────────────────────────────────┐
+│ Home Assistant                                       │
+│ ├─ Tivoo 自定义集成                                  │
+│ ├─ Sherpa device-endpoint STT                        │
+│ ├─ HA local intent / 本地设备控制                    │
+│ ├─ Qwen Realtime Bridge                              │
+│ └─ HA MCP Server / Tivoo tools                       │
+│             │                          ▲              │
+│             │ text fallback            │ MCP          │
+│             ▼                          │              │
+│        Qwen Audio Agent ────────────────┘              │
+│             │ 24 kHz PCM                              │
+│             ▼                                         │
+│        HA 有状态 24→32 kHz SRC                        │
+└─────────────┬────────────────────────────────────────┘
+              │ Wi-Fi / TCP 7777 + 7778 / HTTP PCM
+              ▼
+┌──────────────── ESP32-S3 ────────────────────────────┐
+│ 双 INMP441 → ESP-SR AFE/AEC/VAD/WakeNet             │
+│ 本地提示音 / 本地 ACK / 音频输出 owner              │
+│ PCM5102 I²S DAC → Tivoo AUX                          │
+│ UART ↔ Classic ESP32                                 │
+└─────────────┬────────────────────────────────────────┘
+              │ UART
+              ▼
+┌──────────── Classic ESP32 ───────────────────────────┐
+│ Bluetooth Classic SPP → Tivoo 屏幕/亮度/倒计时等     │
+└──────────────────────────────────────────────────────┘
+~~~
 
-P3 HA Conversation Agent 与 AstrBot HTTP/SSE 接口：[P3 接口合同矩阵](docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md)；[AstrBot HTTP/SSE 推理取消与终止规格](docs/superpowers/specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)（AstrBot 4.29.4 真实接口已验证：owner 匹配时 Stop 返回 stopped_count=1，SSE 随后发送 complete/end，session 不再运行；本次 Stop 发生在首个可见文本前，部分文本输出后的中途取消仍待实测。HA 重启、24h 轮换和 API Key 轮换仍待现场验收）。
+### 一轮语音的当前路径
 
-语音识别与合成端到端处理：[STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)（HA Assist Pipeline → Sherpa STT → 生产 AstrBot SSE → Sherpa TTS → HA TTS Proxy 的两轮 WAV 测试已通过；真实麦克风、Satellite 和设备播放留待硬件阶段）。
+1. S3 常驻双麦 AFE，在本地运行 WakeNet；待机环境 PCM 不持续上传 NAS。
+2. 本地唤醒确认后播放 S3 Flash 内提示音，提示音结束后开放命令采集。
+3. 命令 PCM 经现有 7778 音频会话交给 Sherpa device-endpoint STT，得到最终文本。
+4. HA 先尝试本地 intent：action_done 直接执行 HA 动作并由 S3 播放固化成功/失败 ACK；query_answer 使用 HA 本地动态 TTS；未命中则只把 Sherpa 文本提交给 Qwen，不再次上传/识别原始 PCM。
+5. Qwen 可通过 HA MCP 调用家庭设备/Tivoo 工具；回答音频以流式 PCM 返回。
+6. HA 使用有状态 SRC 把 Qwen 24 kHz PCM 转成 32 kHz mono S16LE，边生成边提供给 S3。
+7. S3 通过统一 output owner、PCM5102 和 AUX 播放；实际播放终态继续参与 generation/follow-up 生命周期。
+8. 屏幕和 Tivoo 原生控制由 Classic ESP32 通过 SPP 完成，S3 与 Classic 之间走 UART。
 
-P7A 独立 Sherpa Wyoming 三 Provider 服务（KWS/STT/TTS）：[P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)（NAS 已部署；C01–C39 PASS；生产 HA → AstrBot → TTS Proxy 两轮端到端验证通过，详见[补充报告](docs/superpowers/reports/2026-11-10-ha-assist-astrbot-stt-tts-e2e-report.md)；作为 P5/P6 的稳定语音服务依赖；C40–C43 留待硬件阶段验收）。
+## 主要组件
 
-生产 HA 首选 `Astrbot` Pipeline 已正式绑定 KWS `wake_word.sherpa_onnx_wake_word`（`tivoo-wake`）、STT `stt.sherpa_onnx_paraformer`（`zh-CN`）和 TTS `tts.sherpa_onnx_matcha_baker`（`zh-CN`，voice `0`）。配置已持久化，首选 Pipeline ID 未改变，并已用该 Pipeline 完成一次真实 STT → AstrBot → TTS Proxy 语音调用验证。
-
-## 1. 项目目标
-
-保留 Divoom Tivoo 原有的外观、扬声器、麦克风、AUX 输入、16×16 像素屏幕和按键，使用一块 ESP32-WROVER-E 作为专用硬件主控，将 Tivoo 接入 Home Assistant，并由 AstrBot 提供统一的 AI 对话能力。
-
-最终希望实现：
-
-- **自然语音交互**：Tivoo 通过唤醒词进入语音交互，完成语音输入和语音回复。
-- **智能家居控制**：AI 理解自然语言，并调用 Home Assistant 中的设备、脚本和自动化。
-- **日常助手能力**：时间查询、倒计时、提醒、状态查询等。
-- **复杂 AI 对话**：接入云端 LLM，进行连续对话、复杂任务和信息检索。
-- **人格与记忆**：由 AstrBot 统一管理人格、会话和长期记忆，避免简单指令与复杂对话表现成两个不同的助手。
-- **MCP 扩展**：通过 MCP 接入记忆、搜索及其他外部工具。
-- **Tivoo 表情反馈**：AI 根据对话内容选择表情、动画，也可以按需生成新的像素图片。
-- **主动交互**：AI 可以按计划、事件或任务结果主动向 Tivoo 播报，也可以邀请用户继续对话。
-
-## 2. 总体架构
-
-采用三层结构，NAS 是服务端，ESP32 是 Tivoo 专用硬件控制器。
-
-```text
-┌──────────────────────────── NAS ─────────────────────────────┐
-│                                                              │
-│  AstrBot                                                     │
-│  ├─ 云端 LLM / 人格 / 会话 / 记忆                             │
-│  ├─ MCP Client：主动调用 HA 提供的工具                       │
-│  └─ 插件 / 主动任务 / HTTP Chat API                          │
-│       ▲                              │                       │
-│       │ HA Conversation Agent       │ AstrBot 调用 HA MCP    │
-│       │ 通过 HTTP 交付 STT 文本      ▼                       │
-│  Home Assistant：MCP Server + Assist Pipeline                │
-│  ├─ Wake Word / STT / AstrBot Conversation Agent / TTS       │
-│  ├─ Tivoo 自定义集成 / Assist Satellite                       │
-│  ├─ Tivoo 设备实体、服务和 LLM Tools                          │
-│  └─ 家庭设备 / Timer / 自动化                                 │
-│                 │                                            │
-└─────────────────┼────────────────────────────────────────────┘
-                  │ Wi-Fi：ESP32 只连接 HA
-                  ▼
-┌──────────────────── ESP32-WROVER-E ──────────────────────────┐
-│  ESP-IDF 自定义固件                                           │
-│  ├─ 单 I2S 全双工：INMP441 RX + PCM5102 TX（32 kHz）           │
-│  ├─ 音频输出管理器：TTS/提示音统一播放、最终层全局停止         │
-│  ├─ ESP32 PCM 转换：麦克风/播放参考 32→16 kHz；TTS→32 kHz      │
-│  ├─ ESP-SR AFE AEC/VAD：常驻采集；打断由 NAS KWS 确认           │
-│  ├─ A2DP Source：可选备用音频输出路线                         │
-│  └─ SPP Client：屏幕、文字、动画和内置显示模式                │
-└─────────────────┬────────────────────────────────────────────┘
-                  │ I2S 连接麦克风和外部 DAC；模拟音频接入 AUX；
-                  │ Bluetooth Classic SPP 用于屏幕和内置功能控制
-                  ▼
-┌──────────────────────── Tivoo ────────────────────────────────┐
-│  麦克风 · 扬声器 · AUX 输入 · 16×16 屏幕 · 原有按键            │
-└───────────────────────────────────────────────────────────────┘
-```
-
-### 2.1 部署位置
-
-| 组件 | 部署位置 | 主要职责 |
-|---|---|---|
-| Home Assistant | NAS | Assist Pipeline（HA 唤醒词检测、STT、AstrBot 对话、TTS）、设备管理和自动化 |
-| AstrBot | NAS | 唯一 AI 主体、云端模型、人格、记忆、MCP、主动任务 |
-| 必要 Linux 脚本 | NAS | 容器部署、备份、健康检查、日志维护 |
-| Tivoo 自定义集成 | HA 内部 | ESP32 音频接入、Assist Satellite、Tivoo 实体/服务、LLM Tools |
-| Sherpa Wyoming 语音服务（P7A） | NAS 独立容器 | 一个 Wyoming TCP 入口同时向 HA 提供中英文 KWS、Paraformer STT 和 Matcha TTS |
-| AstrBot Tivoo Bridge | AstrBot 插件 | 主动任务通知、HA 接口调用及交互桥接 |
-| ESP32 固件 | Tivoo 专用开发板 | 本地 VAD、音频收发与播放、SPP 协议桥接及屏幕控制 |
-
-**网络边界：ESP32 只连接 Home Assistant，不直接连接 AstrBot、云端 LLM、MCP 服务或其他 NAS 容器。**
-AstrBot 需要控制 Tivoo 时，统一经过 Home Assistant 提供的 Tivoo 工具和接口。
-
-NAS 上的 AstrBot、HA 和辅助服务按实际 NAS 系统及容器环境部署。本目录保存部署文件和脚本；不会把它们安装到 ESP32。
-
-## 3. AI 与语音交互设计
-
-### 3.1 统一 AI 主体
-
-AstrBot 是唯一的 AI 对话主体。简单指令和复杂问题都进入同一个 AI 会话，使用一致的人格和记忆。
-
-Home Assistant 不作为另一个独立聊天机器人，也不在普通语音指令上绕过 AstrBot，直接给出与 AI 无关的机械式回答。Assist Pipeline 由 HA 负责唤醒词检测、STT、Conversation Agent 调度和 TTS；Conversation Agent 使用我们实现的 AstrBot 适配层。
-
-**识别文本不能靠 AstrBot 调用 HA MCP 工具来“接收”。** MCP 的工具调用方向是 MCP Client 调用 MCP Server：本项目中 AstrBot 是 Client、HA 是 Server。因此，HA 得到 STT 文本后，应由自定义 Conversation Agent 通过 AstrBot HTTP API 把文本交给 AstrBot；反方向上，AstrBot 才通过 HA MCP 工具调用 HA 的设备和 Tivoo 服务。
-
-普通语音回复不需要 AstrBot 再调用一个“转语音”MCP 工具：AstrBot 返回文本给 HA Conversation Agent 后，HA Assist Pipeline 执行 TTS。P6.5b7–b10 实现的 Assist Satellite 集成通过 Pipeline 事件取得音频 URL、Token 和 MIME 类型，再通知 ESP32 获取音频并播放；不是由 HA 直接通过 ESP32 音频通道推送原始 PCM。主动播报时，AstrBot 才调用 HA 提供的 announce/start-conversation 工具或动作。
-
-语音链路（ESP32 常驻 AEC/VAD + NAS KWS 确认打断）：
-
-1. INMP441 麦克风由 ESP32 I²S RX 常驻采样；播放期间从音频输出管理器取得最终 TX PCM 作为 AEC 参考。两路对齐后交给 ESP-SR AFE AEC，AEC 后的单声道 PCM 同时进入本地 VAD、预录和网络上传。
-2. 空闲时只在 ESP32 本地运行 RX/AEC/VAD，不上传。VAD 首次检测到人声后打开一个网络 MIC session，先发送 AEC 预录缓冲，再持续发送 16 kHz、16-bit、单声道 PCM（包括静音帧）。HA 使用 `AssistSatelliteEntity.async_accept_pipeline_from_satellite()` 从 `PipelineStage.WAKE_WORD` 启动原有 KWS Pipeline。
-3. 首次 KWS 候选最近一次 `speech_end` 后 3 秒无新语音则结束；首次候选从 `speech_start` 起 15 秒仍未命中也结束。KWS 命中后同一 Pipeline 进入 STT；若唤醒短语结束后 5 秒没有新命令语音，则取消空 STT turn。唤醒词后连续讲话不增加等待。
-4. Pipeline 到达 `STT_START` 时，HA 在同一有序 MIC ingress 上并行启动独立 Sherpa KWS watcher，与 STT 并行消费音频；因此 STT、AstrBot 推理/SSE、TTS 生成及 DAC 播放期间都能检测下一次唤醒词。**播放期间只有 NAS KWS 返回有效 `Detection(tivoo-wake)` 才能停止音频和取消旧对话；ESP32 VAD 的 speech_start 绝不直接停止 DAC，也不发送 `AUDIO_INTERRUPTED`。** 新一轮复用当前 MIC session，旧轮清理完成后从 `PipelineStage.STT` 接管有界 PCM handoff。
-5. 正常回答由 HA `INTENT_END.intent_output.continue_conversation` 决定是否续聊：仅 `true` 时在最后一段音频实际播放完成后进入 8 秒 follow-up，VAD speech_start 可直接启动免唤醒词 STT；`false` 或字段缺失时回答完成即结束网络 MIC session，下一轮必须重新说唤醒词。
-6. HA STT Provider 将指令音频识别为文字。指令结束由 HA Pipeline/Provider 的 VAD 或端点检测机制处理（取决于 Provider 能力）；这与 ESP32 仅用于本地上传门控的 VAD 是不同职责。
-7. HA 自定义 Conversation Agent 将文字、稳定用户标识及映射后的 AstrBot `session_id` 发送到 AstrBot 自有 HTTP OpenAPI：`POST /api/v1/chat`（AstrBot v4.18.0+；`enable_streaming: true` 时使用 SSE）。这不是 OpenAI 兼容的 `/v1/chat/completions` 接口。
-8. AstrBot 使用指定人格、会话上下文和检索到的长期记忆处理请求，并按需作为 MCP Client 调用 HA MCP Server 的工具，控制家庭设备或 Tivoo。
-9. Conversation Agent 将 AstrBot SSE 增量内容转换为 HA Conversation 流式响应；HA Assist Pipeline 再调用 TTS Provider。是否能边生成边播放，还取决于 TTS Provider 是否支持流式输入，不能仅凭 AstrBot SSE 或离线 RTF 推断。
-10. HA 通过 Assist Satellite 的 Pipeline 事件向 ESP32 通知 TTS 输出信息（音频 URL、Token、MIME 类型等）。ESP32 按实际 HTTP 响应格式获取并流式解码音频，再重采样至 32 kHz、填充 Stereo/32-bit Slot，由与麦克风 RX 共用时钟的 I²S TX 驱动 PCM5102，模拟音频接入 Tivoo AUX；A2DP 保留为备用路线。播放结束后集成调用 `tts_response_finished()`，将 Satellite 状态恢复为空闲。
-11. Assist Satellite 状态和 AstrBot 的情绪工具共同控制 Tivoo 的屏幕表现。音频走 AUX 时，屏幕控制仍通过 SPP。**设备端并发能力已于 2026-11-08 实测通过**：Tivoo 通过 AUX 播放外部音频时，保持 `Tivoo-light` BLE 连接，仍可通过 SPP 正常发送指令并显示图形。该测试只记录设备端 BLE 身份连接与 AUX/SPP 并行的现象；目前没有证据证明 `Tivoo-light` 提供本项目可用的 GATT 灯控接口，因此不要求 ESP32 建立 BLE GATT 连接。后续验证 ESP32 固件侧 Wi-Fi、I²S RX/TX 与 SPP 的长期并发稳定性。
-
-### 3.2 Home Assistant 的职责
-
-HA 作为语音和设备中枢，负责：
-
-- Assist Pipeline：HA 唤醒词检测、STT、Conversation Agent 调度和 TTS。
-- P7 Tivoo Assist Satellite：接收设备音频流、启动和维护 Pipeline、处理 Pipeline 事件及播报/主动对话生命周期。
-- Wake Word Provider：通过 P7A Sherpa Wyoming 服务提供中英文 KWS；与同一服务中的 STT/TTS Provider 保持独立的协议处理和请求状态。HA Pipeline 在 WAKE_WORD 阶段先检测唤醒词，命中后才进入 STT；Provider 接入与真实收音验收分别按 P7A/P7 阶段完成。
-- Tivoo 自定义设备集成：屏幕模式、音频状态和内置工具。
-- 家庭设备实体、Timer Helper、脚本和自动化。
-- 向 AstrBot 提供 MCP 工具。
-
-HA 的 Conversation Agent 通过 AstrBot HTTP OpenAPI 将 STT 文本交给 AstrBot，并将 SSE 文本增量逐段写入 HA ChatLog。当前单用户阶段使用专用 API Key 派生的 AstrBot username（`api_key:<key_id>`），独立 UUIDv4 session_id 由 HA Store 持久化，24 小时无活动后轮换；正常上下文压缩不触发轮换。接口与身份合同以 [P3 接口合同矩阵](docs/superpowers/specs/2026-11-09-p3-astrbot-conversation-contract-matrix.md) 为准；Stop 调用时序、owner 匹配、SSE 终止事件和实测边界见 [AstrBot HTTP/SSE 推理取消规格](docs/superpowers/specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)。
-
-### 3.3 AstrBot 的职责
-
-AstrBot 负责：
-
-- 云端 LLM 模型接入。
-- 统一人格、系统提示词和对话上下文。
-- 长期记忆的检索与保存。
-- 通过 MCP 使用 HA 提供的设备、Tivoo 和自动化工具。
-- 通过插件执行计划任务和主动交互。
-- 根据对话内容决定 Tivoo 的情绪和表情。
-
-长期记忆不能仅依赖 AstrBot 是否临时调用某个工具。若要求每轮都带入相关记忆，需要在对话入口或 Agent 工作流中明确执行记忆检索，并把检索结果注入当前上下文。
-
-## 4. Tivoo 自定义 HA 集成
-
-集成目录：`homeassistant/custom_components/tivoo/`
-
-该集成是 ESP32 与 HA 之间唯一的应用层入口。当前 P6 已实现 ESP32 连接、双向消息、MIC session 有界 PCM iterator、TTS Pipeline event callback factory 和 HTTP 资源传输。P7 在此基础上新增 Tivoo Assist Satellite：接收 PCM iterator，通过 `async_accept_pipeline_from_satellite()` 启动 Pipeline，并在 Pipeline event callback 中转发 TTS 资源信息；同时维护 Satellite/响应生命周期。不要再为同一条会话同时实现独立的 `assist_pipeline/run` 生命周期。解码和实际播放由 P8 接入。它不让 AstrBot 或其他容器直接访问 ESP32。
-
-### 4.1 设备实体
-
-初步规划的实体：
-
-| 实体 | 作用 |
+| 组件 | 当前职责 |
 |---|---|
-| `assist_satellite.tivoo` | 语音卫星状态、播报和对话 |
-| `media_player.tivoo` | 扬声器状态及音量（以实际协议能力为准） |
-| `select.tivoo_display_mode` | 16×16 屏幕显示模式（仅暴露实测支持的模式；纯色/光效如可用，通过 SPP 控制） |
-| `switch.tivoo_screen` | 屏幕开关 |
-| `number.tivoo_brightness` | 屏幕亮度 |
-| `binary_sensor.tivoo_mic_ready` | I2S 麦克风采集链路状态 |
-| `binary_sensor.tivoo_a2dp_connected` | 备用 A2DP 路线的连接状态；采用 AUX 时不作为音频可用性的依据 |
-| `binary_sensor.tivoo_spp_connected` | SPP 状态 |
-| `sensor.tivoo_battery` | 电池状态；需要实际接入电压采样后实现 |
+| ESP32-S3 N16R8 | Wi-Fi、双麦 I²S、AFE/AEC/VAD/WakeNet、命令 PCM、提示音/ACK、Qwen/TTS PCM 播放、PCM5102 |
+| Classic ESP32 WROVER-E | Bluetooth Classic SPP、Bond/重连、Tivoo 屏幕与原生控制 |
+| Home Assistant | 设备/实体、语音生命周期、Sherpa STT、本地 intent、播放 owner、显示状态、MCP |
+| Sherpa Wyoming | 当前仍承担 Tivoo device-endpoint STT；历史 KWS/TTS Provider 资料仍保留 |
+| Qwen Audio Agent | 未命中本地 intent 后的对话、工具调用、人格/记忆扩展和语音回答 |
+| Divoom Tivoo | AUX 扬声器、16×16 屏幕、原生 SPP 功能 |
 
-实体只暴露有可靠状态来源的属性。不能把命令发送成功直接当成 Tivoo 已经执行或显示成功。
+### AstrBot 状态
 
-### 4.2 HA 服务与 LLM 工具
+AstrBot/P3/P4 代码、规格、报告和历史计划**保留但归档**。它们用于追溯早期 Conversation Agent、SSE、Persona 与 MCP 设计，不再代表当前主要语音架构，也不要求为了关闭历史 checkbox 继续做 HA 重启、24 小时 session、API Key 轮换、Persona 故障注入等测试。
 
-初步规划的 HA 服务：
+不主动删除这些历史实现；如果以后需要复用，可从对应提交和文档恢复上下文。
 
-- `tivoo.set_expression`：设置预设表情。
-- `tivoo.play_animation`：播放动画。
-- `tivoo.show_text`：显示文字。
-- `tivoo.show_image`：显示图片。
-- `tivoo.set_brightness`：设置亮度。
-- `tivoo.start_countdown`：启动 Tivoo 内置倒计时。
-- `tivoo.stop_countdown`：停止 Tivoo 内置倒计时。
+## 硬件基线
 
-集成还需要实现 HA LLM API 工具平台（`llm.py`），把适合 AI 调用的 Tivoo 操作注册为 LLM Tools。Home Assistant 的 MCP Server 会将已注册的 LLM API 工具通过 MCP 暴露，因此 AstrBot 可作为 MCP Client 调用这些工具。无需再为同一组 HA 工具额外写一套独立 MCP Server。
+- ESP32-S3：ESP32-S3-DEV-KIT-N16R8-M，16 MB Flash / 8 MB PSRAM。
+- Classic ESP32：ESP32-DEV-KIT-WROVER-E-M，16 MB Flash / 8 MB PSRAM。
+- 麦克风：2 × INMP441，同步双麦输入。
+- DAC：PCM5102，I²S → 模拟 AUX。
+- 终端：Divoom Tivoo。
+- S3 与 Classic ESP32 使用独立固件目标和独立刷写流程；Classic 侧不承担主语音链 Wi-Fi/AFE。
 
-需要区分：
-- HA 的普通服务是集成提供给自动化和脚本使用的接口。
-- LLM Tools 是向 HA 对话 Agent 注册的 AI 工具。
-- MCP Server 是让 AstrBot 通过 MCP 调用这些 HA 工具的桥梁。
+具体 GPIO、时序与 AFE 合同保留在 [P6.8 硬件设计](docs/superpowers/specs/2026-11-18-p6-8-b0-2-hardware-uart-spp-design.md) 和 [音频/AFE 设计](docs/superpowers/specs/2026-11-18-p6-8-b0-3-audio-afe-design.md)。这些设计文档仍可作为实现参考，但对应执行计划已经归档。
 
-**方向约定：**
-- HA → AstrBot：STT 识别文本通过自定义 Conversation Agent 调用 AstrBot HTTP Chat API。
-- AstrBot → HA：AI 工具调用通过 AstrBot MCP Client → HA MCP Server。
-- HA → Tivoo：普通回复由 Assist Pipeline TTS 输出；主动播报由 HA 的 Satellite announce/start-conversation 能力处理。
+## 当前实现原则
 
-MCP 是工具调用协议，不是 HA 向 AstrBot 推送用户文本的消息通道。不要把这两条方向相反的链路混为一谈。
+- **本地优先**：能由 HA local intent 确定完成的操作不进入 Qwen。
+- **单一音频 owner**：提示音、ACK、动态 TTS、Qwen 回复共享现有输出所有权与 generation 隔离。
+- **不重复 ASR**：local miss 只向 Qwen 发送 Sherpa transcript，不回放 MIC PCM。
+- **流式播放**：HA 收到首个合法 Qwen PCM delta 后即可开始有界输出，不等待整段 audio.done。
+- **SRC 在 HA**：当前 Qwen 24→32 kHz 转换放在 HA，减少 S3 持续播放 CPU 压力。
+- **真实终态**：逻辑响应完成与设备实际 AUDIO_STATE 分开处理。
+- **问题驱动验证**：低概率、难复现、成本高的历史验收不再作为固定门禁；实际使用中出现问题后再针对性复现和修复。
 
-图片和动画使用独立的数据传输接口，不将大块图片数据塞进普通 JSON/MCP 参数。AI 工具负责发起任务，具体文件传输由 NAS 上的 Tivoo 服务和 HA 集成完成，再由 ESP32 通过 SPP 发送。
+## 仓库目录
 
-## 5. ESP32 自定义固件
+~~~
+homeassistant/
+  custom_components/tivoo/     当前 HA Tivoo 集成
+  custom_components/astrbot/   历史 AstrBot 集成，保留归档
 
-**P6.8 目标硬件（型号已确定，尚未实施）：** 新增微雪 ESP32-S3-DEV-KIT-N16R8-M（ESP32-S3-WROOM-1-N16R8，16 MB Quad SPI Flash、8 MB Octal SPI PSRAM，预焊排针）作为语音主控；新增一颗与原麦克风同品牌同型号的 INMP441，总计两颗；原微雪 ESP32-DEV-KIT-WROVER-E-M 改为 UART/SPP 蓝牙桥，PCM5102 与 Tivoo 继续复用。完整硬件基线、官方资料及限制见 [P6.8 总体路线 §1.1](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md#11-p68-已确定的目标硬件基线)。GPIO 与接线由 b0.2/b0.3 确定。
+esp32/
+  firmware/                    ESP32-S3 主固件
+  bridge_firmware/             Classic ESP32 SPP/UART 桥
 
-**当前生产硬件（迁移前）：** ESP32-WROVER-E-N16R8（16MB Flash、8MB PSRAM、Bluetooth Classic；本项目使用 Classic SPP，不要求启用 BLE GATT）。本节以下固件接线和单板行为仍为已部署基线，不是 S3 接线说明。
+services/
+  sherpa_wyoming/              Sherpa Wyoming 服务
 
-固件基于 ESP-IDF / C/C++，不把 HA、AstrBot、MCP 或 AI 模型部署到 ESP32。
+deploy/
+  nas/                         NAS/Qwen/HA 部署材料
 
-### 5.1 外设接口与连接角色
+tests/
+  homeassistant/
+  esp32/
+  services/
+  integration/
 
-| 功能 | ESP32 角色 | 用途 |
-|---|---|---|
-| 麦克风/扬声器（首选） | 同一 I²S Controller 全双工 RX/TX | INMP441 RX + PCM5102 TX；Standard/Philips、32 kHz、Stereo、32-bit Slot；共享 BCLK/WS |
-| 扬声器（备用） | A2DP Source | AUX 路线不可用或音质/电气条件不满足时，向 Tivoo 发送 TTS 音频 |
-| 屏幕/内置显示模式 | SPP Client | 发送像素图、文字、动画、亮度及已确认的内置显示功能指令 |
+docs/
+  README.md                    当前文档地图
+  superpowers/
+    plans/                     全部为历史归档计划
+    specs/                     规格/合同；含当前与历史设计
+    reports/                   验收、故障调查和运行证据
 
-### 5.2 固件任务
+tivoo-rotating-base/           Tivoo 可旋转底座参数化 CAD
+~~~
 
-**阶段边界：**
+## 开发与验证
 
-- **P5 最小固件必须实现：** Wi-Fi Station 基础联网；TCP 7777 最小单向控制入口，接收 HA 下发的现有 Tivoo 原始帧并交给 SPP；TCP 7778 只实现最终消息封装、HELLO/ACK、诊断日志和错误上报。ESP-IDF 基础日志、固件/启动信息及 Reset Reason 需能回传 HA。HA 通过 Tivoo 集成接收并写入 HA 标准日志。P5 不实现 SPP 返回数据、完整设备状态、音频消息、HTTP 音频资源或 I²S/AEC/VAD。
-- **P6 补齐：** 在 P5 的同一端口和消息封装上完成双向 7777、完整 7778 状态/事件/音频消息与连接管理，以及 TTS 音频 HTTP GET。P5 的基础通路是后续实现的子集，不代表 P6 完成。
-- **P6：** 已完成 ESP32 ↔ HA 双向通信、MIC 消息协议/有界分发接口及 TTS HTTP 资源流读取；不包含 Satellite 或真实麦克风运行时。**P6.5b0–b5：** 取消链路前置调查已完成。**P6.5b6：** 单轮 TTS 取消通过本地集成验证，真实 AstrBot partial-output Stop 已验收。**P6.5b7：** HA 持久 MIC ingress、跨轮 Pipeline 和 follow-up 已通过本地验证。**P6.5b8：** ESP32 常驻 I²S RX/AEC/VAD 已通过上板验证，真人语音启动上传和实机 STOP 待验收。**P6.5b9：** NAS KWS 确认打断和跨轮 PCM 交接已通过本地回归及 NAS 模型测试。**P6.5b10：** 已实现流式 MP3、I²S TX、AEC 参考和播放终态，数字链路及 SPP 并发已上板验证，PCM5102 模拟输出和声学对齐待验收。**P6.5b11：** 计时、打断和 follow-up 自动化验收已完成。真人唤醒、PCM5102/AUX 停音、回声负样本与运行指标待现场补测，详见 [b11 验收报告](docs/superpowers/reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md)。原 P7/P8 对应条目以新 P6.5 合同和 b6–b11 计划为准，后续阶段不重复实现。
+日常改动优先在开发机完成测试；真实部署、刷写和声学验证只在确有需要时进行。
 
-**P6.6 已合入 main；P6.7 b0–b3 已实施，提示音自触发已采用 prompt-only 人声检测 gate 处理：** AEC reference delay 已实测校准为 760 samples / 47.5 ms；所有预制提示音通过可选 `suppress_vad` 在实际输出及 48 ms 声学尾部内暂停 VAD/MIC_ACTIVITY/MIC_PCM，RX/AFE/AEC 继续，随后立即恢复。首次/确认等待使用 `ready_01..03`，仅真实 follow-up 使用独立 `followup_01`。普通 TTS 不带该标记，实机对照确认 VAD/MIC 仍可工作。见 [P6.7 合同矩阵](docs/superpowers/specs/2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)、[分批计划](docs/superpowers/plans/2026-11-16-p6-7-ready-prompt-sound-batch-execution-plan.md)、[b3 验收报告](docs/superpowers/reports/2026-11-16-p6-7b3-device-acceptance.md)及[提示音 VAD gate 修复验收](docs/superpowers/reports/2026-11-16-p6-7-prompt-vad-suppression-fix.md)。
+常用入口：
 
-**P5 合同与实施顺序：**按[P5 ESP32 最小固件合同矩阵](docs/superpowers/specs/2026-11-11-p5-esp32-minimal-firmware-contract-matrix.md)执行；B0 首先锁定 ESP-IDF/组件版本并完成跨 P5/P6/P7/P8 的兼容性 smoke build，通过后依次完成 Wi-Fi、7778 HELLO/ACK 与日志、7777 单向 SPP，最后通过 HA → ESP32 → Tivoo 完成实机闭环。
+~~~
+./scripts/test-ha.sh tests/homeassistant/custom_components/tivoo -q
+./scripts/test-sherpa-wyoming.sh
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q tests/esp32
+~~~
 
-**固件最终职责：**
+固件构建继续使用项目锁定的 ESP-IDF v6.1 环境。刷写前必须重新识别真实串口对应芯片，S3 与 Classic 不按历史 /dev/ttyACM* 编号猜测。
 
-- 蓝牙连接与重连。
-- 同一 I²S Controller 以 32 kHz、Stereo、32-bit Slot 运行 Standard/Philips 全双工；INMP441 RX 与 PCM5102 TX 共享 BCLK/WS，RX/TX 各自使用 DMA 和独立任务。
-- INMP441 左 Slot 采样为 24-bit 数据；ESP32 提取有效样本、执行低通抗混叠和 32→16 kHz 降采样，再转为 16 kHz、16-bit、Mono S16LE。
-- 播放时从最终输出 PCM 生成时间对齐的 16 kHz 播放参考，与麦克风样本组成 M/R 交错帧送入经典 ESP32 target 的 ESP-SR AFE AEC；首版使用 SR 高性能模式，不假设具备 S3 FD 非线性 AEC。
-- AEC 后的同一份 16 kHz Mono PCM 供本地 VAD、预录环形缓冲和 TCP 7778 上传；TTS/其他声音播放期间仍持续运行 I²S RX、AEC 与 VAD。VAD 只发语音活动状态和门控信息，不拥有播放停止权；只有 HA/Sherpa KWS 的有效 Detection 才能触发打断。
-- 接收 HA 通过 TCP 7778 发送的 TTS 音频 URL、Token 和 MIME 类型，再由 ESP32 HTTP Client 主动 GET 获取实际音频数据。按实际 MIME/容器流式解码，使用有状态 SRC 转为 32 kHz，并复制到左右声道、适配 32-bit TX Slot，通过统一音频输出管理器驱动同一 I²S Controller 的 TX、PCM5102 和 Tivoo AUX。
-- 所有 ESP32 受控音频源（TTS、提示音、通知音等）共享最终输出管理器；全局停止/语音打断会终止当前和排队输出、HTTP/解码任务及待播 PCM，而不只取消 TTS 输入。A2DP 备用后端也必须实现相同的全局停止接口，并单独验证 AEC 参考时序。
-- AUX 播放期间继续通过 SPP 接收屏幕和功能控制命令；Tivoo 设备端已实测确认 AUX 播放、保持 `Tivoo-light` 蓝牙连接与 SPP 图形控制可并行，ESP32 固件集成后的持续运行稳定性仍需验收。
-- 接收 HA 控制命令并驱动 SPP；不实现独立 BLE GATT 灯控、键盘背光或背光控制。
-- 上报连接状态、执行结果和错误信息。
+## 文档与历史计划规则
 
-ESP32 不解析复杂自然语言，也不做 LLM 推理。它只执行 HA 下发的明确操作。
+从 2026-11-26 起：
 
-### 5.3 TTS 音频输出：AUX 优先，A2DP 备用
+- docs/superpowers/plans/ 下现有计划全部视为**历史轨迹**，不会自动恢复执行。
+- 归档计划中的 [x] 表示已经有实现/验证证据。
+- 未勾选项只表示历史上没有执行或完整核销，不代表当前待办。
+- AstrBot、旧 NAS KWS、旧单板、旧 P7/P8/P10 等计划不会因为还有未勾选项而重新进入开发。
+- 若实际使用发现 bug，单独建立修复分支，以真实故障为入口设计最小复现和修复。
+- 新功能同样从当前稳定基线建立独立分支；只有复杂功能需要时才新增新的活动计划。
 
-新的首选输出路线是 **ESP32 同一 I²S Controller 的 TX → PCM5102 → 模拟线路音频 → Tivoo AUX**。I²S RX 同时连接 INMP441，RX/TX 以 32 kHz、Stereo、32-bit Slot 全双工共享时钟。HA Assist Pipeline 完成 TTS 后提供音频 URL、Token 和 MIME 类型；Tivoo Assist Satellite 集成将这些信息交给 ESP32。ESP32 流式获取 HTTP 资源，按实际 MIME/容器解码，再通过 SRC 转为 32 kHz PCM，填入左右声道 32-bit Slot 后送入 PCM5102。
+详细分类、权威文档和历史索引见 [docs/README.md](docs/README.md)。
 
-这条路线的预期收益：
+## 当前非阻塞边界
 
-- 不再通过 A2DP 传输 TTS 音频，省去 ESP32 侧 SBC 编码、Tivoo 侧 SBC 解码及 A2DP 音频传输占用。
-- Wi-Fi 负责传送音频资源数据；ESP32 获取并解码为 PCM 后，由本地 I²S TX 持续输出，网络抖动由有界播放缓冲区吸收。
-- SPP 用于屏幕、文字、动画和已确认的内置功能控制。AUX 替代的是音频传输，不替代 SPP 控制通道；本项目不依赖 BLE GATT 灯控。
+以下内容可以继续观察，但不是进入新功能开发的前置条件：
 
-**实测状态（2026-11-08）：设备端 AUX + SPP 并发已通过。** 用户在实际 Tivoo 上验证：AUX 输入正在播放外部音频时，设备仍保持与 `Tivoo-light` 的 BLE 连接，并能正常通过 SPP 发送指令、显示图形。该 BLE 连接仅作为本次设备端共存测试条件；现有协议资料将其记录为发现/广播身份，未确认可用的 GATT 控制特征，因此 ESP32 固件不需要维护该 BLE 连接。后续只需验证 ESP32 同时运行 Wi-Fi、I²S RX/TX 与 SPP 时的持续稳定性、控制响应和音频缓冲表现。
-
-DAC 选择：
-
-- **已选 PCM5102 I²S DAC 模块。** 输出目标是 Tivoo AUX 线路输入，不直接驱动扬声器单元。PCM5102A 可从 BCK PLL 取得内部系统时钟，本设计不要求 ESP32 输出 MCLK；实际模块板仍需核对芯片标识、供电、接地、输出电平及是否带外围电路。
-- 麦克风 RX 与 PCM5102 TX 采用同一个 I²S Controller 的 Standard/Philips 全双工配置，双方共享 32 kHz BCLK/WS 与 Stereo/32-bit Slot 时序；RX 和 TX 分别使用 DMA 与独立任务。不能再将两路配置为不同采样率，也不能依赖全双工驱动保证读写逐样本同步。
-
-AUX 路线可以消除 A2DP 音频流及其 SBC 编解码负担，但**不会消除所有无线共存问题**：Wi-Fi 仍与 Bluetooth Classic SPP 共用 2.4GHz 无线环境，仍需验证音频连续性和控制响应。PCM 通过 Wi-Fi 传输、分块和播放缓冲仍然需要实现；模拟输出也不意味着端到端延迟为零。
-
-备用路线：如果 AUX 的电气条件或音质不满足要求，保留 ESP-IDF A2DP Source 作为可切换的替代输出。A2DP 与 AUX 使用同一上层 TTS PCM 接口，尽量只在 ESP32 音频输出后端做切换。采用 A2DP 备用路线时，也必须单独验证 Tivoo 在 A2DP 播放期间仍能接收并响应 SPP 命令；不能假定切换到 A2DP 后就自动满足控制并发要求。
-
-### 5.4 人声活动检测与唤醒词
-
-**选定分工：ESP32 本地 VAD 负责决定何时开始上传；Home Assistant 负责识别真正的唤醒词。** 不在当前主流程中运行 ESP32 WakeNet。
-
-- 首版硬件继续使用 ESP32-WROVER-E。采用经典 ESP32 target 的 ESP-SR AFE AEC：16 kHz S16LE 麦克风 M 通道 + 最终播放参考 R 通道交错输入；WROVER-E 首版按 SR 高性能模式实现，不使用 S3 专用 FD AEC 能力。
-- AEC 后的增强单声道流供本地 VAD、预录缓冲和 HA 上传共用。空闲状态持续本地采样和运行 AEC/VAD，但不上传麦克风音频；保留短时预录缓冲。VAD 触发后启动 HA Assist Satellite 音频会话并发送预录缓冲。
-- 会话启动后持续上传 AEC 后的麦克风 PCM，包括静音帧，直到 HA Pipeline 结束。VAD 只负责空闲到会话的门控，不能在第一次静音时停止上传；HA 需要连续音频中的静音来判断唤醒词等待超时，并供 Pipeline/Provider 的指令端点检测使用。
-- TTS 或其他 ESP32 音频输出期间继续运行 AEC/VAD。VAD speech_start 仅作为 MIC_ACTIVITY 上传，不停止音频。HA 并行运行现有 Sherpa KWS watcher；只有 KWS Detection 命中后 HA 才发送匹配 `audio_id` 的 `AUDIO_STOP`，取消旧 Pipeline/TTS/AstrBot 并从 STT 阶段接管同一 MIC session 的 PCM handoff。`MIC_CAPTURE_STOP` 只停止网络上传，不关闭 RX/AEC/VAD。
-- KWS 确认打断时由 HA 先向 ESP32 发送 `AUDIO_STOP`，设备在最终输出层立即停止全部活动/排队音频；HA 同步取消旧 Pipeline、TTS producer/consumer、Wyoming/P7A 请求和 AstrBot SSE/session Stop。VAD 事件本身不触发该流程。
-- HA 从 `PipelineStage.WAKE_WORD` 开始，使用配置的 `wake_word` Provider 检测唤醒词。项目协调器在最近 MIC_ACTIVITY speech_end 后 3 秒无新语音时取消未命中的 Pipeline；首次候选从 speech_start 起 15 秒硬上限。识别成功后自动进入 STT；唤醒短语所在 speech 段结束后 5 秒仍无命令语音则结束空 STT turn。
-- ESP32 I²S 硬件总线为 32 kHz / Stereo / 32-bit Slot；INMP441 左 Slot 原始 24-bit 样本在 ESP32 内转换为 16 kHz、16-bit signed、Mono PCM 后再送入 AFE 和 HA Assist Satellite。16 kHz 是软件处理/网络合同，不是 I²S 总线采样率。ESP32 本地预录缓冲用于保留 VAD 触发前的语音开头；HA Pipeline 的唤醒词检测缓冲属于另一层，不应混为同一功能。
-
-**中文 Wake Word Provider 选型已由 P7A 冻结：**
-
-- HA 仍需要一个原生 `wake_word` Provider 实体；Assist Pipeline 本身只负责调用 Provider，不内置任意中文唤醒词模型。
-- P7A 采用 Sherpa-ONNX `sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20`，通过 Wyoming Wake Word Provider 暴露给 HA。它与 Paraformer STT 是不同 Provider，虽然在同一个 Sherpa Wyoming 进程和 TCP 端口中运行。
-- 不使用 openWakeWord 作为本项目中文唤醒词实现。模型、关键词文件、Wyoming Detect/Detection/NotDetected 事件和 HA Provider 发现合同以 [P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md) 为准。
-
-当前仍需在 P7 使用真实 Tivoo 麦克风单独验证中文关键词、误唤醒率、漏唤醒率和识别距离。若以后改回设备本地唤醒词，ESP32 可在本地识别后从 `PipelineStage.STT` 启动，并传入 `wake_word_phrase`；这属于备用模式，不与当前 HA 服务端唤醒词流程同时启用。
-
-参考：
-- [ESP-SR AFE / VAD](https://docs.espressif.com/projects/esp-sr/en/latest/esp32/audio_front_end/README.html)
-- [ESP-SR VADNet](https://docs.espressif.com/projects/esp-sr/en/latest/esp32/vadnet/README.html)
-- [Home Assistant Assist Pipeline](https://developers.home-assistant.io/docs/voice/pipelines)
-- [Home Assistant 唤醒词机制](https://www.home-assistant.io/voice_control/about_wake_word)
-- [sherpa-onnx 中文/英文 KWS 模型](https://github.com/k2-fsa/sherpa-onnx/tree/master/docs/source/onnx/kws/pretrained_models)
-
-## 6. 主动对话与表情
-
-### 6.1 AI 主动发起对话
-
-AstrBot 的主动任务或插件负责决定何时、为什么主动联系用户。AstrBot 插件通过 HA MCP 工具（或经过授权的 HA WebSocket/REST 接口）请求 HA 发起播报；不直接连接 ESP32。
-
-主动输出统一交给 HA：
-- 单向播报：HA 集成封装 `assist_satellite.announce` 能力。
-- 主动播报并邀请用户继续对话：HA 集成封装 `assist_satellite.start_conversation` 能力。
-
-`start_conversation` 能否与 AstrBot 连续会话配合，取决于自定义 Conversation Agent 是否正确维护并恢复 conversation/session ID，需要在集成阶段实现和验证。
-
-HA 再通过 Tivoo Assist Satellite 集成控制 ESP32 播放语音，并按会话状态启用或停止 I2S 麦克风采集。
-
-AstrBot 侧计划实现 `astrbot_tivoo_bridge` 插件。它负责将 AstrBot 主动任务连接到 HA，而不是让 AstrBot 直接连接 ESP32。
-
-### 6.2 情绪与屏幕反馈
-
-运行状态与 AI 情绪分开管理：
-
-- 设备运行状态：Idle、Listening、Processing、Speaking、Error，由 HA Assist Satellite 事件驱动。
-- AI 情绪：Happy、Curious、Empathetic、Excited、Sad、Neutral 等，由 AstrBot 根据人格和对话上下文决定。
-
-AstrBot 通过 HA MCP 工具调用 `tivoo.set_expression` 或 `tivoo.play_animation`。
-
-日常使用预设表情，优先保证响应速度。只有用户明确要求或 AI 判断有必要时，才调用图像生成模型生成新像素图。
-
-## 7. 图片与音频数据通路
-
-### 7.1 图片
-
-图片生成、缩放、16×16 像素量化和动画帧制作放在 NAS 的 Python 服务中。复用现有 Tivoo Python SDK 的协议构建逻辑。
-
-数据通路：
-
-```text
-AstrBot / AI 图像生成
-        ↓
-NAS Tivoo Service（Pillow）
-        ↓
-HA Tivoo Integration
-        ↓
-ESP32
-        ↓ SPP
-Tivoo 屏幕
-```
-
-### 7.2 麦克风输入
-
-```text
-INMP441 麦克风
-    ↓ I²S RX：32 kHz / Stereo / 32-bit Slot（取左 Slot 24-bit）
-ESP32 全双工 I²S RX + DMA
-    ↓ 低通 + 32→16 kHz + 24→16 bit / Mono（M）
-最终输出 PCM → 32→16 kHz 播放参考（R）
-    ↓ ESP-SR AFE AEC（M/R）
-16 kHz AEC 后 S16LE Mono
-    ↓ ESP-SR AFE VAD（空闲和播放期间持续运行）
-检测到近端人声：本地全局停止输出；发送预录缓冲并建立音频会话
-    ↓ Wi-Fi 音频通道
-HA Tivoo Integration / Assist Satellite
-    ↓ PipelineStage.WAKE_WORD
-HA Wake Word Provider
-    ↓ 唤醒词命中
-STT → AstrBot Conversation Agent → TTS
-```
-
-当前方案不通过 HFP/SCO 获取麦克风音频，改由 INMP441 数字麦克风通过 I2S 直接连接 ESP32。ESP32 使用经典 ESP32 target 的 ESP-SR AFE AEC/VAD；首版按 SR 高性能 AEC 处理，不假设支持 S3 的 FD 模式。麦克风输入与最终输出播放参考按 M/R 组合，AEC 后只保留 16 kHz、16-bit、单声道增强 PCM，供 VAD、预录缓冲和 HA 上传共用。空闲时不上传麦克风音频，检测到人声后再启动 HA 音频会话；播放期间同样持续运行 RX/AEC/VAD。会话期间持续发送 AEC 后的 PCM（包括静音帧），直到 HA Pipeline 结束，不能由本地 VAD 在短暂静音时提前断流。
-
-项目通过自定义 `AssistSatelliteEntity.async_accept_pipeline_from_satellite()` 启动 Pipeline。首次 VAD 门控会话从 `PipelineStage.WAKE_WORD` 开始；KWS 命中后 Pipeline 进入 STT，HA 在 `STT_START` 时并行启动 side KWS watcher。播放期间只有 NAS KWS Detection 命中后才发送 `AUDIO_STOP` 并取消旧轮，随后从 `PipelineStage.STT` 接管同一 MIC session 的有界 PCM handoff，不再由 VAD-only 触发 `barge_in` 或新建 MIC session。Assist Satellite 要求输入音频为 16 kHz、16-bit、单声道 PCM；ESP32 将 32 kHz I²S 麦克风数据经 AEC 转换为此格式后上传。
-
-参考：
-- [Assist Satellite 开发文档](https://developers.home-assistant.io/docs/core/entity/assist-satellite/)
-- [Assist Pipeline 文档](https://developers.home-assistant.io/docs/voice/pipelines)
-
-### 7.3 扬声器输出
-
-**首选：AUX 模拟音频**
-
-```text
-AstrBot 返回文字
-    ↓
-HA Assist Pipeline TTS
-    ↓ tts-end / Pipeline 事件
-Assist Satellite 集成取得音频 URL、Token、MIME 类型
-    ↓ TCP 7778 / TTS_PLAY 通知 ESP32
-ESP32 HTTP Client 流式 GET 编码音频资源
-    ↓ MP3 / WAV 流式解码（以实际 MIME/容器为准）
-22.05 kHz 等解码 PCM
-    ↓ 有状态 SRC：实际采样率 → 32 kHz
-统一音频输出管理器（最终音量/输出处理）
-    ├─→ 32 kHz Stereo / 32-bit Slot PCM 播放缓冲区
-    │      ↓ 同一 I²S Controller 的 TX
-    │   PCM5102 → 模拟线路输出
-    └─→ 播放参考 tap：32 kHz → 16 kHz S16LE Mono → AFE AEC R 通道
-    ↓ 3.5mm / AUX 音频线
-Tivoo AUX 输入 → Tivoo 扬声器
-```
-
-HA Pipeline 事件提供音频资源信息，不应描述为直接通过设备音频通道推送原始 PCM。P7A Matcha Wyoming Provider 向 HA 输出 22,050 Hz、16-bit、Mono PCM；2026-11-10 生产端到端测试中，HA TTS Proxy 对 ESP32 可取用的 HTTP 资源实际返回 audio/mpeg（MP3，22,050 Hz、Mono）。HTTP 资源不是原始 PCM，且 MIME/编码不能永久写死为 MP3：ESP32 必须根据 TTS_PLAY 元数据、HTTP Content-Type 和实际容器/帧头确认格式，并保留未知长度流式 WAV（nframes=0）处理要求。解码后按真实采样率执行有状态 SRC 至 32 kHz，再交给统一输出管理器驱动同一 I²S Controller TX 输出至 PCM5102；最终送往 TX 的 PCM 另一路作为 AEC 播放参考，经 SRC 至 16 kHz 后与 INMP441 采样对齐。AEC 后的单声道输出才供 VAD、预录和网络上传。模块供电、接地、输出电平及 Tivoo AUX 模拟线路仍需实测。
-
-**全局停止与语音打断：** TTS、提示音及未来其他 ESP32 受控音频源都必须经过同一个最终输出管理器。`AUDIO_STOP` 是 HA→ESP32 的全局停止命令；播放期间 VAD speech_start 只产生 MIC_ACTIVITY，不停止正常 TTS/回复、不取消 Pipeline；后续 P6.7 仅允许在命令开始时按独立 playback_id 停止自己的短提示音，而不是由 VAD 打断回复。HA 的 side KWS watcher 命中 `tivoo-wake` 后才发送匹配 `audio_id` 的 `AUDIO_STOP`，取消旧 Assist Pipeline、TTS producer/consumer、Wyoming/P7A 请求和 AstrBot SSE/session，清理旧 Satellite 响应后从 STT 阶段处理打断后的语音。详见 [P6.5 常驻音频会话与 KWS 确认打断合同矩阵](docs/superpowers/specs/2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md)。
-
-**备用：A2DP**
-
-```text
-HA TTS 音频 URL / Token / MIME 信息
-        ↓ ESP32 HTTP 获取并解码
-ESP32 PCM 缓冲区
-        ↓
-A2DP Source
-        ↓ SBC 编码 / Bluetooth Classic
-Tivoo A2DP Sink
-```
-
-AUX 与 A2DP 复用同一上层 PCM 接口，具体采用哪种输出后端由固件配置决定。
-
-## 8. NAS 部署规划
-
-NAS 运行 Home Assistant、AstrBot 和必要的 Linux 服务。具体 Docker Compose、环境变量、挂载路径、用户权限和网络模式需在确认 NAS 实际部署环境后编写。
-
-规划目录：
-
-- `deploy/nas/compose/`：HA、AstrBot 和辅助服务的 Compose 文件。
-- `deploy/nas/scripts/`：安装、更新、备份、恢复、健康检查等脚本。
-- `deploy/nas/config/`：示例配置和环境变量模板，不存放真实密钥。
-- `services/tivoo_gateway/`：Python 图像处理、文件传输及其他必要的 Tivoo 辅助服务。
-- `services/sherpa_wyoming/`：P7A 独立 Sherpa Wyoming 服务，单进程提供 KWS/STT/TTS；HA Assist Pipeline 仍由 HA 原生管理。
-- `services/audio/`：音频格式转换、测试和诊断工具。
-
-密钥、API Token、Wi-Fi 密码和真实 NAS 路径不提交到版本库。使用独立的本地环境文件，并提供不含秘密的示例模板。
-
-## 9. 项目目录
-
-```text
-Tivoo-AI-Assistant/
-├── README.md
-├── docs/                         # 架构、协议、决策和测试记录
-├── deploy/
-│   └── nas/
-│       ├── compose/              # NAS 容器部署文件
-│       ├── scripts/              # Linux 部署和维护脚本
-│       └── config/               # 配置模板，不含真实密钥
-├── homeassistant/
-│   ├── custom_components/
-│   │   ├── astrbot/              # P3：AstrBot Conversation Agent（当前已完成 Config Flow 基线）
-│   │   └── tivoo/                # Tivoo 自定义集成
-│   ├── blueprints/
-│   │   └── automation/           # 自动化蓝图
-│   └── scripts/                  # HA 脚本示例
-├── astrbot/
-│   └── plugins/
-│       └── astrbot_tivoo_bridge/ # AstrBot 与 HA 的主动交互插件
-├── esp32/
-│   ├── firmware/
-│   │   ├── main/                 # 固件入口
-│   │   └── components/           # 蓝牙、音频、AFE VAD、网络等组件
-│   └── tests/                    # 硬件与协议测试
-├── services/
-│   ├── tivoo_gateway/            # Ubuntu/NAS 侧 Tivoo 辅助服务
-│   ├── sherpa_wyoming/           # P7A：KWS / STT / TTS Wyoming 服务
-│   └── audio/                    # 音频测试和处理
-├── benchmarks/
-│   └── voice/
-│       ├── stt/                   # NAS 与 ARM Ubuntu 的 STT 测试
-│       └── tts/                   # NAS TTS 测试脚本、结果与试听样本
-├── tts-benchmark-matcha-melo/    # ARM Ubuntu 的 Matcha / MeloTTS 完整测试
-└── tests/                        # 跨模块集成测试
-```
-
-### HA 自定义集成本地测试
-
-在 Ubuntu 开发机使用与 HA Core 2026.11.0 匹配的测试环境：
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements_test.txt
-./scripts/test-ha.sh
-```
-
-测试仅从 `tests/` 收集；NAS 上的语音基准脚本不属于 pytest 单元测试。
-
-## 10. 实施顺序
-
-按可验证的闭环逐步推进，不一次性开发所有模块。
-
-| 阶段 | 工作 | 验收目标 |
-|---|---|---|
-| P0 | 核实 NAS 运行环境、网络、存储路径 | 明确容器和脚本部署方式 |
-| P1 | NAS 部署 HA、AstrBot | 两个服务稳定运行 |
-| P2 | AstrBot 云端模型、人格和会话 | 文本对话正常，统一使用指定人格 |
-| P3 | HA AstrBot Conversation Agent（HTTP OpenAPI、单用户会话映射、SSE → ChatLog） | HA Assist 接收 STT 文本后调用 AstrBot；24 小时活动会话可跨 HA 重启复用；逐段写入 ChatLog 并返回标准 ConversationResult |
-| P4 | HA MCP Server 暴露 Tivoo/设备工具，AstrBot 调用 | AI 能通过 MCP 控制 HA 设备 |
-| P7A | 独立 Sherpa Wyoming 容器：一个 TCP 入口提供 KWS、STT、TTS 三个 Provider | HA 用一个 Wyoming Config Entry 发现三类 Provider；完成模型、KWS、STT、非流式/流式 TTS 和容器验收 |
-| P5 | ESP32 最小固件：Wi-Fi、最小 TCP 7777 SPP 控制、TCP 7778 诊断日志子集及基础故障日志 | HA 可经局域网控制 Tivoo；设备日志和错误可回传并进入 HA 日志 |
-| P6 | **已完成**。ESP32 ↔ HA 双向通信（TCP 7777/7778 + HTTP 资源读取）；详见 [P6 合同矩阵](docs/superpowers/specs/2026-11-12-p6-esp32-ha-bidirectional-contract-matrix.md)、[详细实施计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-implementation-plan.md)、[分批执行计划](docs/superpowers/plans/2026-11-12-p6-esp32-ha-bidirectional-batch-execution-plan.md) 和 [P6 最终验收报告](docs/superpowers/reports/2026-11-12-p6-acceptance-report.md)。 | C01–C20 有自动化、构建、源代码审查或真实设备证据；AP 故障切换、生产 HTTPS、P7 真实麦克风/Satellite、P8 解码播放及 P6.5 取消传播的未运行项已在报告列明 |
-| P6.5 | [常驻音频会话与 KWS 确认打断合同矩阵](docs/superpowers/specs/2026-11-13-p6-5-persistent-audio-session-and-kws-interruption-contract-matrix.md)；[b6 起分批执行计划](docs/superpowers/plans/2026-11-13-p6-5-batch-execution-plan-from-b6.md)；[b0–b5 前置验证 patch](docs/superpowers/patches/2026-11-11-p6-5-ha-cancellation-preflight.patch.md)；[AstrBot HTTP/SSE 推理取消与终止规格](docs/superpowers/specs/2026-11-13-astrbot-http-sse-inference-cancellation-spec.md)（AstrBot 4.29.4 真实 Stop/终止事件已验收，覆盖首个可见文本输出前后；[b0 环境基线与任务所有权清点](docs/superpowers/reports/2026-11-13-p6-5b0-cancellation-task-ownership-inventory.md)；[b1 正常完成控制组 PASS](docs/superpowers/reports/2026-11-13-p6-5b1-normal-completion-control-group.md)；[b2 TTS 开始前取消 PASS](docs/superpowers/reports/2026-11-13-p6-5b2-pre-tts-cancellation.md)；[b3 活动 TTS 取消 GAP](docs/superpowers/reports/2026-11-13-p6-5b3-tts-proxy-active-cancellation.md)；[b4 HTTP consumer 对照 PASS / GAP 证据](docs/superpowers/reports/2026-11-13-p6-5b4-http-consumer-disconnect.md)；[b5 汇总与模块边界决策](docs/superpowers/reports/2026-11-11-ha-cancellation-preflight-report.md)） | [b6 取消链路验收](docs/superpowers/reports/2026-11-13-p6-5b6-cancellation-owner-closeout.md)已验证单轮 TTS 取消与真实 FFmpeg 转码清理。真实 AstrBot partial-output Stop 已验收，B6 通过。[B7 持久 MIC ingress](docs/superpowers/reports/2026-11-13-p6-5b7-persistent-mic-ingress.md)通过模拟设备验收。播放期间 VAD 不拥有停止权，只有 NAS KWS Detection 才触发 `AUDIO_STOP`/旧轮取消；新矩阵与计划是 P6.5 后续实施的当前权威合同。b1/b2 正常结束和 TTS 前取消路径通过；b3/b4 复现 Pipeline 取消和 HTTP GET 断开不会自动终止已脱离 owner 的 TTSCache producer 等 GAP。[B11 自动化验收与现场补测](docs/superpowers/reports/2026-11-13-p6-5b11-end-to-end-acoustic-acceptance.md)列出 P65-A01–A16 证据。P6.5 整体声学验收待现场补测 |
-| P6.6 | **已实现并合入 main**：Tivoo 表情状态协调、AI mood 和息屏门控；[规格](docs/superpowers/specs/2026-11-14-tivoo-expression-state-machine-design.md)、[合同矩阵](docs/superpowers/specs/2026-11-14-tivoo-expression-state-machine-contract-matrix.md)、[验收](docs/superpowers/reports/2026-11-14-p6-6-expression-state-machine-acceptance.md) | 自动化、部署及 7777/SPP 复连已验收；真人语音仍有现场 GAP |
-| P6.7 | **b0–b3 已实施；提示音自触发 workaround 已验证并部署**：固定 AEC reference delay 已标定为 760 samples（47.5 ms）；仅提示音通过可选 `suppress_vad` 在播放窗口与 48 ms 声学尾部暂停 VAD/MIC_ACTIVITY/MIC_PCM，普通 TTS 不受影响；[规格](docs/superpowers/specs/2026-11-16-p6-7-ready-prompt-sound-design.md)、[合同矩阵](docs/superpowers/specs/2026-11-16-p6-7-ready-prompt-sound-contract-matrix.md)、[b3 验收](docs/superpowers/reports/2026-11-16-p6-7b3-device-acceptance.md)、[gate 修复验收](docs/superpowers/reports/2026-11-16-p6-7-prompt-vad-suppression-fix.md) | 保持 P6.5 的 5/8 秒窗口、普通 TTS KWS 打断和 P6.6 显示优先级；提示音 gate 内真人语音可能被忽略，属于当前明确取舍 |
-| P6.8 | **当前规划阶段**：[ESP32-S3 双板与原生 WakeNet 总体路线](docs/superpowers/plans/2026-11-18-p6-8-s3-local-wake-roadmap.md)；b0.1–b0.6 分域规格/合同及交叉审计 + b1–b10 实施，共 16 批；b0.1–b0.6 已完成，下一步 b1 | S3 本地唤醒、双麦、断句、提示音、打断、表情事件迁移；经典 ESP32 UART/SPP 桥；新拓扑综合验收 |
-| P7（旧阶段） | 不再独立实施；真实麦克风、AFE、STT、KWS 与剩余声学 GAP 归 P6.8 | P6.5 既有证据保留，旧 NAS KWS 目标由 WakeNet 替代；按 P6.8b3–b7/b10 核销 |
-| P8（旧阶段） | 不再独立实施；DAC/音频播放迁移及剩余声学 GAP 归 P6.8 | P6.5b10 既有证据保留；按 P6.8b3/b6/b7/b10 重新验收 |
-| P9 | 现有表情及 mood/MCP 不重复实现；剩余主动对话/主动播报在 P6.8 后推进 | 复用同一 HA 表情和播放所有权，主动任务入口可用 |
-| P10（旧阶段） | 单板并发专项停止独立实施，双板并发/长期稳定验收归 P6.8b10；A2DP 保留备用，非本次前置 | 双麦、DAC、Wi-Fi、UART/SPP 并发稳定，不影响长音频与表情控制 |
-
-## 11. STT / TTS 实测结果
-
-本节汇总 NAS 与 ARM Ubuntu 上已经完成的语音识别和语音合成测试。详细测试脚本、逐次数据、日志、模型来源和 WAV 样本保存在链接的测试目录中。
-
-### 11.1 语音识别（STT）
-
-使用同一份 sherpa-onnx Paraformer zh-small INT8（2024-03-09）模型和同一批官方测试 WAV，分别在 Synology NAS 和 ARM Ubuntu 上运行。每段音频先 warm-up 一次，再测量 5 次并取中位数。RTF = 推理耗时 / 音频时长。
-
-| 设备 | 线程 | 0.wav：5.03s | 1.wav：5.15s | 2-zh-en.wav：8.10s | 模型加载 | 峰值 RSS |
-|---|---:|---:|---:|---:|---:|---:|
-| NAS DS920 | 1 | 0.651s / 0.129 | 0.659s / 0.128 | 0.998s / 0.123 | 2.865s | 170.4 MB |
-| NAS DS920 | 2 | 0.447s / 0.089 | 0.462s / 0.090 | 0.736s / 0.091 | 2.839s | 170.0 MB |
-| ARM Ubuntu | 1 | 0.134s / 0.0266 | 0.139s / 0.0270 | 0.214s / 0.0264 | 1.434s | 186.6 MB |
-| ARM Ubuntu | 2 | 0.104s / 0.0206 | 0.103s / 0.0199 | 0.149s / 0.0184 | 1.481s | 186.9 MB |
-| ARM Ubuntu | 4 | 0.068s / 0.0134 | 0.068s / 0.0132 | 0.101s / 0.0125 | 1.497s | 186.1 MB |
-
-表中每个音频单元格为“中位识别耗时 / RTF”。NAS 为 Intel Celeron 1005M、2 逻辑 CPU、约 3.89 GiB RAM；ARM Ubuntu 为 Cortex-A77、8 逻辑 CPU、10 GiB RAM。NAS 测试容器内存上限为 1 GiB；ARM Ubuntu 使用原生 ARM64 Python wheel，无 Docker。
-
-同一批测试音频在两台设备上得到相同转写文本。ARM Ubuntu 4 线程约为 74–80 倍实时；NAS 2 线程约为 11 倍实时。这里测的是离线整段识别耗时，不是流式首字延迟。测试音频来自模型官方样例，不是 Tivoo 麦克风录音，也没有人工真值用于计算 CER/WER。
-
-详细数据、复现脚本和日志：
-- [STT 对比报告](benchmarks/voice/stt/STT_COMPARISON.md)
-- [STT 测试目录与运行说明](benchmarks/voice/stt/README.md)
-- [NAS 原始测试日志](benchmarks/voice/stt/nas/nas_stt_benchmark_20261107.log)
-- [ARM Ubuntu 逐次 JSONL 结果](benchmarks/voice/stt/arm-ubuntu/results.jsonl)
-
-### 11.2 语音合成（TTS）
-
-**ARM Ubuntu：Matcha Baker 与 MeloTTS**
-
-同一段中文文本，在 ARM Ubuntu 原生 CPU 环境中分别测试 1、2、4 线程。下表是每个进程第二次生成（warm）的数据。
-
-| 模型 | 线程 | 输出音频时长 | 合成耗时 | RTF | 输出采样率 | 模型加载 | 峰值 RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Matcha Baker | 1 | 11.985s | 2.985s | 0.249 | 22.05 kHz | 2.120s | 248.5 MB |
-| Matcha Baker | 2 | 12.010s | 1.864s | 0.155 | 22.05 kHz | 2.119s | 246.8 MB |
-| Matcha Baker | 4 | 11.979s | 1.309s | 0.109 | 22.05 kHz | 2.208s | 248.3 MB |
-| MeloTTS（full precision） | 1 | 11.047s | 22.221s | 2.012 | 44.1 kHz | 3.605s | 414.2 MB |
-| MeloTTS（full precision） | 2 | 11.214s | 13.122s | 1.170 | 44.1 kHz | 3.754s | 414.9 MB |
-| MeloTTS（full precision） | 4 | 11.233s | 8.988s | 0.800 | 44.1 kHz | 3.765s | 414.9 MB |
-
-当前 ARM Ubuntu 测试中，Matcha Baker 4 线程合成 12 秒左右语音约需 1.31 秒，具备较大实时余量。MeloTTS 只有 4 线程时 RTF 低于 1，性能余量有限。MeloTTS 测试实际使用 model.onnx 完整精度；随包的 model.int8.onnx 是 133 字节 Git LFS pointer，并非可运行的量化模型权重。两种模型包在本次测试中都只有一个 speaker。主观音质没有自动评分，需要试听 WAV 样本判断。
-
-完整 ARM Ubuntu 测试报告、原始 CSV/JSONL、模型文件、日志和试听音频：
-[Matcha Baker / MeloTTS 测试目录](tts-benchmark-matcha-melo/README.md)
-
-**NAS：多种 TTS 模型初步筛选**
-
-NAS 为 Intel Celeron 1005M、2 逻辑 CPU；以下为 NAS Docker CPU 测试结果，模型和测试文本并不完全相同，因此用于筛选，不应把不同模型间的 RTF 当作音质排名。
-
-| 模型 | 线程 / 音色 | 输出采样率 | 音频时长 | 合成耗时 | RTF |
-|---|---|---:|---:|---:|---:|
-| VITS AISHELL3 | 1 / sid 21 | 8 kHz | 5.929s | 2.193s | 0.370 |
-| VITS AISHELL3 | 1 / sid 41 | 8 kHz | 5.857s | 2.020s | 0.345 |
-| VITS AISHELL3 | 1 / sid 45 | 8 kHz | 5.330s | 1.881s | 0.353 |
-| VITS AISHELL3 | 2 / sid 21 | 8 kHz | 5.929s | 1.427s | 0.241 |
-| VITS AISHELL3 | 2 / sid 41 | 8 kHz | 5.857s | 1.372s | 0.234 |
-| VITS AISHELL3 | 2 / sid 45 | 8 kHz | 5.330s | 1.574s | 0.295 |
-| VITS AISHELL3 | 2 / 长句 | 8 kHz | 10.361s | 2.305s | 0.222 |
-| Kokoro INT8 | 1 / zf_001 | 24 kHz | 13.114s | 80.938s | 6.172 |
-| Kokoro INT8 | 1 / zm_009 | 24 kHz | 12.866s | 80.371s | 6.247 |
-| Matcha Baker | 1 | 22.05 kHz | 11.985s | 7.171s | 0.598 |
-| MeloTTS 中文 | 1 | 44.1 kHz | 11.229s | 55.336s | 4.928 |
-| ZipVoice Distill INT8 | 2 / 短句 | 24 kHz | 2.517s | 48.051s | 19.088 |
-
-AISHELL3 含 174 个可选 speaker，速度表现最好，但输出为 8 kHz，带宽有限。NAS Matcha Baker 单线程也达到 RTF 0.598，输出为 22.05 kHz。Kokoro、MeloTTS 和本次 ZipVoice 配置没有达到实时生成速度。NAS 测试的 AISHELL3 短句样本、其他模型音频和 NAS 原始 Python 脚本均已保留。
-
-详细 NAS TTS 结果和试听样本：
-- [NAS TTS 测试报告](benchmarks/voice/tts/nas/README.md)
-- [NAS TTS 脚本](benchmarks/voice/tts/nas/scripts/)
-- [NAS TTS WAV 样本](benchmarks/voice/tts/nas/samples/)
-- [NAS TTS 模型权重](benchmarks/voice/tts/nas/models/)
-- [NAS TTS 模型来源与 SHA-256](benchmarks/voice/tts/nas/MODEL_SOURCES.md)
-
-NAS 的 AISHELL3、Kokoro、ZipVoice 和 Vocos 24 kHz 权重已完整归档。NAS 与 ARM Ubuntu 使用的 Matcha Baker、MeloTTS、Vocos 22 kHz 核心模型文件已逐一计算 SHA-256，确认相同，因此共用 tts-benchmark-matcha-melo/models/ 中的文件，不重复保存。
-
-### 11.3 对当前项目的阶段性判断
-
-- **STT：** Paraformer zh-small INT8 在 NAS 和 ARM Ubuntu 上都远快于实时需求。当前离线整段识别方案的推理耗时足够低，后续重点是 Tivoo I2S 采音质量、音频格式适配、端点检测、噪声和识别准确率。
-- **TTS：** ARM Ubuntu 首选 Matcha Baker 作为第一版候选；其 RTF 有较大余量，适合后续实现分句合成、音频队列和边播放边生成。AISHELL3 可作为 NAS 侧多音色备选，但 8 kHz 输出必须经过实际试听评估。
-- **测试边界：** 模型官方样例与合成测试不能替代 INMP441 在 Tivoo 内部预定安装位置的真实采音、Tivoo AUX/DAC 模拟输出链路（以及备用 A2DP 链路）和实际对话延迟测试。尚未完成的项目不应视为已验收。
-
-后续实施时应将模型推理与硬件传输分开测量：STT 记录从音频结束到文本可用的时间；TTS 记录首段音频产生时间、队列水位和播放期间是否断流。
-
-### 11.4 HA Wyoming / Provider 接入与流式回馈判断
-
-端到端组件职责、STT/TTS 处理时序、分句策略和验收条件见独立的 [STT/TTS 链路规格](docs/superpowers/specs/2026-11-09-stt-tts-end-to-end-pipeline-spec.md)；P7A 单容器三 Provider 的部署、KWS 事件、模型和流式 TTS 合同见 [P7A 合同矩阵](docs/superpowers/specs/2026-11-10-p7a-sherpa-wyoming-contract-matrix.md)。本节保留 HA 2026.11.0 与 Wyoming 的源码核对结论，避免重复展开。
-
-**STT：现有 Paraformer 可以直接适配。** HA Core 2026.11.0 的 Wyoming STT Provider 按 16 kHz、16-bit、mono PCM 接收 AudioStart/AudioChunk，并在 AudioStop 后取得 Transcript；这对应 ESP32 经总线转换后送往 AFE/TCP 7778 的接口格式，不是 32 kHz I²S 原始总线格式。现有 sherpa-onnx Paraformer zh-small INT8 是 OfflineRecognizer，适配层只需接收/缓存音频块，在语句结束后执行 decode_stream 并返回最终文本。它不会在语音尚未结束时持续输出增量转写，这符合当前 VAD/端点检测后再识别的规划。直接实现 HA SpeechToTextEntity 也可行，输入同样是异步音频块。
-
-**TTS：模型可复用，流式文本输入需要适配。** HA Core 2026.11.0 的 Wyoming TTS Provider 支持 SynthesizeStart / SynthesizeChunk / SynthesizeStop；服务端在 Info.TtsProgram 中声明 supports_synthesize_streaming 后，HA 才会逐段发送文本，并并行接收 AudioStart / AudioChunk。直接 Provider 的对应接口是 TextToSpeechEntity.async_stream_tts_audio() 与 async_supports_streaming_input()。
-
-当前 Matcha Baker、MeloTTS 使用 sherpa-onnx OfflineTts。generate(text, callback=...) 的 text 参数仍然要求一段完整文本；callback 可以在该段文本的音频生成过程中逐块提供 PCM。因此它们不具备任意 token 级的在线文本输入能力，但可以采用句子/分句缓冲适配：持续接收 AstrBot 文本，遇到完整句子边界后调用 generate()，随后立即输出该句的音频块，同时继续接收后续文本。这样能够让 TTS 与 LLM 后续文本生成重叠，不必等整段回答结束。分句边界、首段延迟及播放缓冲欠载仍需实测。
-
-**可复用实现：** [ptbsare/sherpa-onnx-tts-stt](https://github.com/ptbsare/sherpa-onnx-tts-stt) 已支持本项目使用的 Paraformer zh-small 2024-03-09 和 Matcha Baker，并提供 Wyoming 服务。其现有 STT 采用整段离线识别，适合复用；但上游当前没有 KWS Provider，TTS 只处理完整 Synthesize 请求，且未声明 supports_synthesize_streaming，生成完整音频后才分块发送。因此它是可复用的服务骨架，不是已经满足 P7A 的成品。P7A 在同一 Wyoming Server/端口中增加 Sherpa KeywordSpotter Wake Provider，并扩展 TTS 流式事件处理；Matcha 必须沿用本项目已实测的 Vocos 22.05 kHz 配置，而不是直接照搬上游 loader 的 HiFi-GAN vocoder。Sherpa 固定为已测的 2.0.1，Wyoming 固定为 HA Core 2026.11.0 使用的 1.10.2。具体合同以 P7A 矩阵为准。
-
-流式适配有两个协议细节必须处理：HA Core 2026.11.0 会发送 `SynthesizeStart`、多个 `SynthesizeChunk`，结束时又额外发送一条完整文本 `Synthesize`（向旧服务兼容），最后发送 `SynthesizeStop`。新服务必须识别当前连接已处于流式会话，不能把兼容用的完整文本再合成一次；流式音频输出在 `AudioStart`/`AudioChunk` 后必须发送 `SynthesizeStopped` 结束响应，不能只发送普通 `AudioStop`，因为 HA 的流式接收器等待的是 `SynthesizeStopped`。
-
-**HA 端的必要条件：** 仅让 TTS 服务支持流式还不够。AstrBot Conversation Agent 必须把 SSE 文本增量写入 HA ChatLog，并声明 supports_streaming；TTS Provider 也必须真实支持 streaming input。两端均满足时，HA 2026.11.0 的 run-start 会提供 TTS URL 与 stream_response=true；回答达到内部启动阈值后，intent-progress 会发出 tts_start_streaming。Tivoo Satellite 应在该事件发生时使用 run-start 保存的 URL 提前通知 ESP32 下载；短回答或非流式情况则在 tts-end 后通知。HA 的 TTS Proxy 会逐块写出 HTTP 响应，设备可边下载边播放。tts-end 不是播放完成事件，最终以 ESP32 的 AUDIO_STATE 和 tts_response_finished() 完成播报生命周期。
-
-**本项目选择：** 首期使用一个独立 Sherpa Wyoming 服务，不在 Tivoo HA 集成内另写模型 Provider。P7A 已确定一个进程/一个 Wyoming TCP 端口同时发布 KWS、STT、TTS 三种独立 Provider：KWS 使用 Sherpa KeywordSpotter，STT 复用 Paraformer 整段离线识别，TTS 使用 Matcha Baker 分句输入和 callback PCM 输出。Paraformer 和 Matcha 基准 RTF 说明有继续验证实时处理的价值，但不代表 KWS 实时性、TTS 首段延迟或完整流式联调已经通过。具体部署、模型配置、事件和验收合同见 P7A 矩阵；Tivoo 实际收音和完整设备链路由 P6.5b11 现场验收。
-
-实现参考：
-- [HA Core 2026.11.0：Wyoming Wake Word](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/wake_word.py)
-- [HA Core 2026.11.0：Wyoming STT](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/stt.py)
-- [HA Core 2026.11.0：Wyoming TTS](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/tts.py)
-- [HA Core 2026.11.0：Wyoming 多 Provider 发现](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/wyoming/data.py)
-- [Sherpa-ONNX 中文/英文 KWS 模型](https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/)
-- [HA Core 2026.11.0：Assist Pipeline](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/assist_pipeline/pipeline.py)
-- [HA Core 2026.11.0：TTS 流与 HTTP Proxy](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/tts/__init__.py)
-- [sherpa-onnx 2.0.1：OfflineTts Python callback](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/sherpa-onnx/python/csrc/offline-tts.cc)
-- [ptbsare：Wyoming 服务实现](https://github.com/ptbsare/sherpa-onnx-tts-stt/blob/main/run.py)
-
-## 12. 已有可复用成果
-
-现有工作区 `BluetoothBridgeTest` 中已经有可复用的研究和代码，不直接把它当成最终项目目录：
-
-- `tivoo/`：Tivoo Python 显示协议、图片和动画编码、命令构建。
-- `bluetooth_bridge.py`：当前 Android Bluetooth Bridge 的 Python HTTP 客户端；最终 ESP32 路线不再依赖 Android Bridge。
-- `esp32-divoom/`：已有 ESP32 Divoom C++/SPP 实现，可研究和复用其中的协议与 SPP 代码。
-
-上游参考：
-- [Tivoo Control](https://github.com/solar2ain/tivoo-control)
-- [ESP32 Divoom](https://github.com/d03n3rfr1tz3/esp32-divoom)
-- [Espressif ESP-SR](https://github.com/espressif/esp-sr)
-
-## 13. 当前边界与未确认事项
-
-以下为迁移前的历史硬件与验收边界；P6.8 新拓扑的适用项及替代项见总体路线 §4–§5，不再按旧 P7/P8/P10 独立执行。未验收事项仍须依据真实证据核销。
-
-- ESP32 单 I²S Controller 以 32 kHz Stereo / 32-bit Slot 同时运行 RX/TX 全双工，并与 ESP-SR AFE AEC/VAD、全局音频输出管理器、NAS KWS watcher、SPP、Wi-Fi 并发时的资源与稳定性。AEC 回声抑制和 NAS KWS 确认后的最终输出层播放停止均为首期必要能力；WROVER-E 是首期硬件基线。BLE GATT 不属于本项目运行要求。
-- Tivoo AUX 播放期间的设备端 SPP 控制并发：已于 2026-11-08 实测通过（AUX 播放外部音频、保持 `Tivoo-light` BLE 连接，并通过 SPP 正常发送指令显示图形）；该 BLE 连接不是固件必需控制通道。尚未验证的是 ESP32 固件在 Wi-Fi/I²S/SPP 同时工作时的稳定性。
-- 单 I²S 全双工下 RX/TX 共用时钟时的 DMA 缓冲、采集/播放任务调度、音频欠载/溢出；若启用备用 A2DP，再验证 A2DP 与 Wi-Fi/SPP 的并发稳定性。
-- INMP441 的具体 GPIO 接线、24-bit DMA 有效位对齐、增益及安装到 Tivoo 机内后的实际采音质量；32 kHz 全双工时钟及 32→16 kHz 转换仍需用已知音频实测。
-- P7A 已确定通过同一 Sherpa Wyoming 服务提供中文/英文 KWS Provider；真实 Tivoo 收音条件下的唤醒词误触发率、漏唤醒率和识别距离仍需在 P6.5b11 现场实测。
-- Tivoo 内置倒计时是否有可读取的剩余时间或完成事件。
-- 屏幕命令是否有设备端确认，以及动画数据的实际最大传输速度。
-- HA Tivoo 集成仍需实现 ESP32 到 HA 的设备音频传输层（连接认证、音频分帧、会话结束和断线处理）；`AssistSatelliteEntity` 负责接管 Pipeline 生命周期，但不会自动提供 ESP32 的网络传输协议。
-- STT/TTS 的 HA 接入方式和流式边界已核实：Paraformer 可通过 Wyoming 接收音频块并在 AudioStop 后执行离线识别；Matcha Baker 可复用，但现有测试只覆盖整段合成。HA 2026.11.0 支持 Wyoming/Provider 流式 TTS；要实现 AstrBot 边生成、Tivoo 边播放，仍需让 AstrBot Conversation Agent 输出 HA ChatLog 增量，并扩展 Wyoming TTS 服务按句接收文本、逐块输出音频。具体判断见 11.4。
-- ESP32 获取 TTS 音频 URL 时的 HA 地址可达性、Token 传递、实际 MIME/编码及解码资源占用。
-- PCM5102 模块输出的线路电平、底噪、失真、接地/交流耦合及 Tivoo AUX 输入兼容性；22.05→32 kHz SRC 的 CPU/RAM 占用和播放连续性。
-- AUX 音频播放与 SPP 命令接收：Tivoo 设备端并发已通过上述实测；仍需在自制 ESP32 固件接入后确认完整链路及长时间运行稳定性。AUX 保持首选方案，A2DP 作为备用输出路线。
-
-项目文档中的接口名称是规划接口，不代表相应固件或集成代码已完成。
-
----
-
-## 官方技术文档
-
-- [Home Assistant Assist Pipeline 开发文档](https://developers.home-assistant.io/docs/voice/pipelines)
-- [Home Assistant Assist Satellite Entity 开发文档](https://developers.home-assistant.io/docs/core/entity/assist-satellite/)
-- [Home Assistant Conversation Entity 开发文档](https://developers.home-assistant.io/docs/core/entity/conversation/)
-- [Home Assistant Wake Word 机制](https://www.home-assistant.io/voice_control/about_wake_word)
-- [Home Assistant openWakeWord 接入](https://www.home-assistant.io/voice_control/install_wake_word_add_on/)
-- [HA Core 2026.11.0：Assist Pipeline WebSocket API](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/assist_pipeline/websocket_api.py)
-- [HA Core 2026.11.0：Assist Pipeline 执行逻辑](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/assist_pipeline/pipeline.py)
-- [HA Core 2026.11.0：Pipeline 阶段与设置模型](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/assist_pipeline/models.py)
-- [AstrBot HTTP OpenAPI / SSE](https://docs.astrbot.app/dev/openapi.html)
-- [ESP-SR AFE / VAD for ESP32](https://docs.espressif.com/projects/esp-sr/en/latest/esp32/audio_front_end/README.html)
-- [sherpa-onnx 中文/英文 KWS 模型](https://github.com/k2-fsa/sherpa-onnx/tree/master/docs/source/onnx/kws/pretrained_models)
-- [ESP-IDF Bluetooth](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/bluetooth.html)
+- 远场命令的正式定距统计、削波率与完整声学 benchmark。
+- 电视、双讲、连续打断等组合场景的系统化矩阵。
+- AP 人工断电、极端丢包、响应丢失重放等低概率故障注入。
+- 第二台 Tivoo/JTAG 软件重启等旧 P5 专项。
+- 对每一条历史合同做形式化全量重新核销。
+- B8.8 剩余真人声学 ACK/query 延迟证据。
+
+这些问题若在实际使用中形成可感知缺陷，再按真实症状处理。
+
+## 历史阶段摘要
+
+| 阶段 | 结果 |
+|---|---|
+| P3/P4 | AstrBot Conversation/MCP 历史实现；当前归档 |
+| P5 | Classic ESP32 最小固件与 SPP 基础完成，后被双板架构吸收 |
+| P6 | ESP32↔HA 双向通信阶段验收通过 |
+| P6.5 | 常驻音频/取消/打断基础，后续语音拓扑被 P6.8 替代 |
+| P6.6 | 表情状态机、mood、screen gate 完成 |
+| P6.7 | 提示音/自触发处理完成，后来迁移为 S3 本地资产 |
+| P7A | Sherpa Wyoming 服务完成；当前继续复用 device-endpoint STT |
+| P6.8 | S3 + Classic 双板、本地 WakeNet、Qwen、local-first 已形成当前稳定基线 |
+
+历史逐批过程、失败试验和验收报告全部保留在 docs/superpowers/，用于定位回归和理解设计来源，不再用于驱动日常开发。

@@ -1,5 +1,8 @@
 # P6.5b3 TTS Proxy 活动期间取消实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** 通过真实 HA Core 2026.11.0 流式 TTS 路径验证 Satellite 外层 Pipeline 取消时 TTS Proxy producer、文本 generator、Wyoming writer/连接及 P7A 请求/session/worker 的实际生命周期。

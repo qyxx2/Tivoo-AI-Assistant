@@ -1,5 +1,8 @@
 # P7A Sherpa Wyoming 语音服务实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > 状态：P7Ab0–P7Ab8 服务实现、NAS 部署和生产 HA 集成验收均已完成；C01–C39 全部 PASS，P7A 阶段门通过并允许进入 P5/P6；C40–C43 留待硬件阶段，C44 N/A/禁止新增。
 > 工作分支：`feature/p7a-sherpa-wyoming-service`
 > 计划基线：`aeef5183fef17e53bafbdda0e55f7de2300a8fdd`
@@ -142,22 +145,22 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Update: `.superpowers/sdd/2026-11-10-p7a-sherpa-wyoming/progress.md`
 
 **Tasks:**
-- [ ] 确认当前分支、基线 SHA、工作树和模型资产；核对 README、STT/TTS spec、ESP32/HA spec 的引用关系。
-- [ ] 按固定上游 commit 核对 `run.py`、`model_utils.py`、Paraformer loader、Matcha loader、Dockerfile；记录直接复用、复制后修改和移除的部分。
-- [ ] 明确保留 Wyoming AsyncTcpServer/AsyncEventHandler、事件类型、现有 STT/TTS loader 的可复用部分；移除 FastAPI/uvicorn/API/10500、GPU 自动切换、浮动依赖、动态 eval、错误的 101 voices、HiFi-GAN 默认和全局共享音频 buffer。
-- [ ] 将服务代码开发与 Docker 构建职责分离：ARM64 Ubuntu 只负责 Python 代码开发/代码级测试；GitHub Actions 负责所有 Dockerfile 检查、容器构建和镜像 smoke；NAS 只 pull/run CI 已构建的镜像。
-- [ ] 在 ARM64 Ubuntu 安装/准备 Python 3.11 原生解释器；优先使用 uv 管理该版本（`uv python install 3.11`），创建独立 `.venv-sherpa`。不复用 Python 3.14 的 HA .venv，也不为 Python 3.11 安装而启用 Docker。
-- [ ] 在 ARM64 Python 3.11 环境验证 Sherpa-ONNX 2.0.1、Wyoming 1.10.2、CPU wheel 和 `sherpa-onnx-cli text2token` 可用；记录平台/解释器/包版本。Sherpa-ONNX 2.0.1 的 CPython 3.11 manylinux aarch64 wheel 已在 PyPI 发布。
-- [ ] 创建 GitHub Actions workflow foundation：使用 GitHub-hosted `ubuntu-24.04` runner；workflow 断言 runner 为 x86_64/amd64，初始化 Buildx 并验证 linux/amd64 builder。Dockerfile 尚未建立时此批只验收 runner/Buildx，不构建服务镜像。
-- [ ] workflow 触发条件覆盖 P7A feature branch 的 push、相关路径的 pull_request 和 workflow_dispatch；paths 至少包括 workflow、`services/sherpa_wyoming/**`、NAS Compose。默认只读 contents 权限；CI 不需要 NAS 凭据或个人 token。
-- [ ] 明确 GHCR 包名 `ghcr.io/qyxx2/tivoo-sherpa-wyoming`。正式发布 job 在 P7Ab7 配置，仅使用 GitHub 自动提供的 GITHUB_TOKEN 和 packages:write；不把 PAT 或 NAS 凭据写入仓库。
-- [ ] 在 UPSTREAM.md 记录固定上游 commit、复用文件及许可材料现状；列出模型资产缺口、已知 SHA 和来源。
+- [x] 确认当前分支、基线 SHA、工作树和模型资产；核对 README、STT/TTS spec、ESP32/HA spec 的引用关系。
+- [x] 按固定上游 commit 核对 `run.py`、`model_utils.py`、Paraformer loader、Matcha loader、Dockerfile；记录直接复用、复制后修改和移除的部分。
+- [x] 明确保留 Wyoming AsyncTcpServer/AsyncEventHandler、事件类型、现有 STT/TTS loader 的可复用部分；移除 FastAPI/uvicorn/API/10500、GPU 自动切换、浮动依赖、动态 eval、错误的 101 voices、HiFi-GAN 默认和全局共享音频 buffer。
+- [x] 将服务代码开发与 Docker 构建职责分离：ARM64 Ubuntu 只负责 Python 代码开发/代码级测试；GitHub Actions 负责所有 Dockerfile 检查、容器构建和镜像 smoke；NAS 只 pull/run CI 已构建的镜像。
+- [x] 在 ARM64 Ubuntu 安装/准备 Python 3.11 原生解释器；优先使用 uv 管理该版本（`uv python install 3.11`），创建独立 `.venv-sherpa`。不复用 Python 3.14 的 HA .venv，也不为 Python 3.11 安装而启用 Docker。
+- [x] 在 ARM64 Python 3.11 环境验证 Sherpa-ONNX 2.0.1、Wyoming 1.10.2、CPU wheel 和 `sherpa-onnx-cli text2token` 可用；记录平台/解释器/包版本。Sherpa-ONNX 2.0.1 的 CPython 3.11 manylinux aarch64 wheel 已在 PyPI 发布。
+- [x] 创建 GitHub Actions workflow foundation：使用 GitHub-hosted `ubuntu-24.04` runner；workflow 断言 runner 为 x86_64/amd64，初始化 Buildx 并验证 linux/amd64 builder。Dockerfile 尚未建立时此批只验收 runner/Buildx，不构建服务镜像。
+- [x] workflow 触发条件覆盖 P7A feature branch 的 push、相关路径的 pull_request 和 workflow_dispatch；paths 至少包括 workflow、`services/sherpa_wyoming/**`、NAS Compose。默认只读 contents 权限；CI 不需要 NAS 凭据或个人 token。
+- [x] 明确 GHCR 包名 `ghcr.io/qyxx2/tivoo-sherpa-wyoming`。正式发布 job 在 P7Ab7 配置，仅使用 GitHub 自动提供的 GITHUB_TOKEN 和 packages:write；不把 PAT 或 NAS 凭据写入仓库。
+- [x] 在 UPSTREAM.md 记录固定上游 commit、复用文件及许可材料现状；列出模型资产缺口、已知 SHA 和来源。
 
 **Exit gate:**
-- [ ] 上游复用边界和模型资产缺口有可复核记录。
-- [ ] ARM64 Ubuntu 已有独立 Python 3.11 venv，Sherpa-ONNX 2.0.1/Wyoming 1.10.2 可原生安装。
-- [ ] GitHub Actions workflow foundation 已在远端 feature branch 触发成功；ubuntu-24.04 runner 确认原生 linux/amd64 Buildx builder 可用。
-- [ ] 开发机 Docker socket 权限不再是前置条件；P7Ab0 不执行 Docker build，也不修改开发机 Docker 权限。
+- [x] 上游复用边界和模型资产缺口有可复核记录。
+- [x] ARM64 Ubuntu 已有独立 Python 3.11 venv，Sherpa-ONNX 2.0.1/Wyoming 1.10.2 可原生安装。
+- [x] GitHub Actions workflow foundation 已在远端 feature branch 触发成功；ubuntu-24.04 runner 确认原生 linux/amd64 Buildx builder 可用。
+- [x] 开发机 Docker socket 权限不再是前置条件；P7Ab0 不执行 Docker build，也不修改开发机 Docker 权限。
 
 **Commit:** docs(p7a): record Sherpa implementation preflight
 
@@ -173,15 +176,15 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Consumes: P7Ab0 核实的 Sherpa 2.0.1 API、Wyoming 1.10.2 和固定上游加载实现。
 
 **Tasks:**
-- [ ] RED：验证必填 `WAKE_WORD_PHRASE`、host/port、数值范围、默认线程数和音频/队列上限；空短语、非法端口、负阈值和不合法上限必须拒绝。
-- [ ] RED：验证缺失/损坏/哈希不匹配的任一必需模型文件使加载失败，不返回不完整 ModelBundle。
-- [ ] 从上游可复用 loader 改造 STT/TTS 模型加载；增加 KWS loader 配置入口，但不在此批实现 KWS 请求事件。
-- [ ] 建立 `ModelBundle`，固定包含 KeywordSpotter、OfflineRecognizer、OfflineTts；模型对象仅初始化一次。
+- [x] RED：验证必填 `WAKE_WORD_PHRASE`、host/port、数值范围、默认线程数和音频/队列上限；空短语、非法端口、负阈值和不合法上限必须拒绝。
+- [x] RED：验证缺失/损坏/哈希不匹配的任一必需模型文件使加载失败，不返回不完整 ModelBundle。
+- [x] 从上游可复用 loader 改造 STT/TTS 模型加载；增加 KWS loader 配置入口，但不在此批实现 KWS 请求事件。
+- [x] 建立 `ModelBundle`，固定包含 KeywordSpotter、OfflineRecognizer、OfflineTts；模型对象仅初始化一次。
 - [x] 计算并记录 STT 已知模型 hash；补齐 Matcha tokens、phone/date/number FST hash；记录 Vocos hash；取得官方 KWS release，校验 archive digest，并记录 chunk-16/left-64 五项运行文件 hash。
-- [ ] 分离模型准备与运行时加载：下载/解包在准备工具执行，启动阶段只做存在性和校验后加载；不得使用动态 eval 加载配置代码。
-- [ ] 锁定 Python 3.11 runtime 依赖及 ARM 本地开发测试依赖；在 `.venv-sherpa` 中通过 ARM64 wheel 安装 Sherpa-ONNX 2.0.1、Wyoming 1.10.2 和测试工具；不改变根目录 HA Python 3.14 环境。
-- [ ] GREEN：执行配置、哈希校验、加载成功/失败测试；使用 fake 模型验证失败不会产出半成品对象。所有 pytest/Ruff/compileall 在 ARM Ubuntu 本地执行。
-- [ ] 为 Dockerfile 建立 runtime 与 ci-smoke stage；更新 GitHub Actions，使 P7Ab1 起对 Dockerfile 执行 `docker buildx build --check`、linux/amd64 ci-smoke build 和镜像依赖导入 smoke。GitHub CI 不执行应用 pytest。
+- [x] 分离模型准备与运行时加载：下载/解包在准备工具执行，启动阶段只做存在性和校验后加载；不得使用动态 eval 加载配置代码。
+- [x] 锁定 Python 3.11 runtime 依赖及 ARM 本地开发测试依赖；在 `.venv-sherpa` 中通过 ARM64 wheel 安装 Sherpa-ONNX 2.0.1、Wyoming 1.10.2 和测试工具；不改变根目录 HA Python 3.14 环境。
+- [x] GREEN：执行配置、哈希校验、加载成功/失败测试；使用 fake 模型验证失败不会产出半成品对象。所有 pytest/Ruff/compileall 在 ARM Ubuntu 本地执行。
+- [x] 为 Dockerfile 建立 runtime 与 ci-smoke stage；更新 GitHub Actions，使 P7Ab1 起对 Dockerfile 执行 `docker buildx build --check`、linux/amd64 ci-smoke build 和镜像依赖导入 smoke。GitHub CI 不执行应用 pytest。
 
 **Exit gate:** 配置边界和模型加载测试在 ARM64 Ubuntu 通过；本地 Python 3.11 环境可重复建立；GitHub CI 已实际完成 Dockerfile check、linux/amd64 ci-smoke image build 和依赖导入 smoke；服务尚未开放监听端口。
 
@@ -199,14 +202,14 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: KWS 请求状态及可供连接 Handler 调用的 Detect/音频输入/EOF 收尾行为。
 
 **Tasks:**
-- [ ] RED：覆盖 Detect.names 指定 `tivoo-wake`、names 缺省/为空时使用唯一配置模型、未声明 ID、AudioStart 格式、AudioChunk 顺序和 timestamp 传递。
-- [ ] RED：覆盖命中时只返回 Detection、不返回 Transcript；正常 EOF 未命中返回 NotDetected 并结束；模型错误返回 Error。
-- [ ] 使用上游/官方 KeywordSpotter API 建立每连接独立 Stream；按 16 kHz S16LE mono PCM 输入，执行模型所需 float32 归一化。
-- [ ] 复用官方 `sherpa-onnx-cli text2token`，由 WAKE_WORD_PHRASE + tokens.txt + en.phone 生成 keywords 文件；Info phrase、模型名和生成文件保持一致。
-- [ ] 正常未命中处理在 Wyoming 1.10.2 的 disconnect/EOF 生命周期中完成；用请求状态防止 Detection/Error 之后重复发送 NotDetected。
-- [ ] 命中后立即发 Detection(name=`tivoo-wake`) 并结束请求；timestamp 只代表检测确认的输入块时间。
-- [ ] 验证无命中、取消、断开均释放当前 Stream，不影响另一个连接的 KWS 请求。
-- [ ] GREEN：fake KeywordSpotter 协议测试通过；使用真实模型、官方模型测试 WAV、与当前 WAKE_WORD_PHRASE 对应的自定义中文正样本 WAV 和负样本做模型 smoke，记录阈值起测参数和样本来源，不把它描述成 Tivoo 机内声学验收。
+- [x] RED：覆盖 Detect.names 指定 `tivoo-wake`、names 缺省/为空时使用唯一配置模型、未声明 ID、AudioStart 格式、AudioChunk 顺序和 timestamp 传递。
+- [x] RED：覆盖命中时只返回 Detection、不返回 Transcript；正常 EOF 未命中返回 NotDetected 并结束；模型错误返回 Error。
+- [x] 使用上游/官方 KeywordSpotter API 建立每连接独立 Stream；按 16 kHz S16LE mono PCM 输入，执行模型所需 float32 归一化。
+- [x] 复用官方 `sherpa-onnx-cli text2token`，由 WAKE_WORD_PHRASE + tokens.txt + en.phone 生成 keywords 文件；Info phrase、模型名和生成文件保持一致。
+- [x] 正常未命中处理在 Wyoming 1.10.2 的 disconnect/EOF 生命周期中完成；用请求状态防止 Detection/Error 之后重复发送 NotDetected。
+- [x] 命中后立即发 Detection(name=`tivoo-wake`) 并结束请求；timestamp 只代表检测确认的输入块时间。
+- [x] 验证无命中、取消、断开均释放当前 Stream，不影响另一个连接的 KWS 请求。
+- [x] GREEN：fake KeywordSpotter 协议测试通过；使用真实模型、官方模型测试 WAV、与当前 WAKE_WORD_PHRASE 对应的自定义中文正样本 WAV 和负样本做模型 smoke，记录阈值起测参数和样本来源，不把它描述成 Tivoo 机内声学验收。
 
 **Exit gate:** C09–C15 具备测试证据；未命中不会产生伪 Detection；HA EOF 语义已覆盖；P7A 尚未要求真实 Tivoo 麦克风测试。
 
@@ -223,12 +226,12 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: 每请求独立的 STT 状态，以及 AudioStop 后的最终 Transcript 或 Wyoming Error。
 
 **Tasks:**
-- [ ] RED：覆盖 Transcribe → AudioStart → AudioChunk* → AudioStop，AudioStop 之前不输出 Transcript，结束后仅 decode 一次。
-- [ ] RED：区分有效静音/无识别结果的 Transcript(text="") 与空输入、错误 PCM、非法事件顺序、模型异常、超时的 Error。
-- [ ] RED：覆盖 300 秒/9,600,000 bytes 上限、超限即终止、两请求不串音频、取消/断开释放 Stream/buffer。
-- [ ] 复用上游 Paraformer OfflineRecognizer Stream 路径；保持模型线程配置 2，输入 16 kHz、mono、S16LE，不新增 KWS 或第二套 VAD。
-- [ ] Transcribe.language 作为请求元数据保留，不按语言切换模型；Info 后续声明 zh-CN/en-US。
-- [ ] GREEN：测试固定假模型和音频格式转换；使用既有官方 WAV 检查实际 Paraformer 模型输出与已有基准一致。
+- [x] RED：覆盖 Transcribe → AudioStart → AudioChunk* → AudioStop，AudioStop 之前不输出 Transcript，结束后仅 decode 一次。
+- [x] RED：区分有效静音/无识别结果的 Transcript(text="") 与空输入、错误 PCM、非法事件顺序、模型异常、超时的 Error。
+- [x] RED：覆盖 300 秒/9,600,000 bytes 上限、超限即终止、两请求不串音频、取消/断开释放 Stream/buffer。
+- [x] 复用上游 Paraformer OfflineRecognizer Stream 路径；保持模型线程配置 2，输入 16 kHz、mono、S16LE，不新增 KWS 或第二套 VAD。
+- [x] Transcribe.language 作为请求元数据保留，不按语言切换模型；Info 后续声明 zh-CN/en-US。
+- [x] GREEN：测试固定假模型和音频格式转换；使用既有官方 WAV 检查实际 Paraformer 模型输出与已有基准一致。
 
 **Exit gate:** C17–C22 通过；最终转写只有一个；空结果和错误语义可区分；输入内存严格有界。
 
@@ -246,12 +249,12 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: 只接受 voice 0 / zh-CN 的非流式 Synthesize 响应。
 
 **Tasks:**
-- [ ] RED：覆盖有效 Synthesize 生成一份 AudioStart、一个或多个 AudioChunk、一个 AudioStop；错误时不发送伪造 AudioStop。
-- [ ] RED：拒绝不支持的 voice/speaker；空文本按矩阵返回 Error，不调用模型。
-- [ ] 复用上游 Matcha loader；vocoder 必须是 Vocos 22.05 kHz，使用 lexicon、tokens、phone/date/number FST 和项目 benchmark 实测配置。
-- [ ] 按 sid=0、speed=1.0 调用 OfflineTts；输出转换为 22,050 Hz、mono、S16LE，AudioChunk 保持样本帧对齐。
-- [ ] 将 callback 能力留给下一批流式实现；本批非流式路径不声明 streaming 能力。
-- [ ] GREEN：使用 Fake OfflineTts 覆盖错误/voice/事件顺序；真实模型生成音频并确认采样率、声道、位宽和可播放结果。
+- [x] RED：覆盖有效 Synthesize 生成一份 AudioStart、一个或多个 AudioChunk、一个 AudioStop；错误时不发送伪造 AudioStop。
+- [x] RED：拒绝不支持的 voice/speaker；空文本按矩阵返回 Error，不调用模型。
+- [x] 复用上游 Matcha loader；vocoder 必须是 Vocos 22.05 kHz，使用 lexicon、tokens、phone/date/number FST 和项目 benchmark 实测配置。
+- [x] 按 sid=0、speed=1.0 调用 OfflineTts；输出转换为 22,050 Hz、mono、S16LE，AudioChunk 保持样本帧对齐。
+- [x] 将 callback 能力留给下一批流式实现；本批非流式路径不声明 streaming 能力。
+- [x] GREEN：使用 Fake OfflineTts 覆盖错误/voice/事件顺序；真实模型生成音频并确认采样率、声道、位宽和可播放结果。
 
 **Exit gate:** C23–C24 通过；HA 可接收非流式语音；声学模型/Vocos/FST/lexicon 与项目已有实测配置一致。
 
@@ -268,15 +271,15 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: 每个流式请求一条连续 AudioStart/AudioChunk 序列，以 SynthesizeStopped 结束。
 
 **Tasks:**
-- [ ] RED：按 HA Core 2026.11.0 真实顺序发送 SynthesizeStart、多个 SynthesizeChunk、完整兼容 Synthesize、SynthesizeStop；断言兼容完整 Synthesize 不会再次合成/追加文本。
-- [ ] RED：覆盖中英文强句末标点、max_sentence_chars=80 长句回退、末尾残余文本 flush；拼接已提交句子必须与输入文本完全一致。
-- [ ] RED：覆盖一个流仅一个 AudioStart、22,050 Hz/16-bit/mono、PCM chunk 最大 4 KiB 且帧对齐、队列最多 128 KiB。
-- [ ] RED：覆盖队列满时生产受到背压、不丢块、不重排；SynthesizeStop 后全部 PCM 发送完才发 SynthesizeStopped。
-- [ ] RED：覆盖客户端断开、主动取消、模型异常、队列消费者异常；取消后不再发送迟到 PCM。
-- [ ] 将 Sherpa callback 的 samples 复制到独立缓冲，转换为 S16LE 后切分入有界线程安全队列；callback 返回 1 表示继续生成、返回 0 表示停止生成；callback 不直接网络写入。
-- [ ] 生成与网络发送解耦：async 消费端按序发送；队列满时 callback 等待有界时间并检查取消状态，失败时结束当前请求。
-- [ ] 只在流式事件路径发送 SynthesizeStopped；普通完整 Synthesize 继续由 P7Ab4 的 AudioStop 结束。
-- [ ] GREEN：用确定性 Fake OfflineTts callback 驱动慢速 consumer，验证背压/顺序/取消；再以真实模型测首块输出，不把单次快照当最终 NAS 实测。
+- [x] RED：按 HA Core 2026.11.0 真实顺序发送 SynthesizeStart、多个 SynthesizeChunk、完整兼容 Synthesize、SynthesizeStop；断言兼容完整 Synthesize 不会再次合成/追加文本。
+- [x] RED：覆盖中英文强句末标点、max_sentence_chars=80 长句回退、末尾残余文本 flush；拼接已提交句子必须与输入文本完全一致。
+- [x] RED：覆盖一个流仅一个 AudioStart、22,050 Hz/16-bit/mono、PCM chunk 最大 4 KiB 且帧对齐、队列最多 128 KiB。
+- [x] RED：覆盖队列满时生产受到背压、不丢块、不重排；SynthesizeStop 后全部 PCM 发送完才发 SynthesizeStopped。
+- [x] RED：覆盖客户端断开、主动取消、模型异常、队列消费者异常；取消后不再发送迟到 PCM。
+- [x] 将 Sherpa callback 的 samples 复制到独立缓冲，转换为 S16LE 后切分入有界线程安全队列；callback 返回 1 表示继续生成、返回 0 表示停止生成；callback 不直接网络写入。
+- [x] 生成与网络发送解耦：async 消费端按序发送；队列满时 callback 等待有界时间并检查取消状态，失败时结束当前请求。
+- [x] 只在流式事件路径发送 SynthesizeStopped；普通完整 Synthesize 继续由 P7Ab4 的 AudioStop 结束。
+- [x] GREEN：用确定性 Fake OfflineTts callback 驱动慢速 consumer，验证背压/顺序/取消；再以真实模型测首块输出，不把单次快照当最终 NAS 实测。
 
 **Exit gate:** C25–C31 通过；流式和非流式结束标记没有混用；无 PCM 丢失/重复/无界累积；Info 的 streaming 声明仍由 P7Ab6 最终组合验证决定。
 
@@ -293,16 +296,16 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: `build_wyoming_info(config) -> Info`、`create_handler_factory(...)`、`run_server(...)` 和可启动服务进程。
 
 **Tasks:**
-- [ ] RED：同一 Describe/Info 同时含一个 installed WakeProgram、AsrProgram、TtsProgram；WakeModel ID/phrase/languages 正确；ASR languages=zh-CN/en-US、requires_external_vad=true、supports_transcript_streaming=false；TTS 仅 voice 0/zh-CN 且 supports_synthesize_streaming=true。
-- [ ] RED：单服务仅绑定一次 10400；一个 Wyoming 连接可处理 Describe，Provider 连接只路由到其所属 Provider。
-- [ ] RED：任一模型加载失败时 AsyncTcpServer 不启动；Info 探测不会被长 TTS 推理阻塞。
-- [ ] RED：多个连接的 KWS/STT/TTS 请求状态不共享；同一模型并发受限；等待队列容量有上限，超出时返回可诊断错误而不是无限排队。
-- [ ] 复用 AsyncTcpServer 和 AsyncEventHandler，建立单一 Handler 路由；移除上游 FastAPI、uvicorn、api.py、ModelContainer 和 10500 启动路径。
-- [ ] 用模型级 bounded worker/executor 承接阻塞推理，不在 event loop 直接运行 sherpa decode/generate；默认模型线程数 KWS=1、STT=2、TTS=1。
-- [ ] 实现启动顺序：load_config → 校验模型资产 → load_models → build Info → bind 单一 Wyoming Server；不提供部分 Provider 的降级启动。
-- [ ] 按合同记录 model load time、请求耗时、错误类别、KWS 处理滞后、STT RTF、TTS 首块/队列水位和同进程 RSS；不记录音频/完整文字。
-- [ ] GREEN：使用 fake 模型启动真实 TCP 端口并完成 Describe、Wake、STT、TTS 协议集成；检查端口监听数量为一个。
-- [ ] 为最终 HA/P3 集成验收保留可替换的 Agent 测试接缝；本批不将 C16/C38 标记为 PASS，KWS miss/hit 阶段门和 Transcript 到 P3 的最终验证留到 P7Ab8。
+- [x] RED：同一 Describe/Info 同时含一个 installed WakeProgram、AsrProgram、TtsProgram；WakeModel ID/phrase/languages 正确；ASR languages=zh-CN/en-US、requires_external_vad=true、supports_transcript_streaming=false；TTS 仅 voice 0/zh-CN 且 supports_synthesize_streaming=true。
+- [x] RED：单服务仅绑定一次 10400；一个 Wyoming 连接可处理 Describe，Provider 连接只路由到其所属 Provider。
+- [x] RED：任一模型加载失败时 AsyncTcpServer 不启动；Info 探测不会被长 TTS 推理阻塞。
+- [x] RED：多个连接的 KWS/STT/TTS 请求状态不共享；同一模型并发受限；等待队列容量有上限，超出时返回可诊断错误而不是无限排队。
+- [x] 复用 AsyncTcpServer 和 AsyncEventHandler，建立单一 Handler 路由；移除上游 FastAPI、uvicorn、api.py、ModelContainer 和 10500 启动路径。
+- [x] 用模型级 bounded worker/executor 承接阻塞推理，不在 event loop 直接运行 sherpa decode/generate；默认模型线程数 KWS=1、STT=2、TTS=1。
+- [x] 实现启动顺序：load_config → 校验模型资产 → load_models → build Info → bind 单一 Wyoming Server；不提供部分 Provider 的降级启动。
+- [x] 按合同记录 model load time、请求耗时、错误类别、KWS 处理滞后、STT RTF、TTS 首块/队列水位和同进程 RSS；不记录音频/完整文字。
+- [x] GREEN：使用 fake 模型启动真实 TCP 端口并完成 Describe、Wake、STT、TTS 协议集成；检查端口监听数量为一个。
+- [x] 为最终 HA/P3 集成验收保留可替换的 Agent 测试接缝；本批不将 C16/C38 标记为 PASS，KWS miss/hit 阶段门和 Transcript 到 P3 的最终验证留到 P7Ab8。
 
 **Exit gate:** C01–C06、C32 有运行时/自动化证据；单进程、单端口、单 Info 可发现三 Provider；模型全加载前不监听；日志隐私满足 C37。HA Assist Pipeline 的 C16 阶段门在 P7Ab8 验收。
 
@@ -322,16 +325,16 @@ KWS、STT、TTS 的 Provider 代码分别有独立测试边界；在同一工作
 - Produces: 单服务 Compose 部署、持久化模型准备、Describe/Info 健康检查。
 
 **Tasks:**
-- [ ] RED：Compose 只包含一个 sherpa-wyoming service；使用 GHCR image tag，不包含本地 build:；不映射 host/public ports、不暴露 10500；只在独立 internal-only、不可 attach 的 Docker bridge expose 10400。HA 若为 host network，则从 NAS host namespace 访问容器 IP。
-- [ ] RED：模型目录持久化挂载；容器重建不重新下载模型；配置示例不含生产唤醒短语以外的秘密值/Token。
-- [ ] RED：healthcheck 必须对 localhost:10400 发送 Wyoming Describe 并检查 wake/asr/tts 三个 installed Provider；仅 TCP connect 不能返回 healthy。
-- [ ] 构建 Python 3.11 CPU-only 镜像；固定直接和传递依赖；不包含 FastAPI/uvicorn/OpenAI API；镜像入口只运行 run.py。
-- [ ] 增加模型准备脚本：只下载缺少文件，按来源/版本解包；逐项校验 MODEL_SHA256SUMS，失败时以非零退出，不覆盖有效模型。
-- [ ] KWS 关键词源文件从 `WAKE_WORD_PHRASE` 生成；生成文件与 Info phrase 必须一致；不要把实际 `.env` 或用户私有唤醒短语提交。
-- [ ] Compose 使用外部专用网络变量（`HA_DOCKER_NETWORK`）；若 HA 本身为 host network，则创建独立 `internal=true`、`attachable=false` bridge，不连接共享/不可信容器网络，并记录 NAS host 进程可达的接受风险。
-- [ ] GREEN：将最终 Dockerfile/buildx/容器 smoke/Compose config 全部交给 GitHub Actions 的 ubuntu-24.04 amd64 runner。CI 完成 `buildx --check`、`linux/amd64` 完整镜像 build、无模型条件下的依赖/入口 smoke、Compose config 校验；通过后使用 GITHUB_TOKEN 发布 `sha-<commit>` tag 到 GHCR。CI 失败不得发布 tag。
-- [ ] workflow 在 pull_request 上只 build/test、不发布；feature branch push 在 Docker smoke 通过后发布 SHA tag，供 P7Ab8 测试；不发布 latest。无需自定义 GitHub Actions secret。
-- [ ] 不在本批将服务部署到生产 NAS；最终部署与 NAS 资源验收由 P7Ab8 执行。
+- [x] RED：Compose 只包含一个 sherpa-wyoming service；使用 GHCR image tag，不包含本地 build:；不映射 host/public ports、不暴露 10500；只在独立 internal-only、不可 attach 的 Docker bridge expose 10400。HA 若为 host network，则从 NAS host namespace 访问容器 IP。
+- [x] RED：模型目录持久化挂载；容器重建不重新下载模型；配置示例不含生产唤醒短语以外的秘密值/Token。
+- [x] RED：healthcheck 必须对 localhost:10400 发送 Wyoming Describe 并检查 wake/asr/tts 三个 installed Provider；仅 TCP connect 不能返回 healthy。
+- [x] 构建 Python 3.11 CPU-only 镜像；固定直接和传递依赖；不包含 FastAPI/uvicorn/OpenAI API；镜像入口只运行 run.py。
+- [x] 增加模型准备脚本：只下载缺少文件，按来源/版本解包；逐项校验 MODEL_SHA256SUMS，失败时以非零退出，不覆盖有效模型。
+- [x] KWS 关键词源文件从 `WAKE_WORD_PHRASE` 生成；生成文件与 Info phrase 必须一致；不要把实际 `.env` 或用户私有唤醒短语提交。
+- [x] Compose 使用外部专用网络变量（`HA_DOCKER_NETWORK`）；若 HA 本身为 host network，则创建独立 `internal=true`、`attachable=false` bridge，不连接共享/不可信容器网络，并记录 NAS host 进程可达的接受风险。
+- [x] GREEN：将最终 Dockerfile/buildx/容器 smoke/Compose config 全部交给 GitHub Actions 的 ubuntu-24.04 amd64 runner。CI 完成 `buildx --check`、`linux/amd64` 完整镜像 build、无模型条件下的依赖/入口 smoke、Compose config 校验；通过后使用 GITHUB_TOKEN 发布 `sha-<commit>` tag 到 GHCR。CI 失败不得发布 tag。
+- [x] workflow 在 pull_request 上只 build/test、不发布；feature branch push 在 Docker smoke 通过后发布 SHA tag，供 P7Ab8 测试；不发布 latest。无需自定义 GitHub Actions secret。
+- [x] 不在本批将服务部署到生产 NAS；最终部署与 NAS 资源验收由 P7Ab8 执行。
 
 **Exit gate:** C07、C33、C34、C36 的镜像/Compose/健康测试通过；GitHub CI 产出可按 commit SHA 拉取的 linux/amd64 GHCR image；Compose 没有本地 build；模型可跨容器重建持久化。
 

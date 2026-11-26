@@ -1,5 +1,8 @@
 # P4 Home Assistant MCP / Tivoo LLM Tools — Batch Execution Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > 状态：P4b0–P4b6 的本地实现与自动化验收已完成。2026-11-10 目标环境验收已通过 HA/Tivoo 部署加载、AstrBot 4.29.4 Streamable HTTP 连接、七个 Tivoo Tool 发现及一次 Persona `StopCountdown` 调用/预期 Adapter 错误返回；全部七个 Tool 的 Persona 授权与断线/响应丢失故障注入仍待验收。P4 整体保持 PARTIAL，详见 `docs/superpowers/reports/2026-11-10-p4-runtime-acceptance-report.md`。
 > 工作分支：`feature/p4-ha-mcp-server`
 > 计划权威来源：[P4 Implementation Plan](2026-11-09-p4-ha-mcp-tool-implementation-plan.md)

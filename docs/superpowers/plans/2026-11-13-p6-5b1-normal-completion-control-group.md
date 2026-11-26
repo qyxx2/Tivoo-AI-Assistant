@@ -1,5 +1,8 @@
 # P6.5b1 正常完成控制组实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** 通过真实 HA Core 2026.11.0 Pipeline 与 TTS Proxy，建立 AstrBot SSE → Wyoming → P7A TTS 正常完成的任务生命周期基线。

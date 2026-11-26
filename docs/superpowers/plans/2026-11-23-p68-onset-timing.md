@@ -1,5 +1,8 @@
 # P6.8 Speech Onset Timing Implementation Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** Use superpowers:executing-plans inline, task by task. The user has authorized this diagnostic experiment and its evidence-driven follow-up in the existing chat.
 
 **Goal:** Identify the blocking boundary during real wake → prompt → command, then validate the smallest fix supported by the trace.
@@ -33,21 +36,21 @@
 
 **Interfaces:** `tivoo_timing_arm(void)`, `tivoo_timing_record(unsigned kind, uint64_t at_us, unsigned duration_us, unsigned a, unsigned b)`; host/legacy stubs. Decoder consumes P68TIME BEGIN/DATA/END metadata lines, outputs JSON timing summaries and typed intervals.
 
-- [ ] Write parser tests for complete/out-of-order intervals, missing tail, dropped records, count mismatch and long TX wait with short send duration; run RED.
-- [ ] Implement parser; run GREEN.
-- [ ] Back up the exact current source and sdkconfig. Add RAM-only probes at capture queue delivery, feed read/feed call, fetch call/app gap/flow callback, turn tick/event, enqueue/pop/send, TX mutex/scheduling gap. Preserve all behavior.
-- [ ] Build incrementally without touching CMake or sdkconfig; run affected host tests and diff check. Archive temporary patch plus firmware hash.
+- [x] Write parser tests for complete/out-of-order intervals, missing tail, dropped records, count mismatch and long TX wait with short send duration; run RED.
+- [x] Implement parser; run GREEN.
+- [x] Back up the exact current source and sdkconfig. Add RAM-only probes at capture queue delivery, feed read/feed call, fetch call/app gap/flow callback, turn tick/event, enqueue/pop/send, TX mutex/scheduling gap. Preserve all behavior.
+- [x] Build incrementally without touching CMake or sdkconfig; run affected host tests and diff check. Archive temporary patch plus firmware hash.
 
 ### Task 2: Physical feedback loop and ruling
 
 **Files:** evidence/2026-11-23-p68-onset-timing/* and this plan's progress ledger.
 
-- [ ] Verify NAS port mapping and no serial reader, upload app and flash/hash verify.
+- [x] Verify NAS port mapping and no serial reader, upload app and flash/hash verify.
 - [ ] Capture boot/idle counters; then ask for one physical wake and command while the bounded trace is armed.
-- [ ] Decode after export. Correlate callback duration, feed service, queue depth, message residence, mutex wait and send completion on the same clock.
-- [ ] Record whether history/session synchronous work is the primary blocked boundary, scheduling alone dominates, or another concrete boundary is supported. Never infer CPU saturation from wall time alone.
-- [ ] If the approved hypothesis is confirmed, implement the smallest bounded ownership separation with regression coverage at the actual callback seam; keep wire/physical gates unchanged. Otherwise record the evidenced next investigation and do not implement a speculative task split.
-- [ ] Remove temporary probes; verify source cleanup and appropriate tests. Restore original app unless a new candidate is verified. Report remaining actual hardware gaps honestly.
+- [x] Decode after export. Correlate callback duration, feed service, queue depth, message residence, mutex wait and send completion on the same clock.
+- [x] Record whether history/session synchronous work is the primary blocked boundary, scheduling alone dominates, or another concrete boundary is supported. Never infer CPU saturation from wall time alone.
+- [x] If the approved hypothesis is confirmed, implement the smallest bounded ownership separation with regression coverage at the actual callback seam; keep wire/physical gates unchanged. Otherwise record the evidenced next investigation and do not implement a speculative task split.
+- [x] Remove temporary probes; verify source cleanup and appropriate tests. Restore original app unless a new candidate is verified. Report remaining actual hardware gaps honestly.
 
 ## Execution rulings
 

@@ -1,5 +1,8 @@
 # P6.6 Tivoo 表情状态机与屏幕门控分批实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **P6.8 迁移说明（2026-11-18）：** 历史实施计划；已实现的 Coordinator、门控、C19 证据不重做。新唤醒/监听/播放事件映射和剩余真人语音验收转入 P6.8b8/b10。 参见 [当前总体路线](2026-11-18-p6-8-s3-local-wake-roadmap.md)。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -90,18 +93,18 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - `last_sent` 只在底层 `async_execute()` 成功后更新；send failure 保留 desired，等待后续重连/recompute。
 
 **RED / GREEN tasks:**
-- [ ] RED：固定优先级逐层覆盖，清除赢家后恢复仍有效的下一 intent；不得写 A→B 成对回退。
-- [ ] RED：`begin_generation(new)` 后旧 generation 的 clear/set/TTL callback 均不能改变当前赢家；`async_end_generation` 只清会话级 intent，不清 persistent explicit/idle。
-- [ ] RED：mood/任意 TTL intent 在被更高状态覆盖时仍按真实时间过期，过期后不得“补播”。
-- [ ] RED：idle 无其他 intent 时立即成为兜底，并按 30–90 秒重新选 `standby/smiley/sleepy/sun/fish`；测试用 monkeypatch 固定随机结果，不引入额外随机框架。
-- [ ] RED：两个 screen-off owner 中任意一个未释放都保持 OFF；重复 acquire/release 幂等。
-- [ ] RED：temporary wake 不删除 inhibit；多个 temporary wake 中一个到期不能提前熄灭另一个；全部结束且 inhibit 仍存在时回 OFF。
-- [ ] RED：OFF 时 intent 可以更新 desired，但不发送显示 command；OFF→ON 后先恢复屏幕，再强制下发当前赢家。
-- [ ] RED：adapter 写失败不伪造 `last_sent`，下一次 `async_force_recompute()` 能重试同一 desired。
-- [ ] GREEN：实现最小 `display_state.py`；timer 使用 HA event-loop/现有 helper，不增加 dependency、不做轮询。
-- [ ] 运行：`./scripts/test-ha.sh -q tests/homeassistant/custom_components/tivoo/test_display_state.py`。
-- [ ] 运行 Ruff/format check、`python -m compileall homeassistant/custom_components/tivoo/display_state.py`、`git diff --check`。
-- [ ] 更新 b0 报告，只记录真实 RED/GREEN 命令、结果和未接线边界。
+- [x] RED：固定优先级逐层覆盖，清除赢家后恢复仍有效的下一 intent；不得写 A→B 成对回退。
+- [x] RED：`begin_generation(new)` 后旧 generation 的 clear/set/TTL callback 均不能改变当前赢家；`async_end_generation` 只清会话级 intent，不清 persistent explicit/idle。
+- [x] RED：mood/任意 TTL intent 在被更高状态覆盖时仍按真实时间过期，过期后不得“补播”。
+- [x] RED：idle 无其他 intent 时立即成为兜底，并按 30–90 秒重新选 `standby/smiley/sleepy/sun/fish`；测试用 monkeypatch 固定随机结果，不引入额外随机框架。
+- [x] RED：两个 screen-off owner 中任意一个未释放都保持 OFF；重复 acquire/release 幂等。
+- [x] RED：temporary wake 不删除 inhibit；多个 temporary wake 中一个到期不能提前熄灭另一个；全部结束且 inhibit 仍存在时回 OFF。
+- [x] RED：OFF 时 intent 可以更新 desired，但不发送显示 command；OFF→ON 后先恢复屏幕，再强制下发当前赢家。
+- [x] RED：adapter 写失败不伪造 `last_sent`，下一次 `async_force_recompute()` 能重试同一 desired。
+- [x] GREEN：实现最小 `display_state.py`；timer 使用 HA event-loop/现有 helper，不增加 dependency、不做轮询。
+- [x] 运行：`./scripts/test-ha.sh -q tests/homeassistant/custom_components/tivoo/test_display_state.py`。
+- [x] 运行 Ruff/format check、`python -m compileall homeassistant/custom_components/tivoo/display_state.py`、`git diff --check`。
+- [x] 更新 b0 报告，只记录真实 RED/GREEN 命令、结果和未接线边界。
 
 **Exit gate:** ESM-C01/C02/C09/C10/C15/C17/C18/C19/C20 的纯状态部分有自动化证据；生产 HA 行为尚未改变。
 
@@ -133,18 +136,18 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - `set_datetime/set_weather/set_alarm/set_memorial/set_audio_source/set_playstate/set_volume/set_brightness` 保持既有服务路径；没有已核实证据表明它们应被 P6.6 作为可恢复画面重放，因此不擅自改语义。
 
 **RED / GREEN tasks:**
-- [ ] RED：integration setup 创建一个 coordinator，unload 会 shutdown timer/gate；没有 host 时仍可正常 unload。
-- [ ] RED：启用 b1 后 idle 才开始；显式 `SetExpression/ShowText/ShowImage/PlayAnimation` 会取代 idle，后续系统 intent 清除后恢复该显式内容。
-- [ ] RED：上述 12 个 replayable display service 在 OFF 时只更新 desired、不写 7777；重新 ON 后发送 screen-on + 最新 explicit winner。
-- [ ] RED：countdown/timer/noise/sleep/game-control 在 OFF 时返回明确 `HomeAssistantError`，不得假装成功、不得排队到未来执行。
-- [ ] RED：两个内部 owner + compatibility bool 的组合不会被一次 `value=True` 误解锁。
-- [ ] RED：`spp_disconnected → spp_connected` 时，ON 强制重发 winner；OFF 只重申 off，不发送 idle/expression。
-- [ ] RED：SPP raw hint `0x69/0x96` 不触发屏幕恢复；只有 validated DEVICE_EVENT 触发。
-- [ ] GREEN：服务层只做“command 构造 + 提交 coordinator / 原路径分发”，不把 SPP payload 或状态机复制进 `services.py`。
-- [ ] GREEN：`__init__.py` 在 adapter/runtime 建好后创建 coordinator，负责 start/shutdown；不修改 ESP32 消息协议。
-- [ ] 运行聚焦测试：`test_display_state.py test_services.py test_transport.py`。
-- [ ] 运行现有 Tivoo service/MCP/protocol 回归，确认 27 个既有 Tool/Service 在 b4 前数量不变。
-- [ ] Ruff/compileall/`git diff --check`，更新 b1 报告。
+- [x] RED：integration setup 创建一个 coordinator，unload 会 shutdown timer/gate；没有 host 时仍可正常 unload。
+- [x] RED：启用 b1 后 idle 才开始；显式 `SetExpression/ShowText/ShowImage/PlayAnimation` 会取代 idle，后续系统 intent 清除后恢复该显式内容。
+- [x] RED：上述 12 个 replayable display service 在 OFF 时只更新 desired、不写 7777；重新 ON 后发送 screen-on + 最新 explicit winner。
+- [x] RED：countdown/timer/noise/sleep/game-control 在 OFF 时返回明确 `HomeAssistantError`，不得假装成功、不得排队到未来执行。
+- [x] RED：两个内部 owner + compatibility bool 的组合不会被一次 `value=True` 误解锁。
+- [x] RED：`spp_disconnected → spp_connected` 时，ON 强制重发 winner；OFF 只重申 off，不发送 idle/expression。
+- [x] RED：SPP raw hint `0x69/0x96` 不触发屏幕恢复；只有 validated DEVICE_EVENT 触发。
+- [x] GREEN：服务层只做“command 构造 + 提交 coordinator / 原路径分发”，不把 SPP payload 或状态机复制进 `services.py`。
+- [x] GREEN：`__init__.py` 在 adapter/runtime 建好后创建 coordinator，负责 start/shutdown；不修改 ESP32 消息协议。
+- [x] 运行聚焦测试：`test_display_state.py test_services.py test_transport.py`。
+- [x] 运行现有 Tivoo service/MCP/protocol 回归，确认 27 个既有 Tool/Service 在 b4 前数量不变。
+- [x] Ruff/compileall/`git diff --check`，更新 b1 报告。
 
 **Exit gate:** idle、explicit content、screen-off 和 SPP reconnect 已形成安全基础层；尚未接语音状态，也未新增 AI mood Tool。
 
@@ -177,16 +180,16 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - session end/error/follow-up timeout 走 `async_end_generation`，回 explicit/idle；旧 playback id 仍按 P6.5 规则忽略。
 
 **RED / GREEN tasks:**
-- [ ] RED：首次短噪声 <700 ms 不显示 listening；700 ms 后 random miss 不显示；random hit 显示；10 秒 cooldown 内不重复。
-- [ ] RED：KWS confirmed 无论 candidate 是否显示都 100% `question`；播放中的 side-KWS 新 generation 立即覆盖旧 speaking。
-- [ ] RED：`STT_START` 不显示 thinking；空/失败 STT_END 不显示 thinking；有效 STT_END 才显示。
-- [ ] RED：TTS_START/TTS_END 单独出现不能显示 speaking；真实 `AUDIO_STATE=playing` 才可以。
-- [ ] RED：completed → followup_wait；8 秒内 speech_start → 新 generation active-listening；follow-up timeout/session end → explicit/idle。
-- [ ] RED：旧 generation 的 delayed AUDIO_STATE/TTL/speech callback 不能影响新 turn。
-- [ ] RED：把显式 `Context` 传给 HA Pipeline 后，现有 P6.5 cancel/Stop/followup 测试行为不变。
-- [ ] GREEN：最小修改现有 `AudioSessionCoordinator`；不新增第二个音频状态机，不改 3/15/5/8 秒定时语义。
-- [ ] 运行 `test_assist_satellite.py` + `test_display_state.py`，再运行 P6.5 cancellation 聚焦回归。
-- [ ] Ruff/compileall/`git diff --check`，更新 b2 报告。
+- [x] RED：首次短噪声 <700 ms 不显示 listening；700 ms 后 random miss 不显示；random hit 显示；10 秒 cooldown 内不重复。
+- [x] RED：KWS confirmed 无论 candidate 是否显示都 100% `question`；播放中的 side-KWS 新 generation 立即覆盖旧 speaking。
+- [x] RED：`STT_START` 不显示 thinking；空/失败 STT_END 不显示 thinking；有效 STT_END 才显示。
+- [x] RED：TTS_START/TTS_END 单独出现不能显示 speaking；真实 `AUDIO_STATE=playing` 才可以。
+- [x] RED：completed → followup_wait；8 秒内 speech_start → 新 generation active-listening；follow-up timeout/session end → explicit/idle。
+- [x] RED：旧 generation 的 delayed AUDIO_STATE/TTL/speech callback 不能影响新 turn。
+- [x] RED：把显式 `Context` 传给 HA Pipeline 后，现有 P6.5 cancel/Stop/followup 测试行为不变。
+- [x] GREEN：最小修改现有 `AudioSessionCoordinator`；不新增第二个音频状态机，不改 3/15/5/8 秒定时语义。
+- [x] 运行 `test_assist_satellite.py` + `test_display_state.py`，再运行 P6.5 cancellation 聚焦回归。
+- [x] Ruff/compileall/`git diff --check`，更新 b2 报告。
 
 **Exit gate:** ESM-C03/C04/C05/C07/C08/C10/C21/C23 的语音侧已有自动化；AstrBot tooluse 尚未接入。
 
@@ -216,15 +219,15 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - `tool_call` 设置 `TOOLUSE/tooluse`；`tool_call_result` 只清 TOOLUSE，让仍存在的 THINKING 自动恢复。
 
 **RED / GREEN tasks:**
-- [ ] RED：SSE parser 对 tool_call/tool_call_result 产生内部 phase，但最终可见文本与原 P3 测试完全一致。
-- [ ] RED：普通 web/text Conversation（`satellite_id=None`）不 fire Tivoo phase event。
-- [ ] RED：Satellite 请求 event 包含真实 `ConversationInput.context.id`，不是 AstrBot session_id/run_id/message_id。
-- [ ] RED：错误 satellite_id、旧 context_id、session 已结束后的迟到 phase 都不能改 Tivoo screen。
-- [ ] RED：tool_call 覆盖 thinking；tool_call_result 后恢复 thinking；随后 speaking 继续按优先级覆盖。
-- [ ] RED：取消/异常 SSE 仍走原 P3 Stop owner，phase bridge 不调用 AstrBot API、不改变 stop 次数。
-- [ ] GREEN：只增加内部 phase side-channel；不得把 tool JSON/data 内容转发给 Tivoo，状态机只关心 phase 名。
-- [ ] 运行 P3 `test_sse.py test_conversation.py`、Tivoo assist/display 聚焦测试和 P3 cancellation 回归。
-- [ ] Ruff/compileall/`git diff --check`，更新 b3 报告。
+- [x] RED：SSE parser 对 tool_call/tool_call_result 产生内部 phase，但最终可见文本与原 P3 测试完全一致。
+- [x] RED：普通 web/text Conversation（`satellite_id=None`）不 fire Tivoo phase event。
+- [x] RED：Satellite 请求 event 包含真实 `ConversationInput.context.id`，不是 AstrBot session_id/run_id/message_id。
+- [x] RED：错误 satellite_id、旧 context_id、session 已结束后的迟到 phase 都不能改 Tivoo screen。
+- [x] RED：tool_call 覆盖 thinking；tool_call_result 后恢复 thinking；随后 speaking 继续按优先级覆盖。
+- [x] RED：取消/异常 SSE 仍走原 P3 Stop owner，phase bridge 不调用 AstrBot API、不改变 stop 次数。
+- [x] GREEN：只增加内部 phase side-channel；不得把 tool JSON/data 内容转发给 Tivoo，状态机只关心 phase 名。
+- [x] 运行 P3 `test_sse.py test_conversation.py`、Tivoo assist/display 聚焦测试和 P3 cancellation 回归。
+- [x] Ruff/compileall/`git diff --check`，更新 b3 报告。
 
 **Exit gate:** ESM-C06 与 stale phase 隔离通过；P3 用户可见回答/TTS/Stop 语义无变化。
 
@@ -259,15 +262,15 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - 不在仓库里伪造/替换 AstrBot Persona 全文；若生产 Persona 使用显式 Tool allowlist，b5 只补授权 `SetMood`，其余 Persona 配置保持原样。
 
 **RED / GREEN tasks:**
-- [ ] RED：14 个 mood 全接受；系统状态 preset 和未知 name 拒绝。
-- [ ] RED：无 active generation 时 Service/MCP 返回明确错误；active generation 时提交 5 秒 mood intent。
-- [ ] RED：mood 低于 active-listening/thinking/tooluse/speaking，高于 followup_wait/idle。
-- [ ] RED：mood 在 speaking 覆盖期间过期后，speaking 结束不得短暂补播旧 mood。
-- [ ] RED：MCP tools/list 从当前 27 个增加到 28 个且只有新增 `SetMood`；现有 27 个工具 schema/名称保持。
-- [ ] RED：MCP SetMood → HA Service → coordinator，不直接调用 raw adapter；SetExpression 仍走 explicit content。
-- [ ] GREEN：实现最小 service/tool，保持现有 P4 Tool delegation 结构。
-- [ ] 运行 LLM/MCP/service/display 聚焦测试，再运行全 Tivoo custom-component 测试。
-- [ ] Ruff/compileall/`git diff --check`，更新 b4 报告。
+- [x] RED：14 个 mood 全接受；系统状态 preset 和未知 name 拒绝。
+- [x] RED：无 active generation 时 Service/MCP 返回明确错误；active generation 时提交 5 秒 mood intent。
+- [x] RED：mood 低于 active-listening/thinking/tooluse/speaking，高于 followup_wait/idle。
+- [x] RED：mood 在 speaking 覆盖期间过期后，speaking 结束不得短暂补播旧 mood。
+- [x] RED：MCP tools/list 从当前 27 个增加到 28 个且只有新增 `SetMood`；现有 27 个工具 schema/名称保持。
+- [x] RED：MCP SetMood → HA Service → coordinator，不直接调用 raw adapter；SetExpression 仍走 explicit content。
+- [x] GREEN：实现最小 service/tool，保持现有 P4 Tool delegation 结构。
+- [x] 运行 LLM/MCP/service/display 聚焦测试，再运行全 Tivoo custom-component 测试。
+- [x] Ruff/compileall/`git diff --check`，更新 b4 报告。
 
 **Exit gate:** ESM-C11/C12/C13 完成；AI mood 生命周期由 HA 强制，不依赖 prompt 自律。
 
@@ -285,29 +288,29 @@ b0 只建立可测试核心，不接生产 runtime，避免出现“idle 已启�
 - Modify only if evidence requires: 项目阶段总览文档；不得为了“收尾”顺带增加主动播报/announce 功能
 
 **Local verification:**
-- [ ] 运行 `./scripts/test-ha.sh -q tests/homeassistant/custom_components/tivoo tests/homeassistant/custom_components/astrbot`。
-- [ ] 运行 P6.5 cancellation/Assist Pipeline 聚焦回归，确认 3/15/5/8 秒、KWS-only interruption 和真实 playback id 隔离不变。
-- [ ] Ruff check/format、compileall、pip check、`git diff --check`。
-- [ ] 合同逐项对照 ESM-C01–C23；预留的主动播报公开入口仍标 DEFERRED，不伪装成 PASS。
+- [x] 运行 `./scripts/test-ha.sh -q tests/homeassistant/custom_components/tivoo tests/homeassistant/custom_components/astrbot`。
+- [x] 运行 P6.5 cancellation/Assist Pipeline 聚焦回归，确认 3/15/5/8 秒、KWS-only interruption 和真实 playback id 隔离不变。
+- [x] Ruff check/format、compileall、pip check、`git diff --check`。
+- [x] 合同逐项对照 ESM-C01–C23；预留的主动播报公开入口仍标 DEFERRED，不伪装成 PASS。
 
 **NAS / real-device acceptance:**
-- [ ] 部署当前 HA Tivoo/AstrBot custom-component 代码并重启/重载 HA；不刷 ESP32 固件。
-- [ ] 确认 7777/7778 恢复 ESTABLISHED，AstrBot MCP tools/list 为 28 个 Tivoo tools；若当前 Persona 有 Tool allowlist，只新增授权 `tivoo__SetMood`。
-- [ ] 空闲观察至少两次 idle 切换；确认只在无高优先级 intent 时变化。
+- [x] 部署当前 HA Tivoo/AstrBot custom-component 代码并重启/重载 HA；不刷 ESP32 固件。
+- [x] 确认 7777/7778 恢复 ESTABLISHED，AstrBot MCP tools/list 为 28 个 Tivoo tools；若当前 Persona 有 Tool allowlist，只新增授权 `tivoo__SetMood`。
+- [x] 空闲观察至少两次 idle 切换；确认只在无高优先级 intent 时变化。
 - [ ] 真人完成一次：候选人声 → KWS confirmed → command/STT → thinking → TTS real `AUDIO_STATE=playing` → speaking → completed → followup_wait → session timeout → idle。candidate listening 的概率行为只记录观察，不用单次未出现判失败。
 - [ ] 让 AstrBot 执行一个不会改变 Tivoo 屏幕内容的真实工具调用（优先选择已验证且低风险的 volume/read-context 类调用），确认 tooluse 临时覆盖 thinking，tool result 后恢复 thinking。
 - [ ] 在 TTS 正在实际播放时说唤醒词，确认 `wake_confirmed` 立即覆盖 speaking，并且原 P6.5 音频打断/新命令仍正常。
 - [ ] 在 active voice generation 的 follow-up 窗口内，通过 HA Service 或 MCP 调用 `SetMood(happy)`：显示 5 秒 mood，随后回 followup/idle；再验证 neutral reply 不要求强制 mood。
-- [ ] 用两个内部 owner 的自动化测试/服务测试证明多 owner；生产上至少执行 compatibility `SetScreenPower off` 后触发 idle/语音/mood，确认均不能重新点亮，再 `on` 后恢复当前 winner。
-- [ ] 使用 NAS 已有 esptool/串口条件做一次**仅 reset、不刷写**的 ESP32 重启以产生真实 SPP reconnect：gate ON 时恢复 winner；另一次若成本可接受，在 gate OFF 状态重启确认仍保持 OFF。若硬件重启无法安全自动化，自动化 DEVICE_EVENT reconnect 测试必须 PASS，并把该真机子项记 GAP 而不是伪称通过。
-- [ ] 检查 HA/AstrBot/ESP32 日志无新增未处理异常、SPP reconnect loop 或重复 display storm；不依据 reverse bytes 宣称物理像素 ACK。
+- [x] 用两个内部 owner 的自动化测试/服务测试证明多 owner；生产上至少执行 compatibility `SetScreenPower off` 后触发 idle/语音/mood，确认均不能重新点亮，再 `on` 后恢复当前 winner。
+- [x] 使用 NAS 已有 esptool/串口条件做一次**仅 reset、不刷写**的 ESP32 重启以产生真实 SPP reconnect：gate ON 时恢复 winner；另一次若成本可接受，在 gate OFF 状态重启确认仍保持 OFF。若硬件重启无法安全自动化，自动化 DEVICE_EVENT reconnect 测试必须 PASS，并把该真机子项记 GAP 而不是伪称通过。
+- [x] 检查 HA/AstrBot/ESP32 日志无新增未处理异常、SPP reconnect loop 或重复 display storm；不依据 reverse bytes 宣称物理像素 ACK。
 
 **Exit gate:**
-- [ ] ESM-C01–C23 中所有非预留合同都有自动化证据。
+- [x] ESM-C01–C23 中所有非预留合同都有自动化证据。
 - [ ] 真实 Tivoo 至少通过 idle、KWS、thinking、tooluse、speaking、followup、screen-off、screen-on 恢复链路。
-- [ ] P6.5 音频链、P3 SSE/Stop、27 个旧 MCP Tool 全部回归；新增 SetMood 为第 28 个。
-- [ ] 未新增 ESP32 firmware/protocol，也未实现主动 announce/start-conversation。
-- [ ] 验收报告记录真实 PASS/GAP，随后单独本地提交。
+- [x] P6.5 音频链、P3 SSE/Stop、27 个旧 MCP Tool 全部回归；新增 SetMood 为第 28 个。
+- [x] 未新增 ESP32 firmware/protocol，也未实现主动 announce/start-conversation。
+- [x] 验收报告记录真实 PASS/GAP，随后单独本地提交。
 
 **Commit:** `test(p6.6b5): verify Tivoo expression state machine`
 

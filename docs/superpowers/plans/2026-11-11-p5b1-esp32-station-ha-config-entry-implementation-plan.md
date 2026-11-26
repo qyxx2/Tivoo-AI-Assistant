@@ -1,5 +1,8 @@
 # P5b1 ESP32 Station and HA Config Entry — Implementation Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** Use superpowers:executing-plans to implement this plan task-by-task. The authoritative P5 matrix owns all batch boundaries; this file is only the execution plan for its existing P5b1 row.
 
 **Goal:** Implement the P5b1 production ESP-IDF scaffold and the corresponding Home Assistant configuration/connection lifecycle without implementing later P5 protocol batches.

@@ -1,5 +1,8 @@
 # P5b3 — TCP 7777 control bridge, Classic SPP and bond persistence
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For the implementer:** Execute this plan in order with test-driven development. The P5 contract matrix remains authoritative. This batch does not change the existing P5b0–P5b4 boundaries and does not perform physical-board acceptance.
 
 **Goal:** Replace the 7777 placeholder with HA-to-Tivoo raw-control forwarding, implement the ESP32 stream parser and Classic SPP initiator, and retain native Bluedroid Bond Keys in NVS.

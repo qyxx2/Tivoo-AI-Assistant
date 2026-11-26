@@ -1,5 +1,8 @@
 # P6.5b4 HTTP TTS Proxy 消费端断开对照组实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > 使用 Superpowers 的执行计划与 TDD 工作方式；P6.5 patch 保持权威，b4 只补充该批次的测试证据。
 
 **Goal:** 区分“关闭已建立的 HTTP TTS Proxy GET”与“取消 Assist Pipeline”两种事件，观察 TTSCache producer、文本流、HA Wyoming writer 和 P7A 请求的生命周期。

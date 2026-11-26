@@ -1,5 +1,8 @@
 # P6 ESP32 ↔ Home Assistant — Batch Execution Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **状态：** P6b0–P6b6 已完成，P6-C01–C20 均有对应证据。P6b6 完成 clean IDF build、HA/ESP32 回归、C/Python golden test，并在真实 ESP32 上验收 GET_STATUS、SPP DEVICE_EVENT、ERROR、7777 单独断线及 HTTP reader/STOP。详情见 [P6 最终验收报告](../reports/2026-11-12-p6-acceptance-report.md)。Wi-Fi AP 关闭/恢复、生产 HTTPS 握手和真实 HA Pipeline 事件到 ESP32 的完整 TTS 联调仍 NOT RUN；当前工作区 HA 集成已部署并通过启动/双通道 smoke。MIC producer、decoder/playback 与 P6.5 取消传播属于后续阶段。
 > **工作分支：** `feature/p6-esp32-ha-bidirectional-communication`
 > **基线：** `a2b0127`（创建 P6 分支时的 main）

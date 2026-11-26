@@ -1,5 +1,8 @@
 # P6.7 预制语音等待提示音分批实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **P6.8 迁移说明（2026-11-18）：** 历史实施计划；不再按旧 HA/HTTP MP3 提示音、连说和无条件 follow-up 路线执行未勾选项。已有证据保留，本地提示音与声学 GAP 归 P6.8b6/b7/b10。 参见 [当前总体路线](2026-11-18-p6-8-s3-local-wake-roadmap.md)。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -57,11 +60,11 @@
 
 **Interfaces:** `/config/www/tivoo/prompts/ready_0{1..3}.mp3` → `/local/tivoo/prompts/ready_0{1..3}.mp3`；`audio/mpeg`、mono、32 kHz。不得以 `/api/tts_proxy/` 代替。
 
-- [ ] 读取当前合约和 HA frontend 静态路由源码，记录实际运行配置中是否启用了 frontend、`www` 是否存在；不得把 `/local` 路径当成已部署事实。
-- [ ] 制作三个短句文件“我在/在的/你说”：必须用当前生产 HA 实际绑定的同一 TTS Provider/模型/voice 参数一次性生成并固化；前后加入短静音避免掐头去尾；统一为 32 kHz mono MP3 且 ≤0.9 秒。不允许运行时 TTS，也不允许运用其它可用 TTS 引擎代替生产音色。
-- [ ] 先写元数据失败测试，针对缺文件、文件格式不符、时长异常；运行看到失败，再补齐素材直至 `ffprobe`/测试通过。
-- [ ] 在可运行的 HA HTTP 测试环境验证 `/local` 资源返回 200 + `audio/mpeg`，记录真实 URL 组成和 ESP32 所需无认证访问条件；生产 NAS 连通性由 b3 复核。
-- [ ] 运行聚焦测试、`git diff --check`，记录 b0 证据并只提交 b0 文件。
+- [x] 读取当前合约和 HA frontend 静态路由源码，记录实际运行配置中是否启用了 frontend、`www` 是否存在；不得把 `/local` 路径当成已部署事实。
+- [x] 制作三个短句文件“我在/在的/你说”：必须用当前生产 HA 实际绑定的同一 TTS Provider/模型/voice 参数一次性生成并固化；前后加入短静音避免掐头去尾；统一为 32 kHz mono MP3 且 ≤0.9 秒。不允许运行时 TTS，也不允许运用其它可用 TTS 引擎代替生产音色。
+- [x] 先写元数据失败测试，针对缺文件、文件格式不符、时长异常；运行看到失败，再补齐素材直至 `ffprobe`/测试通过。
+- [x] 在可运行的 HA HTTP 测试环境验证 `/local` 资源返回 200 + `audio/mpeg`，记录真实 URL 组成和 ESP32 所需无认证访问条件；生产 NAS 连通性由 b3 复核。
+- [x] 运行聚焦测试、`git diff --check`，记录 b0 证据并只提交 b0 文件。
 
 **门禁：** 三个文件均可由相同 MIME 的 HTTP 接口获取；只有文件存在和 FFprobe 正确而尚未完成 HTTP 检查不得宣告 b0 整体通过。
 
@@ -75,11 +78,11 @@
 
 **Interfaces:** `PromptSoundPlayer` 在 HA 拥有当前 `generation`/`playback_id`，持有 `Esp32ConnectionAdapter.async_send_tts_play` 与定向 `TYPE_AUDIO_STOP`；向 Satellite 提供 `async_request(generation)`、`async_cancel(generation)`、`async_yield_to_tts()`、`on_playback(playback_id, state) -> bool`（名称如实现有确切必要可调整，但须维持单 owner 语义）。正常 TTS 的 `TtsResourceManager._send_once` 调用传入的 *可选* awaitable 准备回调；原 `/api/tts_proxy/` 验证不变。
 
-- [ ] 先写 RED：无连续重复、三音之一、同入口去重、无素材/URL 失败不冒泡、当前/旧 generation 的状态隔离。
-- [ ] 以固定文件名和 HA 内部 URL 实现最小选择/下发逻辑；只给短文件分配自己的 UUID，不注册额外 TVIO message。
-- [ ] 先写 RED：提示音 `AUDIO_STATE` 不会进入 `turn.tts`、TTS 准备发送时有活动提示音必须先完成/定向停止并等待释放、旧 TTS 占用时不会播放提示音。
-- [ ] 只在必要的 TTS 发出位置接入一次可选协作回调；把输出端互斥集中在提示音 owner，避免分散出多个状态机。
-- [ ] 运行聚焦 + 既有 TTS resource/transport 测试；检查 `audio_busy` 不成为正常流程、取消不影响真实 TTS；`git diff --check`、报告、本地 commit。
+- [x] 先写 RED：无连续重复、三音之一、同入口去重、无素材/URL 失败不冒泡、当前/旧 generation 的状态隔离。
+- [x] 以固定文件名和 HA 内部 URL 实现最小选择/下发逻辑；只给短文件分配自己的 UUID，不注册额外 TVIO message。
+- [x] 先写 RED：提示音 `AUDIO_STATE` 不会进入 `turn.tts`、TTS 准备发送时有活动提示音必须先完成/定向停止并等待释放、旧 TTS 占用时不会播放提示音。
+- [x] 只在必要的 TTS 发出位置接入一次可选协作回调；把输出端互斥集中在提示音 owner，避免分散出多个状态机。
+- [x] 运行聚焦 + 既有 TTS resource/transport 测试；检查 `audio_busy` 不成为正常流程、取消不影响真实 TTS；`git diff --check`、报告、本地 commit。
 
 **门禁：** 可在纯 HA 单元/集成测试独立证明播放 owner 和真实 TTS 互斥，未接语音事件也不得让测试误触发声音。
 
@@ -93,11 +96,11 @@
 
 **Interfaces:** `WAKE_WORD_END` 确认 → 请求提示音；`_open_followup()` → 请求提示音；新 `confirmed` turn 在 `_run_turn` 中 **旧轮清理后**、新 STT 启动时请求提示音。所有请求异步，不将播放完成作为收音/计时前置条件。复用已注入的播放状态监听，优先将对应提示音 ID 路由给 owner，再处理真实 TTS ID。
 
-- [ ] 先写 RED：初次 KWS 命中提示音一次，候选语音/重复事件不播放；5 秒 watchdog 不改变，命令在提示音中间立即被消费。
-- [ ] 先写 RED：TTS completed → follow-up 8 秒提示音一次；提示音 completed 不产生额外 follow-up；speech_start 立即开始免 KWS STT；8 秒到期关闭上传。
-- [ ] 先写 RED：side KWS interruption 旧播放清理 6 秒，旧 TTS 定向停音之后发提示音；新 STT 接收 handoff PCM，5 秒从新 STT_START 开始；过期 generation 不播。
-- [ ] 实现三处最小事件接线与提示音取消；仅取消提示音自身 ID，绝不通过 VAD 停正常 TTS 或推迟 STT；错误只记录并跳过。
-- [ ] 运行 P6.5/P6.6 关键回归，包括 `AUDIO_STATE` 迟到、正常回答完成、P6.6 表情门控；`git diff --check`、报告、本地 commit。
+- [x] 先写 RED：初次 KWS 命中提示音一次，候选语音/重复事件不播放；5 秒 watchdog 不改变，命令在提示音中间立即被消费。
+- [x] 先写 RED：TTS completed → follow-up 8 秒提示音一次；提示音 completed 不产生额外 follow-up；speech_start 立即开始免 KWS STT；8 秒到期关闭上传。
+- [x] 先写 RED：side KWS interruption 旧播放清理 6 秒，旧 TTS 定向停音之后发提示音；新 STT 接收 handoff PCM，5 秒从新 STT_START 开始；过期 generation 不播。
+- [x] 实现三处最小事件接线与提示音取消；仅取消提示音自身 ID，绝不通过 VAD 停正常 TTS 或推迟 STT；错误只记录并跳过。
+- [x] 运行 P6.5/P6.6 关键回归，包括 `AUDIO_STATE` 迟到、正常回答完成、P6.6 表情门控；`git diff --check`、报告、本地 commit。
 
 **门禁：** 三入口、重复/过期、并发/打断测试通过；不以模拟声学代替 b3 真人测试。
 
@@ -105,12 +108,12 @@
 
 **Files:** b0 的素材副本部署到 NAS HA `/config/www/tivoo/prompts/`；同步 HA 集成变更；记录 `docs/superpowers/reports/2026-11-16-p6-7b3-device-acceptance.md`；仅在验收结论需要时更新 README/矩阵状态，不额外扩展代码。
 
-- [ ] 在 Ubuntu 运行聚焦测试与 `scripts/test-ha.sh` 的必要回归；确认本地 `git diff --check`。仅部署 P6.7 相关 HA 文件与三个素材，不默认改 ESP32 固件。
-- [ ] 从 ESP32 可达的 HA 内网地址 GET 三个 MP3，检查 HTTP 200、`audio/mpeg`、真实播放 ID、音频解码、DAC 出声与 `completed`；记录首声延迟、设备 `audio_busy`、断连时静默降级。
+- [x] 在 Ubuntu 运行聚焦测试与 `scripts/test-ha.sh` 的必要回归；确认本地 `git diff --check`。仅部署 P6.7 相关 HA 文件与三个素材，不默认改 ESP32 固件。
+- [x] 从 ESP32 可达的 HA 内网地址 GET 三个 MP3，检查 HTTP 200、`audio/mpeg`、真实播放 ID、音频解码、DAC 出声与 `completed`；记录首声延迟、设备 `audio_busy`、断连时静默降级。
 - [ ] 真人验证首次“大肥鱼”命中、唤醒词后立即连说命令、正常回答结束 8 秒 follow-up、对话中再次 KWS 打断并接命令；每轮提示音只播一次，提示音和实际 TTS 不重叠。
 - [ ] 在“我在”“在的”“你说”期间直接讲话，检查首字、STT 输出与回声自触发；覆盖不同音量、距离与提示音连续轮次，比较 RX overruns、reference underrun/misalignment、AFE/VAD、MIC 上传和 stop/playing/completed 日志。
 - [ ] 对照 PR-C01–C21 逐项给出 PASS/GAP/FAIL，明确标出 P65-A13 仍缺或已有的现场证据。只有声学闭环真正通过才可写 P6.7 全部完成。
-- [ ] 验证部署文件和开发分支相符、工作区干净；按需本地提交验收报告。除非用户另行要求，不 push、merge main。
+- [x] 验证部署文件和开发分支相符、工作区干净；按需本地提交验收报告。除非用户另行要求，不 push、merge main。
 
 ## 6. 执行约定
 

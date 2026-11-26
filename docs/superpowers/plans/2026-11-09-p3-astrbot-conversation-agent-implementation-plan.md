@@ -1,5 +1,8 @@
 # P3 AstrBot Conversation Agent Implementation Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > 状态：P3b0–P3b5 已完成；P3b6 自动化验收通过（92 tests）；HA 安装、实体选择、真实 Web 文字对话和跨窗口 session 连续性已现场通过。HA Core 重启、24h 空闲轮换、真实取消/Stop owner 校验与 API Key 轮换仍待验收，P3 整体暂不关闭。
 > 工作分支：feature/p3-astrbot-conversation-agent
 > 基线：main / c754f5a22727fa0ded6a2fd0c309c967b162097d

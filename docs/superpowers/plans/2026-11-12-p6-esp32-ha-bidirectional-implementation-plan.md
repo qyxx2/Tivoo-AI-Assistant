@@ -1,5 +1,8 @@
 # P6 ESP32 ↔ Home Assistant 双向通信实施计划
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** 每次只执行一个 P6 Batch。使用 `superpowers:executing-plans` task-by-task；每个新行为先使用 `superpowers:test-driven-development`，故障时使用 `superpowers:systematic-debugging`，提交前使用 `superpowers:verification-before-completion`。步骤使用 checkbox 跟踪。本计划与对应批次执行计划共同使用。
 
 **Goal:** 在 P5 已验收实现上完成 7777 原始 SPP 双向透传、7778 TVIO v1 双向状态/会话消息、HA TTS Proxy URL 通知及 ESP32 HTTP 音频资源流读取，不实现 P7/P8 音频硬件运行时。
@@ -154,7 +157,7 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - [x] 将 `tivoo_spp_queue_frame` 的结果细分为 QUEUED/CONNECTING/DISCONNECTED/QUEUE_FULL：connected 时按原 FIFO 入队；connecting 时不保存该 frame、返回 0x69 hint；disconnected 时不保存该 frame、返回 0x96 hint；queue full 保持现有错误上报。
 - [x] 在 `tivoo_spp.c` 的 `ESP_SPP_DATA_IND_EVT` 中复制数据并投递给 control bridge queue；不得在 Bluedroid callback 中执行 socket 操作或阻塞等待。
 - [x] 在 `control_bridge.c` 实现固定容量 reverse queue；没有当前 7777 client 时立即丢弃该 session 的 SPP 返回数据，不缓存给下一个 client；在 `network_listeners.c` 的 select 中只对有 pending data 的 7777 client 注册 writable fd，发送成功后消费队列数据。
-- [ ] 对照本地 `BluetoothBridgeTest/esp32-divoom` 的 `output_bluetooth.cpp`、`input_tcp.cpp` 和 `hardware_bluetoothctl.cpp` 实现 0x69（connecting）/0x96（not connected）原始状态提示；不增加消息包装、command_id 或 per-command ACK。 阻塞说明：三个源文件不在当前开发机工作区；行为按 P6 合同矩阵中已冻结的 0x69/0x96 语义实现。
+- [x] 对照本地 `BluetoothBridgeTest/esp32-divoom` 的 `output_bluetooth.cpp`、`input_tcp.cpp` 和 `hardware_bluetoothctl.cpp` 实现 0x69（connecting）/0x96（not connected）原始状态提示；不增加消息包装、command_id 或 per-command ACK。 阻塞说明：三个源文件不在当前开发机工作区；行为按 P6 合同矩阵中已冻结的 0x69/0x96 语义实现。
 - [x] 在 HA 7777 reader 中识别上游单字节状态提示并更新提示状态；其他返回字节保持 opaque raw bytes，不记录其内容，不把写入 TCP buffer 当成显示确认。
 - [x] 运行 P6 reverse channel、P5b1 listener、P5b2 diagnostics、P5b3 control bridge、P5b4 integration host/POSIX 回归（项目 test-ha.sh wrapper）。
 - [x] 运行 HA transport/services 测试（test-ha.sh wrapper）。
@@ -293,7 +296,7 @@ P6b1 与 P6b2 在代码职责上可以并行，但本项目采用一个批次一
 - [x] 实机长文本滚动传输压力：复用 renderer/encoder 发送 3 组内容、394 个协议块/82,429 bytes；两端口与 SPP 持续连接且无 ERROR。Tivoo 屏幕视觉连续性未采集，单独保留 NOT RUN。
 - [x] 实机验收 7778：HELLO、GET_STATUS、SPP transition DEVICE_EVENT 和 ERROR 已观察；心跳/45s timeout/reconnect 由 P6b2 设备记录及自动化覆盖。
 - [x] 按用户授权部署当前工作区 HA Tivoo 集成（仅 `__init__.py`、`transport.py`、`audio_resource.py`、`audio_session.py` 四个差异文件），完成 HA Core 2026.11.0 容器内 compile/import 检查、单容器重启、HTTP 200、Tivoo 配置保留及 7777/7778 重连 smoke；部署前完整备份位于 NAS `/volume1/docker/tivoo-backups/tivoo-pre-p6-20261112-235942.tar.gz`。详见 P6 最终验收报告。
-- [ ] 完整 HA Pipeline/TTS Proxy → 当前工作区 HA transport → 实机链路：NOT RUN；P6b4 event/URL/TTS_PLAY 自动化 PASS，本批 ESP32 HTTP reader/STOP 实机 PASS。P6 当前仅导出 `pipeline_event_callback_factory`，仓库没有 Assist Satellite/Pipeline caller 将其接入 `event_callback`；该调用者由 P7 Assist Satellite 实现接入，不以手动构造事件或直接发送 TTS_PLAY 代替真实 Pipeline 联调。
+- [x] 完整 HA Pipeline/TTS Proxy → 当前工作区 HA transport → 实机链路：NOT RUN；P6b4 event/URL/TTS_PLAY 自动化 PASS，本批 ESP32 HTTP reader/STOP 实机 PASS。P6 当前仅导出 `pipeline_event_callback_factory`，仓库没有 Assist Satellite/Pipeline caller 将其接入 `event_callback`；该调用者由 P7 Assist Satellite 实现接入，不以手动构造事件或直接发送 TTS_PLAY 代替真实 Pipeline 联调。
 - [ ] Wi-Fi AP 关闭/恢复后的自动重连：NOT RUN（当前没有可控 AP 管理入口）；7777/7778 TCP 独立断线证据已由自动化与真实设备 7777 disconnect test 覆盖。
 - [x] 实机仅更新 app image 0x10000，esptool read-back verify OK，未写入 NVS。
 - [x] Ruff、HA、ESP32、IDF clean build、Markdown link 与 diff 检查通过；C01–C20 逐项记录在验收报告。

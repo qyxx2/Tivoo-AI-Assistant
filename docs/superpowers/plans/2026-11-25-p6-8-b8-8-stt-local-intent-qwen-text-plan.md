@@ -1,5 +1,8 @@
 # P6.8 B8.8 STT Local-Intent Qwen Text Fallback Implementation Plan
 
+> **ARCHIVED / 历史轨迹（2026-11-26）**：本计划已退出活动开发，不再是 backlog、发布门禁或后续执行入口。`[x]` 仅表示已有实现、测试、报告或部署证据；未勾选项表示当时未执行、被后续架构替代，或因复现成本/发生概率不值得主动验收。若实际使用暴露问题，再建立专用分支与针对性计划处理。当前文档入口见 [文档地图](../../README.md)。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将当前 P6.8 的本地语音输入改为 `S3 PCM → Sherpa device-endpoint STT → HA local-first → local miss 才提交 Qwen 文本`；本地 typed action 由 S3 固化成功/失败 ACK 低延迟反馈，同时保持现有 Qwen 音频输出链不变。
@@ -50,7 +53,7 @@
 - Consumes: S3 `MIC_SESSION_START(sample_rate=16000, channels=1, sample_format=s16le)`、现有 `AudioSessionManager.audio_subscription()`。
 - Produces: B8.8 的回归保护；不新增生产接口。
 
-- [ ] **Step 1: 写 PCM 直通 characterization test**
+- [x] **Step 1: 写 PCM 直通 characterization test**
 
 在 `test_p68_real_pipeline.py` 增加 `test_b88_s3_pcm_reaches_device_endpoint_byte_exact()`，使用现有 local session/真实 HA Core + fake Wyoming endpoint fixture，断言：
 
@@ -63,7 +66,7 @@ assert stt_vad_events == []
 
 同时断言测试源 PCM 直接由现有 `async_push_pcm()` / `audio_subscription()` 流过，不引入新的项目级 PCM converter fixture。
 
-- [ ] **Step 2: 跑 RED/characterization 基线**
+- [x] **Step 2: 跑 RED/characterization 基线**
 
 Run:
 ```bash
@@ -72,11 +75,11 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_p68_real_pipeline.py 
 
 Expected: 既有 device-endpoint 断言 PASS；若新测试因当前 Qwen 分支绕过 Sherpa 而 FAIL，失败必须明确落在“Qwen local branch 未进入 Wyoming”，不是格式错误。
 
-- [ ] **Step 3: 增加 Qwen 输出冻结回归组**
+- [x] **Step 3: 增加 Qwen 输出冻结回归组**
 
 在 `test_qwen_realtime.py` 用现有 fixture 增加/归并一组 `test_b88_output_path_baseline_unchanged()`，固定当前行为：`audio.delta` → 单个 `QwenPcmStream` → 当前 24/32 kHz 转 32 kHz mono → 单个 `TTS_PLAY` → matching playback terminal。测试只锁现有行为，不改变生产代码。
 
-- [ ] **Step 4: 跑输出基线**
+- [x] **Step 4: 跑输出基线**
 
 Run:
 ```bash
@@ -85,7 +88,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py
 
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/homeassistant/custom_components/tivoo/test_p68_real_pipeline.py tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py
@@ -104,7 +107,7 @@ git commit -m "test(p6.8): lock b8.8 pcm and output baselines"
 - Produces: `QwenRealtimeBridge.async_run_text(owner: QwenTurnOwner, text: str, on_event: Callable[[dict], None], *, on_result: Callable[[QwenResult], None] | None = None) -> QwenResult`。
 - Wire contract: `conversation.item.create` with `parts:[{type:"text", text:<non-empty transcript>}]`。
 
-- [ ] **Step 1: 写 handshake/text-input RED tests**
+- [x] **Step 1: 写 handshake/text-input RED tests**
 
 新增测试覆盖：
 
@@ -121,7 +124,7 @@ assert not any(e["type"] == "response.create" for e in client_events)
 
 保留当前 `input.audio` capability，不在 B8.8 顺手删除。
 
-- [ ] **Step 2: 跑 RED**
+- [x] **Step 2: 跑 RED**
 
 Run:
 ```bash
@@ -130,7 +133,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py -k '
 
 Expected: FAIL because `input.text` / `async_run_text` 尚不存在。
 
-- [ ] **Step 3: 实现最小 text sender**
+- [x] **Step 3: 实现最小 text sender**
 
 在 `QwenRealtimeBridge` 增加：
 
@@ -153,7 +156,7 @@ async def async_run_text(
 - 不发 `input_audio_buffer.append`、tail silence 或客户端 `response.create`；
 - 抽取最小公共 response-loop 供 audio/text 两条入口共享时，**不得改动** `QwenPcmStream`、`_handle()`、`_open_output()` 和 playback terminal 语义。
 
-- [ ] **Step 4: 跑 GREEN + 现有 audio 回归**
+- [x] **Step 4: 跑 GREEN + 现有 audio 回归**
 
 Run:
 ```bash
@@ -162,7 +165,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py
 
 Expected: PASS，包括原 audio-input tests。
 
-- [ ] **Step 5: 用锁定 v2.1.0 Gateway probe 验证真实事件**
+- [x] **Step 5: 用锁定 v2.1.0 Gateway probe 验证真实事件**
 
 若现有 `gateway_probe.mjs` 没有 text turn，用它的同一连接方式增加一次 `conversation.item.create` probe，确认 server 接受 `input.text`、产生 `turn.started` / user `transcript.final` / response lifecycle；probe 不连接真实 S3、不播放物理音频。
 
@@ -173,7 +176,7 @@ pytest -q tests/integration/qwen_realtime/test_probe.py
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add homeassistant/custom_components/tivoo/qwen_realtime.py tests/homeassistant/custom_components/tivoo/test_qwen_realtime.py tests/integration/qwen_realtime
@@ -191,7 +194,7 @@ git commit -m "feat(p6.8): add qwen text turn input"
 - Consumes: `TivooAssistSatellite.validate_local_pipeline() -> tuple[str, str]`、`AssistSatelliteEntity.async_accept_pipeline_from_satellite(..., start_stage=STT, end_stage=STT)`、现有 `audio_subscription()`。
 - Produces: `_Turn.transcript: str | None`；只有正常 drain 后的 `STT_END.stt_output.text` 可赋值。
 
-- [ ] **Step 1: 写 Qwen-present 仍走 Sherpa 的 RED tests**
+- [x] **Step 1: 写 Qwen-present 仍走 Sherpa 的 RED tests**
 
 新增/调整测试：即使 `entity.qwen_bridge is not None`，local turn 也必须先：
 1. validate dedicated local pipeline；
@@ -208,7 +211,7 @@ assert qwen_audio_append_count == 0
 assert qwen_text_create_count == 0
 ```
 
-- [ ] **Step 2: 跑 RED**
+- [x] **Step 2: 跑 RED**
 
 Run:
 ```bash
@@ -217,7 +220,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tes
 
 Expected: FAIL because current Qwen branch直接调用 `qwen.async_run(..., audio, ...)`。
 
-- [ ] **Step 3: 改 local turn 的输入 owner**
+- [x] **Step 3: 改 local turn 的输入 owner**
 
 在 `_start_turn()` 中，local 模式首先使用现有 `PipelineTtsEvents` 作为 STT/local-response owner；不要在 turn 创建时立即把 PCM owner 设为 Qwen。
 
@@ -227,7 +230,7 @@ Expected: FAIL because current Qwen branch直接调用 `qwen.async_run(..., audi
 - 不对 `audio` 做新的 project-level reframe；
 - 保持现有 ready/on_eof、`local_input_drained()`、45 s finalize watchdog、supersede/cancel 语义。
 
-- [ ] **Step 4: 在 `on_pipeline_event()` 记录 transcript**
+- [x] **Step 4: 在 `on_pipeline_event()` 记录 transcript**
 
 给 `_Turn` 增加：
 
@@ -246,7 +249,7 @@ transcript: str | None = None
 
 才设置 `turn.transcript=text.strip()` 与 `turn.valid_stt=True`，并立即进入现有 THINKING 显示。Qwen user transcript 不再设置 `valid_stt`。
 
-- [ ] **Step 5: 覆盖取消/空文本/早 EOF**
+- [x] **Step 5: 覆盖取消/空文本/早 EOF**
 
 测试至少覆盖 disconnect、superseded、empty transcript、provider error、unexpected HA VAD；这些情况均：
 
@@ -255,7 +258,7 @@ assert turn.transcript is None
 assert qwen_text_create_count == 0
 ```
 
-- [ ] **Step 6: 跑 GREEN**
+- [x] **Step 6: 跑 GREEN**
 
 Run:
 ```bash
@@ -264,7 +267,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tes
 
 Expected: PASS。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add homeassistant/custom_components/tivoo/assist_satellite.py tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tests/homeassistant/custom_components/tivoo/test_p68_real_pipeline.py
@@ -286,7 +289,7 @@ git commit -m "feat(p6.8): restore sherpa stt before qwen"
   - `continue_conversation: bool`
 - Produces: `AudioSessionCoordinator._async_route_local_transcript(turn: _Turn) -> LocalRouteResult`。
 
-- [ ] **Step 1: 写 local hit/miss RED tests**
+- [x] **Step 1: 写 local hit/miss RED tests**
 
 覆盖：
 - sentence trigger hit；
@@ -313,7 +316,7 @@ assert result.handled is True
 assert qwen_text_create_count == 0
 ```
 
-- [ ] **Step 2: 跑 RED**
+- [x] **Step 2: 跑 RED**
 
 Run:
 ```bash
@@ -322,7 +325,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py -k 
 
 Expected: FAIL because local router 尚不存在。
 
-- [ ] **Step 3: 实现最小 local router**
+- [x] **Step 3: 实现最小 local router**
 
 在 `assist_satellite.py` 使用 HA 2026.11.0 已核对 API：
 - `conversation.async_prepare_intents(hass, language)`
@@ -339,20 +342,20 @@ Expected: FAIL because local router 尚不存在。
 
 不要调用 `conversation.async_converse()`；因此 AstrBot/其它 LLM 不可能在 B8.8 local router 中先执行一次。
 
-- [ ] **Step 4: local hit 复用现有 HA TTS owner（历史 Task 4 行为；typed action 由 Task 4.1 覆盖）**
+- [x] **Step 4: local hit 复用现有 HA TTS owner（历史 Task 4 行为；typed action 由 Task 4.1 覆盖）**
 
 Task 4 实施时，local hit 有 speech 使用当前 dedicated pipeline 的既有 TTS 配置执行 **TTS-only** HA Pipeline；不得重新跑 STT/Intent。使用 HA `PipelineRun` + `PipelineInput(tts_input=..., start_stage=PipelineStage.TTS, end_stage=PipelineStage.TTS)`，event callback 继续交给当前 `PipelineTtsEvents`。
 
 **最终 B8.8 行为以 Task 4.1 为准：** 只有 `query_answer` 与 sentence trigger 保留这条动态 TTS 路径；`action_done/partial_action_done/error` 改走 S3 固化 ACK。不要重开 Task 4 来实现 ACK。
 
-- [ ] **Step 5: 锁定 local/Qwen playback 互斥**
+- [x] **Step 5: 锁定 local/Qwen playback 互斥**
 
 新增断言：
 - local hit：`turn.tts` 仍是 local `PipelineTtsEvents`，Qwen bridge 没有 owner/user turn；
 - local miss：本 Task 只返回 miss，不播放 HA TTS；
 - 同一 session 不得出现两个不同 playback owner。
 
-- [ ] **Step 6: 跑 GREEN**
+- [x] **Step 6: 跑 GREEN**
 
 Run:
 ```bash
@@ -361,7 +364,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tes
 
 Expected: PASS。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add homeassistant/custom_components/tivoo/assist_satellite.py tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tests/homeassistant/custom_components/tivoo/test_p68_real_pipeline.py
@@ -400,7 +403,7 @@ git commit -m "feat(p6.8): route sherpa text through ha local intents"
 - Wire payload: `{"session_id":"<uuid>","playback_id":"<uuid>","result":"success|failure"}`。
 - Device terminal: 继续使用既有 `TYPE_AUDIO_STATE` + 同一 `playback_id` 报 `playing/completed/failed`。
 
-- [ ] **Step 1: 写 typed-result 分类 RED tests**
+- [x] **Step 1: 写 typed-result 分类 RED tests**
 
 在 `test_qwen_satellite.py` 固定最终路由：
 
@@ -419,7 +422,7 @@ local miss          -> no local audio, later Task 5 Qwen fallback
 - query/sentence trigger 不发送 `TYPE_LOCAL_ACK_PLAY`；
 - 单 turn 只能出现 ACK / dynamic TTS / Qwen 中的一个 owner。
 
-- [ ] **Step 2: 跑 classification RED**
+- [x] **Step 2: 跑 classification RED**
 
 Run:
 ```bash
@@ -428,7 +431,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py -k 
 
 Expected: FAIL because `LocalRouteResult` 尚未保留 `response_type`，也没有 local ACK transport。
 
-- [ ] **Step 3: 固化两条 flash 语音资产**
+- [x] **Step 3: 固化两条 flash 语音资产**
 
 新增：
 - `local_success_01.mp3`：语义/文案“搞定”；
@@ -443,7 +446,7 @@ Expected: FAIL because `LocalRouteResult` 尚未保留 `response_type`，也没�
 - CMake `OBJECT_DEPENDS` 加入两条生成 PCM；
 - 两条 ACK asset 属于必需资产：缺失、哈希或长度不符必须 build fail，不允许静默使用旧 PCM；原 ready/followup 的既有缺失策略保持，不顺手改动。
 
-- [ ] **Step 4: 写并跑 asset RED/GREEN**
+- [x] **Step 4: 写并跑 asset RED/GREEN**
 
 扩展 `test_prompt_assets.py` 与 ESP prompt host test，断言两条资产：
 - 可确定性重建；
@@ -459,7 +462,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_prompt_assets.py test
 
 Expected: PASS after asset/generator changes.
 
-- [ ] **Step 5: 增加 `TYPE_LOCAL_ACK_PLAY = 0x28` transport contract**
+- [x] **Step 5: 增加 `TYPE_LOCAL_ACK_PLAY = 0x28` transport contract**
 
 HA 与 S3 同步定义 `0x28`；项目现状已确认该值未占用。
 
@@ -477,7 +480,7 @@ S3 parser 必须拒绝：
 - 已绑定其它 playback 或已终止 turn；
 并且这些失败不得触发 Qwen 或 service 重试。
 
-- [ ] **Step 6: 跑 transport RED/GREEN**
+- [x] **Step 6: 跑 transport RED/GREEN**
 
 Run:
 ```bash
@@ -486,7 +489,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_transport.py tests/es
 
 Expected: PASS。
 
-- [ ] **Step 7: S3 复用现有 short-prompt/audio owner 播 ACK**
+- [x] **Step 7: S3 复用现有 short-prompt/audio owner 播 ACK**
 
 实现约束：
 - diagnostic RX 只登记/授权 ACK，不直接向 I2S 写 PCM；
@@ -498,7 +501,7 @@ Expected: PASS。
 - ready/followup prompt 仍不发送 ordinary `AUDIO_STATE`，不要改变其合同；
 - 不改 audio_output_manager 的 buffer、DMA、SRC、core/priority 或 AFE 协调算法。
 
-- [ ] **Step 8: 跑 S3 owner/terminal GREEN**
+- [x] **Step 8: 跑 S3 owner/terminal GREEN**
 
 Run:
 ```bash
@@ -512,7 +515,7 @@ Expected: PASS，且覆盖：
 - 同 turn 不双播；
 - 原 ready/followup prompt 终态行为不变。
 
-- [ ] **Step 9: HA 按 `IntentResponseType` 选择反馈**
+- [x] **Step 9: HA 按 `IntentResponseType` 选择反馈**
 
 在 `_async_route_local_transcript()` 保存 typed intent 的 `response_type`。
 
@@ -523,7 +526,7 @@ Expected: PASS，且覆盖：
 - sentence trigger → 保持动态 TTS；
 - action ACK 的 `turn` 记录该 playback_id，并以匹配 `AUDIO_STATE` 的真实 terminal 决定 response completion / follow-up，不用 sleep 猜时长。
 
-- [ ] **Step 10: 跑 HA lifecycle GREEN**
+- [x] **Step 10: 跑 HA lifecycle GREEN**
 
 Run:
 ```bash
@@ -541,7 +544,7 @@ Expected: PASS，尤其：
 - ACK `failed/stopped/interrupted` fail closed，不 fallback Qwen/TTS；
 - follow-up 若由 HA 明确授权，仍等待匹配 ACK physical completion 后才开放。
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add \
@@ -579,7 +582,7 @@ git commit -m "feat(p6.8): add local action result acknowledgements"
 - Consumes: Task 2 `QwenRealtimeBridge.async_run_text(...)`、Task 4/4.1 `LocalRouteResult` 与 local response ownership。
 - Produces: local-miss handoff；必要时新增 `QwenRealtimeBridge.async_release_retained(parent_session_id: str) -> None`，只用于 follow-up local hit 后释放上一轮 retained socket。
 
-- [ ] **Step 1: 写 local-miss text handoff RED test**
+- [x] **Step 1: 写 local-miss text handoff RED test**
 
 固定一次 local miss 的顺序：
 
@@ -595,7 +598,7 @@ assert qwen_client_response_create_count == 0
 
 之后模拟当前 `tool.call` / `audio.delta` / terminal-status / physical playback，断言现有 Qwen 输出行为保持 Task 1 基线。
 
-- [ ] **Step 2: 跑 RED**
+- [x] **Step 2: 跑 RED**
 
 Run:
 ```bash
@@ -604,7 +607,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tes
 
 Expected: FAIL because coordinator 尚未从 local miss 切换到 `async_run_text()`。
 
-- [ ] **Step 3: 在 local miss 时单次切换 owner**
+- [x] **Step 3: 在 local miss 时单次切换 owner**
 
 local STT owner 完成且 router 返回 miss 后：
 1. 确认 `turn.transcript` 仍属于当前 generation；
@@ -615,7 +618,7 @@ local STT owner 完成且 router 返回 miss 后：
 
 不得重新打开 `audio_subscription()` 或读取历史 PCM。
 
-- [ ] **Step 4: 更新 Qwen event 语义**
+- [x] **Step 4: 更新 Qwen event 语义**
 
 删除/失效当前“Qwen user `transcript.final` → `turn.valid_stt=True`”逻辑。Qwen event callback 只保留：
 - tool.call → TOOLUSE；
@@ -624,7 +627,7 @@ local STT owner 完成且 router 返回 miss 后：
 
 THINKING 已由 Task 3 的 Sherpa final transcript 触发。
 
-- [ ] **Step 5: 覆盖 follow-up 两条分支**
+- [x] **Step 5: 覆盖 follow-up 两条分支**
 
 **follow-up local miss：**
 - 新 MIC UUID / 新 HA Context；
@@ -643,7 +646,7 @@ async def async_release_retained(self, parent_session_id: str) -> None
 ```
 它只核对匹配的 `_retained_parent` 后关闭 retained socket/task，不触碰音频输出函数。
 
-- [ ] **Step 6: 覆盖 cancellation/supersede**
+- [x] **Step 6: 覆盖 cancellation/supersede**
 
 分别在 STT、local-route 后、text submit 后、tool call、audio generation/playback 阶段触发新 wake；断言旧 generation：
 - 不新增 local side effect；
@@ -651,7 +654,7 @@ async def async_release_retained(self, parent_session_id: str) -> None
 - late Qwen events 不播放；
 - 定向 stop/close 继续沿用现有 lifecycle。
 
-- [ ] **Step 7: 跑 GREEN**
+- [x] **Step 7: 跑 GREEN**
 
 Run:
 ```bash
@@ -660,7 +663,7 @@ pytest -q tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tes
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add homeassistant/custom_components/tivoo/assist_satellite.py homeassistant/custom_components/tivoo/qwen_realtime.py tests/homeassistant/custom_components/tivoo/test_qwen_satellite.py tests/homeassistant/custom_components/tivoo/test_qwen_lifecycle.py
@@ -678,7 +681,7 @@ git commit -m "feat(p6.8): fallback local misses to qwen text"
 - Consumes: Tasks 1-5 complete implementation.
 - Produces: B8.8 software/deployment acceptance evidence; no new runtime API.
 
-- [ ] **Step 1: 跑 HA/Qwen 定向回归**
+- [x] **Step 1: 跑 HA/Qwen 定向回归**
 
 Run:
 ```bash
@@ -693,7 +696,7 @@ pytest -q \
 
 Expected: 0 failures。
 
-- [ ] **Step 2: 跑 Sherpa device-endpoint 回归**
+- [x] **Step 2: 跑 Sherpa device-endpoint 回归**
 
 Run the existing Sherpa/Wyoming focused suite used by P6.8 B5；至少确认：
 - 16 kHz / 16-bit / mono；
@@ -703,7 +706,7 @@ Run the existing Sherpa/Wyoming focused suite used by P6.8 B5；至少确认：
 
 Expected: 0 failures。
 
-- [ ] **Step 3: 证明 S3 与输出链未被 B8.8 改动**
+- [x] **Step 3: 证明 S3 与输出链未被 B8.8 改动**
 
 Run:
 ```bash
@@ -728,7 +731,7 @@ git diff <B8.8-base>...HEAD -- homeassistant/custom_components/tivoo/qwen_realti
 
 不得增加固定 sleep、音频 replay、等待 Qwen user transcript、额外预缓冲来改善统计。
 
-- [ ] **Step 5: NAS 部署只更新 HA/Qwen 输入侧**
+- [x] **Step 5: NAS 部署只更新 HA/Qwen 输入侧**
 
 部署前备份当前 HA custom component、Qwen Gateway 配置与 S3 当前固件。S3 只允许刷入 Task 4.1 已验收的 ACK 固件，不得夹带其它 firmware 改动。部署后先做无物理出声的：
 - Qwen text GCP probe；
@@ -739,7 +742,7 @@ git diff <B8.8-base>...HEAD -- homeassistant/custom_components/tivoo/qwen_realti
 
 再按当前允许的实机窗口分别做 `action_done` 成功 ACK、`error/partial_action_done` 失败 ACK、`query_answer` 动态回复和一轮普通 Qwen 问答，确认 ACK 与现有播放链互斥且 Qwen 输出无回归。
 
-- [ ] **Step 6: 写 acceptance report**
+- [x] **Step 6: 写 acceptance report**
 
 报告逐项核销 B88-C01–C29，并明确：
 - software PASS/FAIL；
@@ -758,7 +761,7 @@ git status --short
 
 Expected: 无 whitespace error；只有本任务预期文件。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add docs/superpowers/reports/2026-11-25-p6-8-b8-8-acceptance.md
